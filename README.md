@@ -16,7 +16,7 @@ See: https://www.youtube.com/watch?v=auawNwzHjFo for a live recording.
 
 This repo is centered around a reusable WebGPU cloud renderer (`clouds.js` / `CloudComputeBuilder`) plus a small playground UI that lets you tune noise, shading, and temporal reprojection live in the browser.
 
-It is an attempt to implement "Real-time rendering of volumetric clouds" by Fredrik Haggstrom. It includes 4D noise and detail textures for smooth blending of randomized cloud features.
+It is an attempt to implement "Real-time rendering of volumetric clouds" by Fredrik Haggstrom. It includes 4D noise and detail textures for smooth blending of randomized cloud features. There are dozens of noise shaders that you could use in the base weathermaps as well, while we've only implemented 2 types of 4D noise for the detail and shape at the moment, but they could be applied to others.
 
 The main pieces are:
 
@@ -632,5 +632,6 @@ This layout is subject to change. Additional parameters and WGSL structs may con
 
 * `CloudComputeBuilder` is the core utility that owns the cloud compute pipeline and all UBO plumbing, with an explicit `dispose()` for cleanup.
 * The worker and UI form a thin interactive layer on top for tuning, baking, and previewing presets that you can later reuse in your own renderer.
+
 
 
