@@ -7,6 +7,8 @@ To run the demo, run `npm install` then `tinybuild` within this repository. `npm
 
 See: https://www.youtube.com/watch?v=auawNwzHjFo for a live recording.
 
+<img width="3824" height="1714" alt="image" src="https://github.com/user-attachments/assets/f6e7e220-7bf9-4cb9-be2f-3eef72248cdb" />
+
 ---
 
 This repo is centered around a reusable WebGPU cloud renderer (`clouds.js` / `CloudComputeBuilder`) plus a small playground UI that lets you tune noise, shading, and temporal reprojection live in the browser.
@@ -627,3 +629,4 @@ This layout is subject to change. Additional parameters and WGSL structs may con
 
 * `CloudComputeBuilder` is the core utility that owns the cloud compute pipeline and all UBO plumbing, with an explicit `dispose()` for cleanup.
 * The worker and UI form a thin interactive layer on top for tuning, baking, and previewing presets that you can later reuse in your own renderer.
+
