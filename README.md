@@ -5,7 +5,7 @@ This is an attempt to replicate "Real-time rendering of volumetric clouds" by Fr
 
 To run the demo, run `npm install` then `tinybuild` within this repository. `npm i -g tinybuild` if you don't have it. You can also locally host the index.html with prebuilt files.
 
-### TRY ME [https://webgpunoise.netlify.app/](https://webgpunoise.netlify.app/)
+### TRY ME [https://webgpuclouds.netlify.app/](https://webgpunoise.netlify.app/)
 
 See: https://www.youtube.com/watch?v=auawNwzHjFo for a live recording.
 
@@ -634,6 +634,7 @@ This layout is subject to change. Additional parameters and WGSL structs may con
 
 * `CloudComputeBuilder` is the core utility that owns the cloud compute pipeline and all UBO plumbing, with an explicit `dispose()` for cleanup.
 * The worker and UI form a thin interactive layer on top for tuning, baking, and previewing presets that you can later reuse in your own renderer.
+
 
 
 
