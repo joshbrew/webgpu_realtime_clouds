@@ -1,7 +1,7 @@
 
 # WebGPU Volumetric Clouds
 
-This is an attempt to replicate "Real-time rendering of volumetric clouds" by Fredrik Haggstrom in pure WebGPU and javascript. The results were a 60-150FPS real time cloud rendering with a custom compute pipeline for very fast iteration. I was impressed!
+This is an attempt to replicate ["Real-time rendering of volumetric clouds" by Fredrik Haggstrom](https://www.diva-portal.org/smash/record.jsf?pid=diva2:1223894&dswid=7420) in pure WebGPU and javascript. The results were a 60-150FPS real time cloud rendering with a custom compute pipeline for very fast iteration. I was impressed!
 
 To run the demo, run `npm install` then `tinybuild` within this repository. `npm i -g tinybuild` if you don't have it. You can also locally host the index.html with prebuilt files.
 
@@ -636,6 +636,7 @@ This layout is subject to change. Additional parameters and WGSL structs may con
 
 * `CloudComputeBuilder` is the core utility that owns the cloud compute pipeline and all UBO plumbing, with an explicit `dispose()` for cleanup.
 * The worker and UI form a thin interactive layer on top for tuning, baking, and previewing presets that you can later reuse in your own renderer.
+
 
 
 
