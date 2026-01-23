@@ -4508,27 +4508,73 @@ fn computeGauss5x5(\r
       this.shaderModule = device2.createShaderModule({ code: noiseCompute_default });
       this.bindGroupLayout = device2.createBindGroupLayout({
         entries: [
-          { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 0,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // options
-          { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // params
-          { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "read-only-storage" }
+          },
           // perm table
-          { binding: 3, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "2d-array" } },
+          {
+            binding: 3,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d-array" }
+          },
           // input 2D-array (sampled)
-          { binding: 4, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: "rgba16float", viewDimension: "2d-array" } },
+          {
+            binding: 4,
+            visibility: GPUShaderStage.COMPUTE,
+            storageTexture: {
+              access: "write-only",
+              format: "rgba16float",
+              viewDimension: "2d-array"
+            }
+          },
           // output 2D-array (storage)
-          { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+          {
+            binding: 5,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "read-only-storage" }
+          },
           // positions
-          { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 6,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // frame
-          { binding: 7, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "3d" } },
+          {
+            binding: 7,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "3d" }
+          },
           // input 3D
-          { binding: 8, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: "rgba16float", viewDimension: "3d" } }
+          {
+            binding: 8,
+            visibility: GPUShaderStage.COMPUTE,
+            storageTexture: {
+              access: "write-only",
+              format: "rgba16float",
+              viewDimension: "3d"
+            }
+          }
           // output 3D
         ]
       });
-      this.pipelineLayout = device2.createPipelineLayout({ bindGroupLayouts: [this.bindGroupLayout] });
+      this.pipelineLayout = device2.createPipelineLayout({
+        bindGroupLayouts: [this.bindGroupLayout]
+      });
       this.pipelines = /* @__PURE__ */ new Map();
       this._texPairs = /* @__PURE__ */ new Map();
       this._tid = null;
@@ -4580,7 +4626,10 @@ fn computeGauss5x5(\r
           format: "rgba16float",
           usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
         });
-        this._dummy2D_sampleView = this._dummy2D_sampleTex.createView({ dimension: "2d-array", arrayLayerCount: 1 });
+        this._dummy2D_sampleView = this._dummy2D_sampleTex.createView({
+          dimension: "2d-array",
+          arrayLayerCount: 1
+        });
       }
       if (!this._dummy2D_writeTex) {
         this._dummy2D_writeTex = this.device.createTexture({
@@ -4588,7 +4637,10 @@ fn computeGauss5x5(\r
           format: "rgba16float",
           usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST
         });
-        this._dummy2D_writeView = this._dummy2D_writeTex.createView({ dimension: "2d-array", arrayLayerCount: 1 });
+        this._dummy2D_writeView = this._dummy2D_writeTex.createView({
+          dimension: "2d-array",
+          arrayLayerCount: 1
+        });
       }
       if (!this._dummy3D_sampleTex) {
         this._dummy3D_sampleTex = this.device.createTexture({
@@ -4597,7 +4649,9 @@ fn computeGauss5x5(\r
           format: "rgba16float",
           usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
         });
-        this._dummy3D_sampleView = this._dummy3D_sampleTex.createView({ dimension: "3d" });
+        this._dummy3D_sampleView = this._dummy3D_sampleTex.createView({
+          dimension: "3d"
+        });
       }
       if (!this._dummy3D_writeTex) {
         this._dummy3D_writeTex = this.device.createTexture({
@@ -4606,7 +4660,9 @@ fn computeGauss5x5(\r
           format: "rgba16float",
           usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST
         });
-        this._dummy3D_writeView = this._dummy3D_writeTex.createView({ dimension: "3d" });
+        this._dummy3D_writeView = this._dummy3D_writeTex.createView({
+          dimension: "3d"
+        });
       }
     }
     // ---------------------------
@@ -4627,7 +4683,9 @@ fn computeGauss5x5(\r
       try {
         const usage = view?.texture?.usage ?? 0;
         if ((usage & GPUTextureUsage.TEXTURE_BINDING) === 0) {
-          console.warn("setInputTextureView: provided texture view not created with TEXTURE_BINDING; ignoring.");
+          console.warn(
+            "setInputTextureView: provided texture view not created with TEXTURE_BINDING; ignoring."
+          );
           return;
         }
       } catch (e) {
@@ -4642,7 +4700,9 @@ fn computeGauss5x5(\r
       try {
         const usage = view?.texture?.usage ?? 0;
         if ((usage & GPUTextureUsage.STORAGE_BINDING) === 0) {
-          console.warn("setOutputTextureView: provided texture view not created with STORAGE_BINDING; ignoring.");
+          console.warn(
+            "setOutputTextureView: provided texture view not created with STORAGE_BINDING; ignoring."
+          );
           return;
         }
       } catch (e) {
@@ -4827,12 +4887,13 @@ fn computeGauss5x5(\r
       }
       if (Array.isArray(pair.tiles)) {
         for (const tile of pair.tiles) {
-          if (Array.isArray(tile.frames)) for (const fb of tile.frames) {
-            try {
-              fb.destroy();
-            } catch {
+          if (Array.isArray(tile.frames))
+            for (const fb of tile.frames) {
+              try {
+                fb.destroy();
+              } catch {
+              }
             }
-          }
           if (tile.posBuf && tile.posBuf !== this.nullPosBuffer) {
             try {
               tile.posBuf.destroy();
@@ -4855,7 +4916,8 @@ fn computeGauss5x5(\r
       for (const tid of ids) this.destroyTexturePair(tid);
     }
     setActiveTexture(tid) {
-      if (!this._texPairs.has(tid)) throw new Error("setActiveTexture: invalid id");
+      if (!this._texPairs.has(tid))
+        throw new Error("setActiveTexture: invalid id");
       this._tid = tid;
       const pair = this._texPairs.get(tid);
       this.viewA = pair.viewA;
@@ -4874,7 +4936,13 @@ fn computeGauss5x5(\r
         size: data.byteLength,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
       });
-      this.queue.writeBuffer(buf, 0, data.buffer, data.byteOffset, data.byteLength);
+      this.queue.writeBuffer(
+        buf,
+        0,
+        data.buffer,
+        data.byteOffset,
+        data.byteLength
+      );
       return buf;
     }
     // WGSL Frame struct = 64 bytes
@@ -4917,13 +4985,20 @@ fn computeGauss5x5(\r
           if (existingTile && existingTile.posBuf && !options.customData) {
             posBuf = existingTile.posBuf;
           } else {
-            posBuf = this._buildPosBuffer(pair.tileWidth, pair.tileHeight, options.customData);
+            posBuf = this._buildPosBuffer(
+              pair.tileWidth,
+              pair.tileHeight,
+              options.customData
+            );
           }
           let fb;
           if (existingTile && existingTile.frames && existingTile.frames[0]) {
             fb = existingTile.frames[0];
           } else {
-            fb = this.device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+            fb = this.device.createBuffer({
+              size: 64,
+              usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+            });
           }
           const worldFullW = Number.isFinite(options.frameFullWidth) ? options.frameFullWidth >>> 0 : pair.fullWidth;
           const worldFullH = Number.isFinite(options.frameFullHeight) ? options.frameFullHeight >>> 0 : pair.fullHeight;
@@ -4980,7 +5055,9 @@ fn computeGauss5x5(\r
                 ]
               });
             } catch (e) {
-              throw new Error(`_create2DTileBindGroups: createBindGroup failed: ${e?.message || e}`);
+              throw new Error(
+                `_create2DTileBindGroups: createBindGroup failed: ${e?.message || e}`
+              );
             }
           }
           tiles.push({
@@ -5030,7 +5107,11 @@ fn computeGauss5x5(\r
         if (isArr) this.setNoiseParams(paramsArray[i++]);
         pass.setPipeline(pipe);
         pass.setBindGroup(0, current);
-        pass.dispatchWorkgroups(Math.ceil(tileW / 8), Math.ceil(tileH / 8), dispatchZ);
+        pass.dispatchWorkgroups(
+          Math.ceil(tileW / 8),
+          Math.ceil(tileH / 8),
+          dispatchZ
+        );
         [current, alternate] = [alternate, current];
       }
       pass.end();
@@ -5043,7 +5124,8 @@ fn computeGauss5x5(\r
     // ---------------------------
     async computeToTexture(width, height, paramsObj = {}, options = {}) {
       const W = width | 0, H = height | 0;
-      if (!(W > 0 && H > 0)) throw new Error(`computeToTexture: invalid size ${width}x${height}`);
+      if (!(W > 0 && H > 0))
+        throw new Error(`computeToTexture: invalid size ${width}x${height}`);
       if (this._tid == null) this._create2DPair(W, H);
       let pair = this._texPairs.get(this._tid);
       if (!pair || pair.fullWidth !== W || pair.fullHeight !== H) {
@@ -5053,7 +5135,11 @@ fn computeGauss5x5(\r
       }
       if (paramsObj && !Array.isArray(paramsObj)) this.setNoiseParams(paramsObj);
       const origOpts = options || {};
-      this.setOptions({ ...origOpts, ioFlags: 0, useCustomPos: origOpts.useCustomPos ?? this.useCustomPos });
+      this.setOptions({
+        ...origOpts,
+        ioFlags: 0,
+        useCustomPos: origOpts.useCustomPos ?? this.useCustomPos
+      });
       if (!pair.tiles || pair.bindGroupDirty || origOpts.customData) {
         this._create2DTileBindGroups(this._tid, options);
       }
@@ -5095,7 +5181,10 @@ fn computeGauss5x5(\r
       const th = Math.min(H, MAX_3D_TILE);
       const maxBuf = this.device?.limits?.maxBufferSize ?? 256 * 1024 * 1024;
       const sliceBytes = tw * th * BYTES_PER_VOXEL;
-      const tdByBuf = Math.max(1, Math.floor(maxBuf * 0.8 / Math.max(1, sliceBytes)));
+      const tdByBuf = Math.max(
+        1,
+        Math.floor(maxBuf * 0.8 / Math.max(1, sliceBytes))
+      );
       const td = Math.min(D, MAX_3D_TILE, tdByBuf);
       const nx = Math.ceil(W / tw);
       const ny = Math.ceil(H / th);
@@ -5132,7 +5221,23 @@ fn computeGauss5x5(\r
             viewB.label = `3D:viewB[${kx},${ky},${kz}]`;
             this._tag.set(viewA, `3D:A[${kx},${ky},${kz}]`);
             this._tag.set(viewB, `3D:B[${kx},${ky},${kz}]`);
-            chunks.push({ texA, texB, viewA, viewB, ox, oy, oz, w: t.tw, h: t.th, d: t.td, isA: true, fb: null, posBuf: null, bgA: null, bgB: null });
+            chunks.push({
+              texA,
+              texB,
+              viewA,
+              viewB,
+              ox,
+              oy,
+              oz,
+              w: t.tw,
+              h: t.th,
+              d: t.td,
+              isA: true,
+              fb: null,
+              posBuf: null,
+              bgA: null,
+              bgB: null
+            });
           }
         }
       }
@@ -5199,7 +5304,10 @@ fn computeGauss5x5(\r
       if (vol) return vol;
       vol = this._create3DChunks(W, H, D);
       for (const c of vol.chunks) {
-        c.fb = this.device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        c.fb = this.device.createBuffer({
+          size: 64,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
         const fw = worldFull && Number.isFinite(worldFull?.w) ? worldFull.w >>> 0 : vol.full.w;
         const fh = worldFull && Number.isFinite(worldFull?.h) ? worldFull.h >>> 0 : vol.full.h;
         const fd = worldFull && Number.isFinite(worldFull?.d) ? worldFull.d >>> 0 : vol.full.d;
@@ -5256,7 +5364,9 @@ fn computeGauss5x5(\r
             ]
           });
         } catch (e) {
-          throw new Error(`_getOrCreate3DVolume: createBindGroup failed: ${e?.message || e}`);
+          throw new Error(
+            `_getOrCreate3DVolume: createBindGroup failed: ${e?.message || e}`
+          );
         }
       }
       vol._bindGroupsDirty = false;
@@ -5271,7 +5381,10 @@ fn computeGauss5x5(\r
       const fd = worldFull && Number.isFinite(worldFull.d) ? worldFull.d >>> 0 : vol.full.d;
       for (const c of vol.chunks) {
         if (!c.fb) {
-          c.fb = this.device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+          c.fb = this.device.createBuffer({
+            size: 64,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+          });
           const scaleX = fw / vol.full.w;
           const scaleY = fh / vol.full.h;
           const originXf = c.ox * scaleX;
@@ -5320,10 +5433,18 @@ fn computeGauss5x5(\r
           { binding: 8, resource: c.viewA }
         ];
         try {
-          c.bgA = this.device.createBindGroup({ layout: this.bindGroupLayout, entries: entriesA });
-          c.bgB = this.device.createBindGroup({ layout: this.bindGroupLayout, entries: entriesB });
+          c.bgA = this.device.createBindGroup({
+            layout: this.bindGroupLayout,
+            entries: entriesA
+          });
+          c.bgB = this.device.createBindGroup({
+            layout: this.bindGroupLayout,
+            entries: entriesB
+          });
         } catch (e) {
-          throw new Error(`_recreate3DBindGroups: failed to create bind groups: ${e?.message || e}`);
+          throw new Error(
+            `_recreate3DBindGroups: failed to create bind groups: ${e?.message || e}`
+          );
         }
       }
       vol._bindGroupsDirty = false;
@@ -5331,10 +5452,17 @@ fn computeGauss5x5(\r
     // replace your computeToTexture3D with this implementation
     async computeToTexture3D(width, height, depth, paramsObj = {}, options = {}) {
       const W = width | 0, H = height | 0, D = depth | 0;
-      if (!(W > 0 && H > 0 && D > 0)) throw new Error(`computeToTexture3D: invalid size ${width}x${height}x${depth}`);
+      if (!(W > 0 && H > 0 && D > 0))
+        throw new Error(
+          `computeToTexture3D: invalid size ${width}x${height}x${depth}`
+        );
       if (paramsObj && !Array.isArray(paramsObj)) this.setNoiseParams(paramsObj);
       const origOpts = options || {};
-      this.setOptions({ ...origOpts, ioFlags: 3, useCustomPos: origOpts.useCustomPos ?? this.useCustomPos });
+      this.setOptions({
+        ...origOpts,
+        ioFlags: 3,
+        useCustomPos: origOpts.useCustomPos ?? this.useCustomPos
+      });
       const worldFull = (() => {
         if (options && (Number.isFinite(options.frameFullWidth) || Number.isFinite(options.frameFullHeight) || Number.isFinite(options.frameFullDepth))) {
           return {
@@ -5346,7 +5474,10 @@ fn computeGauss5x5(\r
         return null;
       })();
       const vol = this._getOrCreate3DVolume(W, H, D, options.id, worldFull);
-      if (!vol) throw new Error("computeToTexture3D: failed to create or retrieve volume");
+      if (!vol)
+        throw new Error(
+          "computeToTexture3D: failed to create or retrieve volume"
+        );
       if (vol._bindGroupsDirty || !vol.chunks[0].bgA || !vol.chunks[0].bgB) {
         this._recreate3DBindGroups(vol, worldFull);
       }
@@ -5355,7 +5486,9 @@ fn computeGauss5x5(\r
         const start = c.isA ? c.bgA : c.bgB;
         const alt = c.isA ? c.bgB : c.bgA;
         if (!start || !alt) {
-          throw new Error("computeToTexture3D: missing bind groups (volume not initialized correctly)");
+          throw new Error(
+            "computeToTexture3D: missing bind groups (volume not initialized correctly)"
+          );
         }
         lastBG = await this._runPipelines(
           start,
@@ -5374,7 +5507,12 @@ fn computeGauss5x5(\r
     configureCanvas(canvas) {
       const format = navigator.gpu.getPreferredCanvasFormat && navigator.gpu.getPreferredCanvasFormat() || "bgra8unorm";
       const ctx = canvas.getContext("webgpu");
-      ctx.configure({ device: this.device, format, alphaMode: "opaque", size: [canvas.width, canvas.height] });
+      ctx.configure({
+        device: this.device,
+        format,
+        alphaMode: "opaque",
+        size: [canvas.width, canvas.height]
+      });
       this._ctxMap.set(canvas, { ctx, size: [canvas.width, canvas.height] });
     }
     // ------- blit (2D-array preview + 3D-slice preview) -------
@@ -5391,13 +5529,26 @@ fn computeGauss5x5(\r
         this.bgl2D = this.device.createBindGroupLayout({
           entries: [
             { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-            { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d-array" } },
-            { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } }
+            {
+              binding: 1,
+              visibility: GPUShaderStage.FRAGMENT,
+              texture: { sampleType: "float", viewDimension: "2d-array" }
+            },
+            {
+              binding: 2,
+              visibility: GPUShaderStage.FRAGMENT,
+              buffer: { type: "uniform" }
+            }
           ]
         });
         this.pipeline2D = this.device.createRenderPipeline({
-          layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.bgl2D] }),
-          vertex: { module: this.device.createShaderModule({ code: noiseBlit_default }), entryPoint: "vs_main" },
+          layout: this.device.createPipelineLayout({
+            bindGroupLayouts: [this.bgl2D]
+          }),
+          vertex: {
+            module: this.device.createShaderModule({ code: noiseBlit_default }),
+            entryPoint: "vs_main"
+          },
           fragment: {
             module: this.device.createShaderModule({ code: noiseBlit_default }),
             entryPoint: "fs_main",
@@ -5405,19 +5556,35 @@ fn computeGauss5x5(\r
           },
           primitive: { topology: "triangle-list" }
         });
-        this.blit2DUbo = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        this.blit2DUbo = this.device.createBuffer({
+          size: 16,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
       }
       if (!this.bgl3D) {
         this.bgl3D = this.device.createBindGroupLayout({
           entries: [
             { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-            { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "3d" } },
-            { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } }
+            {
+              binding: 1,
+              visibility: GPUShaderStage.FRAGMENT,
+              texture: { sampleType: "float", viewDimension: "3d" }
+            },
+            {
+              binding: 2,
+              visibility: GPUShaderStage.FRAGMENT,
+              buffer: { type: "uniform" }
+            }
           ]
         });
         this.pipeline3D = this.device.createRenderPipeline({
-          layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.bgl3D] }),
-          vertex: { module: this.device.createShaderModule({ code: noiseBlit3D_default }), entryPoint: "vs_main" },
+          layout: this.device.createPipelineLayout({
+            bindGroupLayouts: [this.bgl3D]
+          }),
+          vertex: {
+            module: this.device.createShaderModule({ code: noiseBlit3D_default }),
+            entryPoint: "vs_main"
+          },
           fragment: {
             module: this.device.createShaderModule({ code: noiseBlit3D_default }),
             entryPoint: "fs_main",
@@ -5425,7 +5592,10 @@ fn computeGauss5x5(\r
           },
           primitive: { topology: "triangle-list" }
         });
-        this.blit3DUbo = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        this.blit3DUbo = this.device.createBuffer({
+          size: 16,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
       }
     }
     _renderCommonCanvasSetup(canvas, clear) {
@@ -5441,17 +5611,24 @@ fn computeGauss5x5(\r
         const curW = canvas.width | 0, curH = canvas.height | 0;
         if (entry.size[0] !== curW || entry.size[1] !== curH) {
           entry.size = [curW, curH];
-          entry.ctx.configure({ device: this.device, format, alphaMode: "opaque", size: entry.size });
+          entry.ctx.configure({
+            device: this.device,
+            format,
+            alphaMode: "opaque",
+            size: entry.size
+          });
         }
       }
       const enc = this.device.createCommandEncoder();
       const pass = enc.beginRenderPass({
-        colorAttachments: [{
-          view: entry.ctx.getCurrentTexture().createView(),
-          loadOp: clear ? "clear" : "load",
-          clearValue: { r: 0, g: 0, b: 0, a: 1 },
-          storeOp: "store"
-        }]
+        colorAttachments: [
+          {
+            view: entry.ctx.getCurrentTexture().createView(),
+            loadOp: clear ? "clear" : "load",
+            clearValue: { r: 0, g: 0, b: 0, a: 1 },
+            storeOp: "store"
+          }
+        ]
       });
       return { enc, pass, ctxEntry: entry };
     }
@@ -5475,7 +5652,13 @@ fn computeGauss5x5(\r
         }
       }
       const u = new Uint32Array([layer >>> 0, channel >>> 0, 0, 0]);
-      this.queue.writeBuffer(this.blit2DUbo, 0, u.buffer, u.byteOffset, u.byteLength);
+      this.queue.writeBuffer(
+        this.blit2DUbo,
+        0,
+        u.buffer,
+        u.byteOffset,
+        u.byteLength
+      );
       const bg = this.device.createBindGroup({
         layout: this.bgl2D,
         entries: [
@@ -5511,7 +5694,10 @@ fn computeGauss5x5(\r
         view3D = target;
         d = depth;
       }
-      if (!view3D || !d) throw new Error("renderTexture3DSliceToCanvas: need a 3D view and its depth");
+      if (!view3D || !d)
+        throw new Error(
+          "renderTexture3DSliceToCanvas: need a 3D view and its depth"
+        );
       if (!preserveCanvasSize) {
         try {
           const tex = view3D.texture;
@@ -5545,6 +5731,277 @@ fn computeGauss5x5(\r
       pass.draw(6, 1, 0, 0);
       pass.end();
       this.queue.submit([enc.finish()]);
+    }
+    // Capture a 2D-array noise texture (one layer/channel) to a PNG Blob.
+    // textureView: GPUTextureView for the 2D-array rgba16float texture
+    // width/height: desired output resolution in pixels
+    // opts: { layer?: number, channel?: number }
+    async export2DTextureToPNGBlob(textureView, width, height, opts = {}) {
+      if (!textureView) {
+        throw new Error("export2DTextureToPNGBlob: textureView is required");
+      }
+      const W = Math.max(1, width | 0);
+      const H = Math.max(1, height | 0);
+      const layer = opts.layer ?? 0;
+      const channel = opts.channel ?? 0;
+      this.initBlitRender();
+      if (this.queue && this.queue.onSubmittedWorkDone) {
+        try {
+          await this.queue.onSubmittedWorkDone();
+        } catch (e) {
+          console.warn(
+            "export2DTextureToPNGBlob: onSubmittedWorkDone before export failed",
+            e
+          );
+        }
+      }
+      const format = "bgra8unorm";
+      const captureTexture = this.device.createTexture({
+        size: [W, H, 1],
+        format,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC
+      });
+      const u = new Uint32Array([layer >>> 0, channel >>> 0, 0, 0]);
+      this.queue.writeBuffer(
+        this.blit2DUbo,
+        0,
+        u.buffer,
+        u.byteOffset,
+        u.byteLength
+      );
+      const bg = this.device.createBindGroup({
+        layout: this.bgl2D,
+        entries: [
+          { binding: 0, resource: this.sampler },
+          { binding: 1, resource: textureView },
+          { binding: 2, resource: { buffer: this.blit2DUbo } }
+        ]
+      });
+      const encoder = this.device.createCommandEncoder();
+      const rpass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: captureTexture.createView(),
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 1 }
+          }
+        ]
+      });
+      rpass.setPipeline(this.pipeline2D);
+      rpass.setBindGroup(0, bg);
+      rpass.draw(6, 1, 0, 0);
+      rpass.end();
+      const bytesPerPixel = 4;
+      const align = 256;
+      const bytesPerRowUnaligned = W * bytesPerPixel;
+      const bytesPerRow = Math.ceil(bytesPerRowUnaligned / align) * align;
+      const bufferSize = bytesPerRow * H;
+      const readBuffer = this.device.createBuffer({
+        size: bufferSize,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+      });
+      encoder.copyTextureToBuffer(
+        { texture: captureTexture },
+        {
+          buffer: readBuffer,
+          bytesPerRow,
+          rowsPerImage: H
+        },
+        { width: W, height: H, depthOrArrayLayers: 1 }
+      );
+      this.queue.submit([encoder.finish()]);
+      if (this.queue && this.queue.onSubmittedWorkDone) {
+        await this.queue.onSubmittedWorkDone();
+      }
+      await readBuffer.mapAsync(GPUMapMode.READ);
+      const mapped = readBuffer.getMappedRange();
+      const src = new Uint8Array(mapped);
+      const pixels = new Uint8ClampedArray(W * H * bytesPerPixel);
+      const isBGRA = true;
+      let dst = 0;
+      for (let y = 0; y < H; y++) {
+        const rowStart = y * bytesPerRow;
+        for (let x = 0; x < W; x++) {
+          const si = rowStart + x * 4;
+          if (isBGRA) {
+            pixels[dst++] = src[si + 2];
+            pixels[dst++] = src[si + 1];
+            pixels[dst++] = src[si + 0];
+            pixels[dst++] = src[si + 3];
+          } else {
+            pixels[dst++] = src[si + 0];
+            pixels[dst++] = src[si + 1];
+            pixels[dst++] = src[si + 2];
+            pixels[dst++] = src[si + 3];
+          }
+        }
+      }
+      readBuffer.unmap();
+      readBuffer.destroy();
+      captureTexture.destroy();
+      const tmpCanvas = document.createElement("canvas");
+      tmpCanvas.width = W;
+      tmpCanvas.height = H;
+      const ctx2d = tmpCanvas.getContext("2d");
+      if (!ctx2d)
+        throw new Error("export2DTextureToPNGBlob: unable to get 2D context");
+      const imageData = new ImageData(pixels, W, H);
+      ctx2d.putImageData(imageData, 0, 0);
+      const blob = await new Promise((resolve, reject) => {
+        tmpCanvas.toBlob((b) => {
+          if (b) resolve(b);
+          else
+            reject(new Error("export2DTextureToPNGBlob: toBlob returned null"));
+        }, "image/png");
+      });
+      return blob;
+    }
+    // Convenience wrapper: export the currently active 2D pair view
+    // (what getCurrentView() returns) to a PNG Blob.
+    async exportCurrent2DToPNGBlob(width, height, opts = {}) {
+      const view = this.getCurrentView();
+      if (!view) {
+        throw new Error("exportCurrent2DToPNGBlob: no active 2D texture view");
+      }
+      return this.export2DTextureToPNGBlob(view, width, height, opts);
+    }
+    async export3DSliceToPNGBlob(target, width, height, opts = {}) {
+      if (!target) {
+        throw new Error("export3DSliceToPNGBlob: target is required");
+      }
+      const W = Math.max(1, width | 0);
+      const H = Math.max(1, height | 0);
+      const { depth, slice = 0, zNorm = null, channel = 0, chunk = 0 } = opts;
+      if (!depth || depth <= 0) {
+        throw new Error("export3DSliceToPNGBlob: depth must be provided and > 0");
+      }
+      this.initBlitRender();
+      if (this.queue && this.queue.onSubmittedWorkDone) {
+        try {
+          await this.queue.onSubmittedWorkDone();
+        } catch (e) {
+          console.warn(
+            "export3DSliceToPNGBlob: onSubmittedWorkDone before export failed",
+            e
+          );
+        }
+      }
+      let view3D;
+      let d;
+      if (target && target.views && Array.isArray(target.views)) {
+        const idx = Math.max(0, Math.min(chunk | 0, target.views.length - 1));
+        view3D = target.views[idx];
+        d = target.meta?.tile?.d ?? depth;
+      } else {
+        view3D = target;
+        d = depth;
+      }
+      if (!view3D || !d) {
+        throw new Error("export3DSliceToPNGBlob: need a 3D view and its depth");
+      }
+      let z = zNorm !== null && zNorm !== void 0 ? zNorm : (Math.min(Math.max(slice, 0), d - 1) + 0.5) / d;
+      z = Math.min(Math.max(z, 0), 1);
+      const format = "bgra8unorm";
+      const captureTexture = this.device.createTexture({
+        size: [W, H, 1],
+        format,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC
+      });
+      const ab = new ArrayBuffer(16);
+      const dv = new DataView(ab);
+      dv.setFloat32(0, z, true);
+      dv.setUint32(4, channel >>> 0, true);
+      dv.setUint32(8, 0, true);
+      dv.setUint32(12, 0, true);
+      this.queue.writeBuffer(this.blit3DUbo, 0, ab);
+      const bg = this.device.createBindGroup({
+        layout: this.bgl3D,
+        entries: [
+          { binding: 0, resource: this.sampler },
+          { binding: 1, resource: view3D },
+          { binding: 2, resource: { buffer: this.blit3DUbo } }
+        ]
+      });
+      const encoder = this.device.createCommandEncoder();
+      const rpass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: captureTexture.createView(),
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 1 }
+          }
+        ]
+      });
+      rpass.setPipeline(this.pipeline3D);
+      rpass.setBindGroup(0, bg);
+      rpass.draw(6, 1, 0, 0);
+      rpass.end();
+      const bytesPerPixel = 4;
+      const align = 256;
+      const bytesPerRowUnaligned = W * bytesPerPixel;
+      const bytesPerRow = Math.ceil(bytesPerRowUnaligned / align) * align;
+      const bufferSize = bytesPerRow * H;
+      const readBuffer = this.device.createBuffer({
+        size: bufferSize,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+      });
+      encoder.copyTextureToBuffer(
+        { texture: captureTexture },
+        {
+          buffer: readBuffer,
+          bytesPerRow,
+          rowsPerImage: H
+        },
+        { width: W, height: H, depthOrArrayLayers: 1 }
+      );
+      this.queue.submit([encoder.finish()]);
+      if (this.queue && this.queue.onSubmittedWorkDone) {
+        await this.queue.onSubmittedWorkDone();
+      }
+      await readBuffer.mapAsync(GPUMapMode.READ);
+      const mapped = readBuffer.getMappedRange();
+      const src = new Uint8Array(mapped);
+      const pixels = new Uint8ClampedArray(W * H * bytesPerPixel);
+      const isBGRA = true;
+      let dst = 0;
+      for (let y = 0; y < H; y++) {
+        const rowStart = y * bytesPerRow;
+        for (let x = 0; x < W; x++) {
+          const si = rowStart + x * 4;
+          if (isBGRA) {
+            pixels[dst++] = src[si + 2];
+            pixels[dst++] = src[si + 1];
+            pixels[dst++] = src[si + 0];
+            pixels[dst++] = src[si + 3];
+          } else {
+            pixels[dst++] = src[si + 0];
+            pixels[dst++] = src[si + 1];
+            pixels[dst++] = src[si + 2];
+            pixels[dst++] = src[si + 3];
+          }
+        }
+      }
+      readBuffer.unmap();
+      readBuffer.destroy();
+      captureTexture.destroy();
+      const tmpCanvas = document.createElement("canvas");
+      tmpCanvas.width = W;
+      tmpCanvas.height = H;
+      const ctx2d = tmpCanvas.getContext("2d");
+      if (!ctx2d) {
+        throw new Error("export3DSliceToPNGBlob: unable to get 2D context");
+      }
+      const imageData = new ImageData(pixels, W, H);
+      ctx2d.putImageData(imageData, 0, 0);
+      const blob = await new Promise((resolve, reject) => {
+        tmpCanvas.toBlob((b) => {
+          if (b) resolve(b);
+          else reject(new Error("export3DSliceToPNGBlob: toBlob returned null"));
+        }, "image/png");
+      });
+      return blob;
     }
   };
   var BaseNoise = class {
@@ -5605,7 +6062,7 @@ fn computeGauss5x5(\r
   };
 
   // tools/clouds/clouds.wgsl
-  var clouds_default = "const PI  : f32 = 3.141592653589793;\r\nconst EPS : f32 = 1e-6;\r\nconst LN2 : f32 = 0.6931471805599453;\r\nconst INV_LN2 : f32 = 1.4426950408889634;\r\n\r\n// ---------------------- TUNING UNIFORM\r\nstruct CloudTuning {\r\n  // Marching\r\n  maxSteps         : i32,\r\n  _pad0_i          : i32,\r\n  minStep          : f32,\r\n  maxStep          : f32,\r\n\r\n  // Sun marching\r\n  sunSteps         : i32,\r\n  sunStride        : i32,\r\n  sunMinTr         : f32,\r\n  _pad1_f          : f32,\r\n\r\n  // Dither\r\n  phaseJitter      : f32,\r\n  stepJitter       : f32,\r\n  _pad2            : vec2<f32>,\r\n\r\n  // Noise warp\r\n  baseJitterFrac   : f32,\r\n  topJitterFrac    : f32,\r\n  _pad3            : vec2<f32>,\r\n\r\n  // LOD and bounds\r\n  lodBiasWeather   : f32,\r\n  aabbFaceOffset   : f32,\r\n  _pad4            : vec2<f32>,\r\n\r\n  // Weather skipping\r\n  weatherRejectGate: f32,\r\n  weatherRejectMip : f32,\r\n  emptySkipMult    : f32,\r\n  _pad5            : f32,\r\n\r\n  // Near tweaks\r\n  nearFluffDist    : f32,\r\n  nearStepScale    : f32,\r\n  nearLodBias      : f32,\r\n  nearDensityMult  : f32,\r\n  nearDensityRange : f32,\r\n  _pad6            : vec3<f32>,\r\n\r\n  // LOD blending\r\n  lodBlendThreshold: f32,\r\n  _pad7            : vec3<f32>,\r\n\r\n  // Anti-speckle & temporal\r\n  sunDensityGate   : f32,\r\n  fflyRelClamp     : f32,\r\n  fflyAbsFloor     : f32,\r\n  taaRelMin        : f32,\r\n  taaRelMax        : f32,\r\n  taaAbsEps        : f32,\r\n  _pad8            : vec2<f32>,\r\n\r\n  // Far-field calm\r\n  farStart         : f32,\r\n  farFull          : f32,\r\n  farLodPush       : f32,\r\n  farDetailAtten   : f32,\r\n  farStepMult      : f32,\r\n  bnFarScale       : f32,\r\n  farTaaHistoryBoost: f32,\r\n  _pad9            : vec2<f32>,\r\n\r\n  // On-ray smoothing\r\n  raySmoothDens    : f32,\r\n  raySmoothSun     : f32,\r\n  _pad10           : vec2<f32>,\r\n}\r\n@group(0) @binding(10) var<uniform> TUNE : CloudTuning;\r\n\r\n// ---------------------- existing uniforms / resources (preserved layout)\r\nstruct CloudOptions {\r\n  useCustomPos : u32,\r\n  outputChannel: u32,\r\n  writeRGB     : u32,\r\n  _p0          : u32,\r\n  _r0          : f32,\r\n  _r1          : f32,\r\n  _r2          : f32,\r\n  _r3          : f32,\r\n}\r\n@group(0) @binding(0) var<uniform> opt : CloudOptions;\r\n\r\nstruct CloudParams {\r\n  globalCoverage: f32,\r\n  globalDensity : f32,\r\n  cloudAnvilAmount: f32,\r\n  cloudBeer      : f32,\r\n  attenuationClamp: f32,\r\n  inScatterG     : f32,\r\n  silverIntensity: f32,\r\n  silverExponent : f32,\r\n  outScatterG    : f32,\r\n  inVsOut        : f32,\r\n  outScatterAmbientAmt: f32,\r\n  ambientMinimum : f32,\r\n  sunColor       : vec3<f32>,\r\n\r\n  densityDivMin  : f32,\r\n  silverDirectionBias: f32,\r\n  silverHorizonBoost : f32,\r\n  _pad0          : f32,\r\n}\r\n@group(0) @binding(1) var<uniform> C : CloudParams;\r\n\r\nstruct Dummy { _pad: u32, }\r\n@group(0) @binding(2) var<storage, read> unused : Dummy;\r\n\r\nstruct NoiseTransforms {\r\n  shapeOffsetWorld  : vec3<f32>,\r\n  _pad0             : f32,\r\n  detailOffsetWorld : vec3<f32>,\r\n  _pad1             : f32,\r\n  shapeScale        : f32,\r\n  detailScale       : f32,\r\n  _pad2             : vec2<f32>,\r\n}\r\n@group(0) @binding(3) var<uniform> NTransform : NoiseTransforms;\r\n\r\n@group(0) @binding(4) var outTex : texture_storage_2d_array<rgba16float, write>;\r\n@group(0) @binding(5) var<storage, read> posBuf : array<vec4<f32>>;\r\n\r\nstruct Frame {\r\n  fullWidth : u32, fullHeight: u32,\r\n  tileWidth : u32, tileHeight: u32,\r\n  originX   : i32, originY   : i32, originZ: i32,\r\n  fullDepth : u32, tileDepth : u32,\r\n  layerIndex: i32, layers    : u32,\r\n  _pad0     : u32,\r\n  originXf  : f32, originYf : f32, _pad1: f32, _pad2: f32,\r\n}\r\n@group(0) @binding(6) var<uniform> frame : Frame;\r\n\r\n@group(0) @binding(7) var historyOut : texture_storage_2d_array<rgba16float, write>;\r\n\r\nstruct ReprojSettings {\r\n  enabled : u32,\r\n  subsample: u32,\r\n  sampleOffset: u32,\r\n  motionIsNormalized: u32,\r\n  temporalBlend: f32,\r\n  depthTest: u32,\r\n  depthTolerance: f32,\r\n  frameIndex: u32,\r\n  fullWidth: u32,\r\n  fullHeight: u32,\r\n}\r\n@group(0) @binding(8) var<uniform> reproj : ReprojSettings;\r\n\r\nstruct PerfParams {\r\n  lodBiasMul : f32,\r\n  coarseMipBias : f32,\r\n  _pad0: f32,\r\n  _pad1: f32,\r\n}\r\n@group(0) @binding(9) var<uniform> perf : PerfParams;\r\n\r\n@group(1) @binding(0) var weather2D : texture_2d_array<f32>;\r\n@group(1) @binding(1) var samp2D    : sampler;\r\n\r\n@group(1) @binding(2) var shape3D   : texture_3d<f32>;\r\n@group(1) @binding(3) var sampShape : sampler;\r\n\r\n@group(1) @binding(4) var blueTex   : texture_2d_array<f32>;\r\n@group(1) @binding(5) var sampBN    : sampler;\r\n\r\n@group(1) @binding(6) var detail3D  : texture_3d<f32>;\r\n@group(1) @binding(7) var sampDetail: sampler;\r\n\r\nstruct LightInputs { sunDir: vec3<f32>, _0: f32, camPos: vec3<f32>, _1: f32, }\r\n@group(1) @binding(8) var<uniform> L : LightInputs;\r\n\r\nstruct View {\r\n  camPos : vec3<f32>, _v0: f32,\r\n  right  : vec3<f32>, _v1: f32,\r\n  up     : vec3<f32>, _v2: f32,\r\n  fwd    : vec3<f32>, _v3: f32,\r\n  fovY   : f32, aspect: f32, stepBase: f32, stepInc: f32,\r\n  planetRadius: f32, cloudBottom: f32, cloudTop: f32, volumeLayers: f32,\r\n  worldToUV: f32, _a: f32, _b: f32, _c: f32,\r\n}\r\n@group(1) @binding(9) var<uniform> V : View;\r\n\r\nstruct Box {\r\n  center: vec3<f32>, _b0: f32,\r\n  half: vec3<f32>, uvScale: f32,\r\n}\r\n@group(1) @binding(10) var<uniform> B : Box;\r\n\r\n@group(1) @binding(11) var historyPrev : texture_2d_array<f32>;\r\n@group(1) @binding(12) var sampHistory : sampler;\r\n\r\n@group(1) @binding(13) var motionTex : texture_2d<f32>;\r\n@group(1) @binding(14) var sampMotion: sampler;\r\n\r\n@group(1) @binding(15) var depthPrev : texture_2d<f32>;\r\n@group(1) @binding(16) var sampDepth: sampler;\r\n\r\n// Workgroup cache\r\nvar<workgroup> wg_weatherDim : vec2<f32>;\r\nvar<workgroup> wg_blueDim    : vec2<f32>;\r\nvar<workgroup> wg_shapeDim   : vec3<f32>;\r\nvar<workgroup> wg_detailDim  : vec3<f32>;\r\nvar<workgroup> wg_maxMipW    : f32;\r\nvar<workgroup> wg_maxMipS    : f32;\r\nvar<workgroup> wg_maxMipD    : f32;\r\nvar<workgroup> wg_scaleS     : f32;\r\nvar<workgroup> wg_scaleD     : f32;\r\nvar<workgroup> wg_finestWorld: f32;\r\n\r\n// ---------------------- helpers\r\nfn saturate(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }\r\nfn mix_f(a: f32, b: f32, t: f32) -> f32 { return a * (1.0 - t) + b * t; }\r\nfn mix_v3(a: vec3<f32>, b: vec3<f32>, t: f32) -> vec3<f32> { return a * (1.0 - t) + b * t; }\r\nfn mix_v4(a: vec4<f32>, b: vec4<f32>, t: f32) -> vec4<f32> { return a * (1.0 - t) + b * t; }\r\nfn remap(v: f32, a: f32, b: f32, c: f32, d: f32) -> f32 { return c + (v - a) * (d - c) / max(b - a, EPS); }\r\nfn luminance(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)); }\r\n\r\n// tiny hash\r\nfn hash13_i(p: vec3<i32>) -> f32 {\r\n  var h: u32 = 374761393u * u32(p.x) + 668265263u * u32(p.y) + 362437u * u32(p.z);\r\n  h = (h ^ (h >> 13u)) * 1274126177u;\r\n  h = h ^ (h >> 16u);\r\n  return f32(h) * 2.3283064365386963e-10;\r\n}\r\nfn smoothCellHash2D(p: vec2<f32>, freq: f32) -> f32 {\r\n  let uv = p * freq;\r\n  let i  = floor(uv);\r\n  let f  = fract(uv);\r\n  let h00 = hash13_i(vec3<i32>(i32(i.x),     i32(i.y),     0));\r\n  let h10 = hash13_i(vec3<i32>(i32(i.x) + 1, i32(i.y),     0));\r\n  let h01 = hash13_i(vec3<i32>(i32(i.x),     i32(i.y) + 1, 0));\r\n  let h11 = hash13_i(vec3<i32>(i32(i.x) + 1, i32(i.y) + 1, 0));\r\n  let u = f * f * (3.0 - 2.0 * f);\r\n  return mix_f(mix_f(h00, h10, u.x), mix_f(h01, h11, u.x), u.y);\r\n}\r\n\r\n// texture wrappers\r\nfn wrap2D(tex: texture_2d_array<f32>, samp: sampler, uv: vec2<f32>, layer_idx: i32, lod: f32) -> vec4<f32> {\r\n  let d = wg_weatherDim;\r\n  let ep = vec2<f32>(0.5 / max(d.x, 1.0), 0.5 / max(d.y, 1.0));\r\n  let u  = uv * (vec2<f32>(1.0) - 2.0 * ep) + ep;\r\n  return textureSampleLevel(tex, samp, u, layer_idx, lod);\r\n}\r\nfn wrap3D_shape(tex: texture_3d<f32>, samp: sampler, uvw: vec3<f32>, lod: f32) -> vec4<f32> {\r\n  let d = wg_shapeDim;\r\n  let ep = vec3<f32>(0.5 / max(d.x,1.0), 0.5 / max(d.y,1.0), 0.5 / max(d.z,1.0));\r\n  let u  = uvw * (vec3<f32>(1.0) - 2.0 * ep) + ep;\r\n  return textureSampleLevel(tex, samp, u, lod);\r\n}\r\nfn wrap3D_detail(tex: texture_3d<f32>, samp: sampler, uvw: vec3<f32>, lod: f32) -> vec4<f32> {\r\n  let d = wg_detailDim;\r\n  let ep = vec3<f32>(0.5 / max(d.x, 1.0), 0.5 / max(d.y, 1.0), 0.5 / max(d.z, 1.0));\r\n  let u  = uvw * (vec3<f32>(1.0) - 2.0 * ep) + ep;\r\n  return textureSampleLevel(tex, samp, u, lod);\r\n}\r\n\r\n// blue noise\r\nfn sampleBlueScreen(pixI: vec2<i32>) -> f32 {\r\n  let res = vec2<f32>(f32(frame.fullWidth), f32(frame.fullHeight));\r\n  let bnD = wg_blueDim;\r\n  let uvSS = (vec2<f32>(pixI) + 0.5) / res;\r\n  let uvBN = fract(uvSS * res / bnD);\r\n  return textureSampleLevel(blueTex, sampBN, uvBN, 0i, 0.0).r;\r\n}\r\n\r\n// box helpers\r\nfn boxMin() -> vec3<f32> { return B.center - B.half; }\r\nfn boxMax() -> vec3<f32> { return B.center + B.half; }\r\n\r\n// robust AABB intersect\r\nfn intersectAABB_robust(ro: vec3<f32>, rd: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> vec2<f32> {\r\n  let rdSafe = select(sign(rd) * vec3<f32>(EPS), rd, vec3<bool>(abs(rd) > vec3<f32>(EPS)));\r\n  let inv = vec3<f32>(1.0) / rdSafe;\r\n  let t0 = (bmin - ro) * inv;\r\n  let t1 = (bmax - ro) * inv;\r\n  let tmin3 = min(t0, t1);\r\n  let tmax3 = max(t0, t1);\r\n  let tmin = max(max(tmin3.x, tmin3.y), tmin3.z);\r\n  let tmax = min(min(tmax3.x, tmax3.y), tmax3.z);\r\n  return vec2<f32>(tmin, tmax);\r\n}\r\n\r\n// world warp in XZ\r\nfn worldWarpXZ(pos_xz: vec2<f32>, ph: f32, boxMaxXZ: f32) -> vec2<f32> {\r\n  let norm = max(boxMaxXZ, 1.0);\r\n  let p = pos_xz / norm;\r\n  let warpAmp  = TUNE.baseJitterFrac * boxMaxXZ * 0.5;\r\n  let s1x = smoothCellHash2D(p + vec2<f32>(12.34, 78.9), 4.0);\r\n  let s1y = smoothCellHash2D(p + vec2<f32>(98.7,  6.54), 4.0);\r\n  let s2x = smoothCellHash2D(p * 1.73 + vec2<f32>(3.21, 4.56), 8.28);\r\n  let s2y = smoothCellHash2D(p * 1.91 + vec2<f32>(7.89, 1.23), 8.28);\r\n  let ox = (s1x - 0.5) + 0.5 * (s2x - 0.5);\r\n  let oz = (s1y - 0.5) + 0.5 * (s2y - 0.5);\r\n  let ang = smoothCellHash2D(p * 3.0 + vec2<f32>(9.7, 2.3), 16.0) * 2.0 * PI;\r\n  let rad = (smoothCellHash2D(p * 3.0 + vec2<f32>(1.1, 7.7), 16.0) - 0.5) * (TUNE.baseJitterFrac * 0.4 * boxMaxXZ);\r\n  let rot = vec2<f32>(cos(ang), sin(ang)) * rad;\r\n  let user = vec2<f32>(cos(opt._r3), sin(opt._r3)) * opt._r2 * 0.001;\r\n  return vec2<f32>(ox, oz) * warpAmp + rot * mix_f(0.3, 1.2, ph) + user;\r\n}\r\n\r\n// shape & detail samplers\r\nfn sampleShapeRGBA(pos: vec3<f32>, ph: f32, lod: f32) -> vec4<f32> {\r\n  let scaleS = max(wg_scaleS, EPS);\r\n  let boxMaxXZ = max(B.half.x, B.half.z);\r\n\r\n  let w = worldWarpXZ(pos.xz, ph, boxMaxXZ);\r\n\r\n  let pW = vec3<f32>(\r\n    pos.x + w.x + NTransform.shapeOffsetWorld.x,\r\n    pos.y + ph * 7.0 + NTransform.shapeOffsetWorld.y,\r\n    pos.z + w.y + NTransform.shapeOffsetWorld.z\r\n  );\r\n\r\n  return wrap3D_shape(shape3D, sampShape, pW * scaleS * NTransform.shapeScale, lod);\r\n}\r\n\r\nfn sampleDetailRGB(pos: vec3<f32>, ph: f32, lod: f32) -> vec3<f32> {\r\n  let scaleD = max(wg_scaleD, EPS);\r\n  let boxMaxXZ = max(B.half.x, B.half.z);\r\n\r\n  let w = worldWarpXZ(pos.xz, ph, boxMaxXZ);\r\n\r\n  let pW = vec3<f32>(\r\n    pos.x + w.x + NTransform.detailOffsetWorld.x,\r\n    pos.y + NTransform.detailOffsetWorld.y,\r\n    pos.z + w.y + NTransform.detailOffsetWorld.z\r\n  );\r\n\r\n  return wrap3D_detail(detail3D, sampDetail, pW * scaleD * NTransform.detailScale, lod).rgb;\r\n}\r\n\r\n\r\n// height shape and density\r\nfn heightShape(ph: f32, wBlue: f32) -> f32 {\r\n  let sr_bottom = saturate(remap(ph, 0.0, 0.07, 0.0, 1.0));\r\n  let stop_h = saturate(wBlue + 0.12);\r\n  let sr_top  = saturate(remap(ph, stop_h * 0.2, stop_h, 1.0, 0.0));\r\n  var base = sr_bottom * sr_top;\r\n  let anvilFactor = saturate(C.cloudAnvilAmount) * saturate(C.globalCoverage);\r\n  let expo = saturate(remap(ph, 0.65, 0.95, 1.0, 1.0 - anvilFactor * 0.9));\r\n  return pow(base, expo);\r\n}\r\nfn computePH(p_world: vec3<f32>, wm: vec4<f32>) -> f32 {\r\n  let boxH = max(B.half.y * 2.0, EPS);\r\n  let jBase = (wm.r * 2.0 - 1.0) * (TUNE.baseJitterFrac * boxH);\r\n  let jTop  = (wm.g * 2.0 - 1.0) * (TUNE.topJitterFrac  * boxH);\r\n  let baseY = (B.center.y - B.half.y) + jBase;\r\n  let topY  = (B.center.y + B.half.y) + jTop;\r\n  return saturate((p_world.y - baseY) / max(topY - baseY, EPS));\r\n}\r\nfn detailMod(ph: f32, d: vec3<f32>) -> f32 {\r\n  let fbm = d.r * 0.625 + d.g * 0.25 + d.b * 0.125;\r\n  return 0.35 * exp(-C.globalCoverage * 0.75) * mix_f(fbm, 1.0 - fbm, saturate(ph * 5.0));\r\n}\r\nfn densityHeight(ph: f32) -> f32 {\r\n  var ret = ph;\r\n  ret *= saturate(remap(ph, 0.0, 0.2, 0.0, 1.0));\r\n  ret *= mix_f(1.0, saturate(remap(sqrt(max(ph,0.0)), 0.4, 0.95, 1.0, 0.2)), saturate(C.cloudAnvilAmount));\r\n  ret *= saturate(remap(ph, 0.9, 1.0, 1.0, 0.0));\r\n  ret *= max(C.globalDensity, 0.0);\r\n  return ret;\r\n}\r\nfn weatherCoverageGate(wm: vec4<f32>) -> f32 {\r\n  let wHi = saturate(remap(C.globalCoverage, 0.0, 1.0, 0.0, 1.0) - 0.5) * wm.g * 2.0;\r\n  let WMc = max(wm.r, wHi);\r\n  return 1.0 - C.globalCoverage * saturate(WMc - opt._r1);\r\n}\r\nfn densityFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>) -> f32 {\r\n  let fbm_s = s.g * 0.625 + s.b * 0.25 + s.a * 0.125 - 1.0;\r\n  let SNsample = remap(s.r, fbm_s, 1.0, 0.0, 1.0);\r\n  var SA = saturate(heightShape(ph, 1.0));\r\n  let wVar = fract(wm.r * 1.7 + wm.g * 2.3);\r\n  let bulge = 1.0 + 0.18 * (abs(fract(ph * (1.0 + wVar * 1.7)) - 0.5) * 2.0 - 0.5) * 0.5;\r\n  SA = saturate(SA * bulge);\r\n  let gate = weatherCoverageGate(wm);\r\n  let SNnd = saturate(remap(SNsample * SA, gate, 1.0, 0.0, 1.0));\r\n  let DN = detailMod(ph, det);\r\n  let core = saturate(remap(SNnd, DN, 1.0, 0.0, 1.0));\r\n  return max(core * densityHeight(ph), 0.0);\r\n}\r\n\r\n// phase and lighting\r\nfn HG(cos_angle: f32, g: f32) -> f32 {\r\n  let gg = clamp(g, -0.999, 0.999);\r\n  let g2 = gg * gg;\r\n  return ((1.0 - g2) / pow(1.0 + g2 - 2.0 * gg * clamp(cos_angle, -1.0, 1.0), 1.5)) / (4.0 * PI);\r\n}\r\n// InOutScatter updated to allow silver/backscatter to use abs(cos) so rim/backscatter is visible\r\nfn InOutScatter(cos_angle: f32) -> f32 {\r\n  let first_hg  = HG(cos_angle, C.inScatterG);\r\n  // use absolute cos for silver so both forward/back directions can contribute\r\n  let second_hg = C.silverIntensity * pow(saturate(abs(cos_angle)), C.silverExponent);\r\n  let in_scatter_hg  = max(first_hg, second_hg);\r\n  let out_scatter_hg = HG(cos_angle, -C.outScatterG);\r\n  return mix_f(in_scatter_hg, out_scatter_hg, C.inVsOut);\r\n}\r\nfn Attenuation(density_to_sun: f32, cos_angle: f32) -> f32 {\r\n  let prim = exp2(- (C.cloudBeer * density_to_sun) * INV_LN2);\r\n  let scnd = exp2(- (C.cloudBeer * C.attenuationClamp) * INV_LN2) * 0.7;\r\n  let checkval = remap(clamp(cos_angle, 0.0, 1.0), 0.0, 1.0, scnd, scnd * 0.5);\r\n  return max(checkval, prim);\r\n}\r\nfn OutScatterAmbient(density: f32, percent_height: f32) -> f32 {\r\n  let depth = C.outScatterAmbientAmt * pow(max(density, 0.0), remap(percent_height, 0.3, 0.9, 0.5, 1.0));\r\n  let vertical = pow(saturate(remap(percent_height, 0.0, 0.3, 0.8, 1.0)), 0.8);\r\n  return 1.0 - saturate(depth * vertical);\r\n}\r\n\r\n// ---------- helper: approximate surface normal from coarse shape mip\r\nfn approxShapeNormal(pos: vec3<f32>, ph: f32, lodShape: f32) -> vec3<f32> {\r\n  let probe = max(wg_finestWorld * 1.25, 1e-3);\r\n  // central differences along X and Z plus a small Y probe to pick vertical slope\r\n  let c = sampleShapeRGBA(pos, ph, lodShape).r;\r\n  let px = sampleShapeRGBA(pos + vec3<f32>(probe, 0.0, 0.0), ph, lodShape).r;\r\n  let nx = sampleShapeRGBA(pos - vec3<f32>(probe, 0.0, 0.0), ph, lodShape).r;\r\n  let pz = sampleShapeRGBA(pos + vec3<f32>(0.0, 0.0, probe), ph, lodShape).r;\r\n  let nz = sampleShapeRGBA(pos - vec3<f32>(0.0, 0.0, probe), ph, lodShape).r;\r\n  let py = sampleShapeRGBA(pos + vec3<f32>(0.0, probe, 0.0), ph, lodShape).r;\r\n  let gy = (py - c) / probe;\r\n  let gx = (px - nx) * 0.5 / probe;\r\n  let gz = (pz - nz) * 0.5 / probe;\r\n  var n = normalize(vec3<f32>(-gx, -gy, -gz));\r\n  if (length(n) < 1e-4) { return vec3<f32>(0.0, 1.0, 0.0); }\r\n  return n;\r\n}\r\n\r\n// ---------- helper: surface shadow factor (soft) from normal & sun\r\nfn surfaceShadowFactor(n: vec3<f32>, sunDir: vec3<f32>, minLit: f32, exponent: f32) -> f32 {\r\n  let s = saturate(dot(n, sunDir) * 0.5 + 0.5);\r\n  let sPow = pow(s, exponent);\r\n  return mix_f(minLit, 1.0, sPow);\r\n}\r\n\r\nfn CalculateLight(density: f32, density_to_sun: f32, cos_angle: f32, percent_height: f32, bluenoise: f32, dist_along_ray: f32, rimBoost: f32) -> vec3<f32> {\r\n  var attenuation = Attenuation(density_to_sun, cos_angle) * InOutScatter(cos_angle) * OutScatterAmbient(density, percent_height);\r\n  let amb_min = density * C.ambientMinimum * (1.0 - pow(saturate(dist_along_ray / 4000.0), 2.0));\r\n  attenuation = max(amb_min, attenuation);\r\n  attenuation = attenuation + bluenoise * 0.0025;\r\n  attenuation = attenuation * (1.0 + 0.35 * rimBoost);\r\n  return attenuation * C.sunColor;\r\n}\r\n\r\n// sun march\r\nfn sunSingle(p0: vec3<f32>, sunDir: vec3<f32>, weatherLOD: f32, lodShapeBase: f32, lodDetailBase: f32, stepLen: f32) -> f32 {\r\n  var T = 1.0;\r\n  let parity = f32(i32(reproj.frameIndex % 2u));\r\n  var p = p0 + sunDir * (0.5 * stepLen * parity);\r\n  for (var i: i32 = 0; i < TUNE.sunSteps; i = i + 1) {\r\n    let wm   = wrap2D(weather2D, samp2D, weatherUV_local(p), 0i, weatherLOD);\r\n    let ph   = computePH(p, wm);\r\n    let s    = sampleShapeRGBA(p, ph, lodShapeBase  + f32(i) * 0.5);\r\n    let det  = sampleDetailRGB(p, ph, lodDetailBase + f32(i) * 0.5);\r\n    let d    = densityFromSamples(ph, wm, s, det);\r\n    T *= exp2(- (C.cloudBeer * d * stepLen) * INV_LN2);\r\n    if (T < TUNE.sunMinTr) { break; }\r\n    p += sunDir * stepLen;\r\n  }\r\n  return T;\r\n}\r\nfn sunTransmittance(p: vec3<f32>, sunDir: vec3<f32>, weatherLOD: f32, lodShapeBase: f32, lodDetailBase: f32, stepLen: f32) -> f32 {\r\n  return 0.5 * (sunSingle(p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, stepLen)\r\n              + sunSingle(p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, stepLen));\r\n}\r\n\r\n// weather UV\r\nfn weatherUV_local(pos_world: vec3<f32>) -> vec2<f32> {\r\n  let bmin = boxMin();\r\n  let bmax = boxMax();\r\n  let aabb = max(bmax - bmin, vec3<f32>(EPS, EPS, EPS));\r\n  let mul = select(opt._r0, 0.2, opt._r0 == 0.0);\r\n  return ((pos_world.xz - bmin.xz) / max(aabb.xz, vec2<f32>(EPS))) * mul;\r\n}\r\n\r\n// quick empty probe\r\nfn weatherProbeEmpty(p_start: vec3<f32>, rd: vec3<f32>, stepLen: f32, nProbes: i32, coarseMip: f32) -> bool {\r\n  var pos = p_start;\r\n  var emptyCount: i32 = 0;\r\n  for (var i: i32 = 0; i < nProbes; i = i + 1) {\r\n    let wm = wrap2D(weather2D, samp2D, weatherUV_local(pos), 0i, coarseMip);\r\n    if (weatherCoverageGate(wm) >= TUNE.weatherRejectGate) { emptyCount = emptyCount + 1; }\r\n    pos = pos + rd * stepLen;\r\n  }\r\n  return (f32(emptyCount) / f32(nProbes)) > 0.66;\r\n}\r\n\r\n// reprojection helpers\r\nfn fullPixFromCurrent(pix: vec2<i32>) -> vec2<i32> {\r\n  let res = vec2<f32>(f32(frame.fullWidth), f32(frame.fullHeight));\r\n  let fullRes = vec2<f32>(f32(reproj.fullWidth), f32(reproj.fullHeight));\r\n  let xf = floor((vec2<f32>(pix) + 0.5) * (fullRes / res));\r\n  return vec2<i32>(i32(clamp(xf.x, 0.0, fullRes.x - 1.0)), i32(clamp(xf.y, 0.0, fullRes.y - 1.0)));\r\n}\r\nfn store_history_full_res_if_owner(pixCurr: vec2<i32>, layer: i32, color: vec4<f32>) {\r\n  if (reproj.enabled == 0u) {\r\n    textureStore(historyOut, fullPixFromCurrent(pixCurr), layer, color);\r\n    return;\r\n  }\r\n  let ss = i32(max(reproj.subsample, 1u));\r\n  let off = i32(reproj.sampleOffset % u32(ss * ss));\r\n  let sx = off % ss;\r\n  let sy = off / ss;\r\n  let fullPix = fullPixFromCurrent(pixCurr);\r\n  if ((fullPix.x % ss) == sx && (fullPix.y % ss) == sy) {\r\n    textureStore(historyOut, fullPix, layer, color);\r\n  }\r\n}\r\n\r\n// fade near AABB faces\r\nfn insideFaceFade(p: vec3<f32>) -> f32 {\r\n  let bmin = boxMin();\r\n  let bmax = boxMax();\r\n  let dmin = p - bmin;\r\n  let dmax = bmax - p;\r\n  let edge = min(dmin, dmax);\r\n  let closest = min(min(edge.x, edge.y), edge.z);\r\n  let soft = max(0.75 * wg_finestWorld, 0.25);\r\n  return saturate(closest / soft);\r\n}\r\n\r\n// ---------------------- Main compute\r\n@compute @workgroup_size(8,8,1)\r\nfn computeCloud(@builtin(global_invocation_id) gid_in: vec3<u32>,\r\n                @builtin(local_invocation_id) local_id: vec3<u32>) {\r\n\r\n  // workgroup cache\r\n  if (local_id.x == 0u && local_id.y == 0u) {\r\n    let wd = textureDimensions(weather2D, 0);\r\n    wg_weatherDim = vec2<f32>(f32(wd.x), f32(wd.y));\r\n    let bd = textureDimensions(blueTex, 0);\r\n    wg_blueDim = vec2<f32>(f32(bd.x), f32(bd.y));\r\n    let sd = textureDimensions(shape3D);\r\n    wg_shapeDim = vec3<f32>(f32(sd.x), f32(sd.y), f32(sd.z));\r\n    let dd = textureDimensions(detail3D);\r\n    wg_detailDim = vec3<f32>(f32(dd.x), f32(dd.y), f32(dd.z));\r\n    wg_maxMipW = f32(textureNumLevels(weather2D)) - 1.0;\r\n    wg_maxMipS = f32(textureNumLevels(shape3D)) - 1.0;\r\n    wg_maxMipD = f32(textureNumLevels(detail3D)) - 1.0;\r\n\r\n    let scaleS_local = max(V.worldToUV * B.uvScale, EPS);\r\n    wg_scaleS = scaleS_local;\r\n    wg_scaleD = max(scaleS_local * (128.0 / 32.0), EPS);\r\n    wg_finestWorld = min(1.0 / wg_scaleS, 1.0 / wg_scaleD) * 0.6;\r\n  }\r\n  workgroupBarrier();\r\n\r\n  // pixel and guard\r\n  let pixI = vec2<i32>(i32(gid_in.x), i32(gid_in.y)) + vec2<i32>(frame.originX, frame.originY);\r\n  if (pixI.x < 0 || pixI.y < 0 || pixI.x >= i32(frame.fullWidth) || pixI.y >= i32(frame.fullHeight)) { return; }\r\n\r\n  // camera basis\r\n  let camFwd = normalize(V.fwd);\r\n  var basisRight = normalize(V.right);\r\n  if (length(basisRight) < EPS) { basisRight = vec3<f32>(1.0,0.0,0.0); }\r\n  var basisUp = normalize(V.up);\r\n  if (length(basisUp) < EPS) { basisUp = vec3<f32>(0.0,1.0,0.0); }\r\n\r\n  // ray\r\n  let rayRo = V.camPos;\r\n  let ndc = ((vec2<f32>(pixI) + 0.5) / vec2<f32>(f32(frame.fullWidth), f32(frame.fullHeight))) * 2.0 - vec2<f32>(1.0, 1.0);\r\n  let tanY = tan(0.5 * V.fovY);\r\n  let rd_camera = normalize(vec3<f32>(ndc.x * V.aspect * tanY, -ndc.y * tanY, -1.0));\r\n  let rayRd = normalize(basisRight * rd_camera.x + basisUp * rd_camera.y - camFwd * rd_camera.z);\r\n\r\n  // intersect volume\r\n  let bmin = boxMin();\r\n  let bmax = boxMax();\r\n  var ti = intersectAABB_robust(rayRo, rayRd, bmin, bmax);\r\n  if (ti.x > ti.y || ti.y <= 0.0) {\r\n    textureStore(outTex, pixI, frame.layerIndex, vec4<f32>(0.0));\r\n    if (reproj.enabled == 1u) { store_history_full_res_if_owner(pixI, frame.layerIndex, vec4<f32>(0.0)); }\r\n    return;\r\n  }\r\n  var t0 = max(ti.x - TUNE.aabbFaceOffset, 0.0);\r\n  var t1 = ti.y + TUNE.aabbFaceOffset;\r\n  if (t0 >= t1) {\r\n    textureStore(outTex, pixI, frame.layerIndex, vec4<f32>(0.0));\r\n    if (reproj.enabled == 1u) { store_history_full_res_if_owner(pixI, frame.layerIndex, vec4<f32>(0.0)); }\r\n    return;\r\n  }\r\n\r\n  // precompute weather LOD\r\n  let aabb = max(bmax - bmin, vec3<f32>(EPS, EPS, EPS));\r\n  let mulW = select(opt._r0, 0.2, opt._r0 == 0.0);\r\n  let worldToTex = mulW * vec2<f32>(wg_weatherDim.x / max(aabb.x, EPS), wg_weatherDim.y / max(aabb.z, EPS));\r\n  let fp = max(worldToTex.x, worldToTex.y);\r\n  var weatherLOD_base = clamp(log2(max(fp, 1.0)) + TUNE.lodBiasWeather * max(perf.lodBiasMul, 0.0001), 0.0, wg_maxMipW);\r\n\r\n  // noise and jitter\r\n  let bnPix  = sampleBlueScreen(pixI);\r\n  let rand0 = fract(bnPix + 0.61803398875 * f32(reproj.frameIndex));\r\n\r\n  // step sizing\r\n  let camF = normalize(-rayRd);\r\n  let cosVF  = max(dot(rayRd, camFwd), EPS);\r\n  let finestWorld = wg_finestWorld;\r\n  let voxelBound  = finestWorld / max(abs(dot(rayRd, basisUp)), 0.15);\r\n\r\n  var baseStep = clamp(V.stepBase, TUNE.minStep, TUNE.maxStep);\r\n  baseStep = min(baseStep, voxelBound);\r\n  baseStep = baseStep * mix_f(1.0, 1.0 + TUNE.stepJitter, rand0 * 2.0 - 1.0);\r\n\r\n  let entryDepth = dot((rayRo + rayRd * t0) - V.camPos, camFwd);\r\n  let nearFactor = saturate(1.0 - entryDepth / TUNE.nearFluffDist);\r\n  let startShrink = mix_f(1.0, TUNE.nearStepScale, nearFactor);\r\n  baseStep = clamp(baseStep * startShrink, TUNE.minStep, TUNE.maxStep);\r\n\r\n  let farF = saturate(remap(entryDepth, TUNE.farStart, TUNE.farFull, 0.0, 1.0));\r\n  baseStep = clamp(baseStep * mix_f(1.0, TUNE.farStepMult, farF), TUNE.minStep, TUNE.maxStep);\r\n\r\n  var t = clamp(t0 + (rand0 * TUNE.phaseJitter) * baseStep, t0, t1);\r\n\r\n  // lighting setup\r\n  let viewDir  = camF;\r\n  let sunDir   = normalize(L.sunDir);\r\n  let cosVS    = dot(viewDir, sunDir);\r\n\r\n  // sun step length\r\n  let halfSpan = 0.5 * max(B.half.y * 2.0, EPS);\r\n  let sunStepLen = min(halfSpan / f32(max(TUNE.sunSteps, 1)), min(1.0/wg_scaleS, 1.0/wg_scaleD) * 0.6 / max(abs(sunDir.y), 0.15));\r\n\r\n  let weatherLOD = min(wg_maxMipW, weatherLOD_base + TUNE.farLodPush * farF);\r\n\r\n  // accumulators\r\n  var Tr  = 1.0;\r\n  var rgb = vec3<f32>(0.0);\r\n  var Tsun_cached = 1.0;\r\n  var iter: i32 = 0;\r\n  var runMeanL : f32 = 0.0;\r\n  var runN     : f32 = 0.0;\r\n  var prevDens : f32 = 0.0;\r\n  var prevTsun : f32 = 1.0;\r\n\r\n  loop {\r\n    if (iter >= TUNE.maxSteps) { break; }\r\n    if (t >= t1 || Tr < 0.001) { break; }\r\n\r\n    let p = rayRo + rayRd * t;\r\n\r\n    // coarse weather skip\r\n    let subsample = f32(max(reproj.subsample, 1u));\r\n    let coarsePenalty = log2(max(subsample, 1.0));\r\n    var coarseMip = max(0.0, wg_maxMipW - (TUNE.weatherRejectMip + max(perf.coarseMipBias, 0.0) + coarsePenalty));\r\n    coarseMip = min(wg_maxMipW, coarseMip + farF * 1.0);\r\n    if (weatherProbeEmpty(p, rayRd, baseStep * 2.0, 3, coarseMip)) {\r\n      t = min(t + baseStep * TUNE.emptySkipMult, t1);\r\n      iter += 1;\r\n      continue;\r\n    }\r\n\r\n    // quick weather density proxy\r\n    let wm_coarse = wrap2D(weather2D, samp2D, weatherUV_local(p), 0i, min(weatherLOD, max(0.0, wg_maxMipW)));\r\n    let ph_coarse = computePH(p, wm_coarse);\r\n    let quickCoverage = saturate((wm_coarse.r - 0.35) * 2.5);\r\n    if (quickCoverage < 0.01 && (ph_coarse < 0.02)) {\r\n      t = min(t + baseStep * 2.0, t1);\r\n      iter += 1;\r\n      continue;\r\n    }\r\n\r\n    // LOD from step\r\n    let baseLOD  = clamp(log2(max(baseStep / wg_finestWorld, 1.0)), 0.0, wg_maxMipS);\r\n    let nearDepth = max(cosVF * (t - t0), 0.0);\r\n    let nearSmooth = pow(saturate(1.0 - nearDepth / TUNE.nearFluffDist), 0.85);\r\n    let lodBias  = mix_f(0.0, TUNE.nearLodBias, nearSmooth);\r\n    let lodShapeBase  = clamp(baseLOD + lodBias + TUNE.farLodPush * farF, 0.0, wg_maxMipS);\r\n    let lodDetailBase = clamp(baseLOD + lodBias + TUNE.farLodPush * farF, 0.0, wg_maxMipD);\r\n\r\n    // weather full\r\n    let wm  = wrap2D(weather2D, samp2D, weatherUV_local(p), 0i, weatherLOD);\r\n    let ph  = computePH(p, wm);\r\n\r\n    // mip hysteresis\r\n    let sL  : f32 = floor(lodShapeBase);\r\n    let sF  : f32 = saturate(lodShapeBase - sL);\r\n    let dL  : f32 = floor(lodDetailBase);\r\n    let dF  : f32 = saturate(lodDetailBase - dL);\r\n\r\n    var s   : vec4<f32>;\r\n    if (sF > TUNE.lodBlendThreshold) {\r\n      let s_lo = sampleShapeRGBA(p, ph, sL);\r\n      let s_hi = sampleShapeRGBA(p, ph, min(sL + 1.0, wg_maxMipS));\r\n      s = mix_v4(s_lo, s_hi, sF);\r\n    } else {\r\n      s = sampleShapeRGBA(p, ph, sL);\r\n    }\r\n    var det : vec3<f32>;\r\n    if (dF > TUNE.lodBlendThreshold) {\r\n      let d_lo = sampleDetailRGB(p, ph, dL);\r\n      let d_hi = sampleDetailRGB(p, ph, min(dL + 1.0, wg_maxMipD));\r\n      det = mix_v3(d_lo, d_hi, dF);\r\n    } else {\r\n      det = sampleDetailRGB(p, ph, dL);\r\n    }\r\n    det = mix_v3(det, det * TUNE.farDetailAtten, farF);\r\n\r\n    // density\r\n    var dens = densityFromSamples(ph, wm, s, det);\r\n    dens *= insideFaceFade(p);\r\n    let boost = mix_f(TUNE.nearDensityMult, 1.0, saturate(nearDepth / TUNE.nearDensityRange));\r\n    dens *= boost;\r\n    let densSmoothed = mix_f(dens, prevDens, saturate(TUNE.raySmoothDens));\r\n\r\n    if (densSmoothed > 0.00008) {\r\n      // cached sun\r\n      if ((iter % TUNE.sunStride) == 0) {\r\n        if (densSmoothed * baseStep > TUNE.sunDensityGate) {\r\n          Tsun_cached = sunTransmittance(p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, sunStepLen);\r\n        } else {\r\n          Tsun_cached = 1.0;\r\n        }\r\n      }\r\n      let TsunSmoothed = mix_f(Tsun_cached, prevTsun, saturate(TUNE.raySmoothSun));\r\n\r\n      // rim factor from coarse gradient every cached update to save taps\r\n      var rimF = 0.0;\r\n\r\n      let bnScaled = mix_f(bnPix, bnPix * TUNE.bnFarScale, farF);\r\n\r\n      // ---------- improved sun-relative shading and silver/backscatter:\r\n      // compute scattering cos using incident light = -sunDir and viewDir\r\n      let cosSL = dot(viewDir, -sunDir);\r\n\r\n      // compute base lighting with phase computed from cosSL (incident vs view)\r\n      let lightBase = CalculateLight(densSmoothed, TsunSmoothed, cosSL, ph, bnScaled, t - t0, rimF);\r\n\r\n      // approximate coarse surface normal from the shape mip (cheap)\r\n      let shapeNormal = approxShapeNormal(p, ph, max(0.0, lodShapeBase));\r\n\r\n      // surface-facing factor\r\n      let minLit = 0.25;      // lower floor so backfacing surfaces still receive ambient scatter\r\n      let shadeExp = 1.15;    // slightly crisper shadow boundary\r\n      let surfShade = surfaceShadowFactor(shapeNormal, sunDir, minLit, shadeExp);\r\n\r\n      // occlusion mixing: avoid full blacking-out by mixing an ambient floor\r\n      let occlusion = mix_f(0.6, 1.0, saturate(TsunSmoothed));\r\n\r\n      // combine orientation + occlusion with base scatter\r\n      var lightCol = lightBase * surfShade * occlusion;\r\n\r\n      // firefly limiter\r\n      let lNow = luminance(lightCol);\r\n      let meanL = select(lNow, runMeanL / max(runN, 1.0), runN > 0.0);\r\n      let allow = max(meanL * (1.0 + TUNE.fflyRelClamp), TUNE.fflyAbsFloor);\r\n      if (lNow > allow) { lightCol *= allow / max(lNow, 1e-6); }\r\n\r\n      // integrate\r\n      let alpha = 1.0 - exp2(- (C.cloudBeer * densSmoothed * baseStep) * INV_LN2);\r\n      rgb += Tr * lightCol * alpha;\r\n      Tr  *= (1.0 - alpha);\r\n      if (Tr < 0.002) { break; }\r\n\r\n      runMeanL += lNow;\r\n      runN     += 1.0;\r\n    }\r\n\r\n    prevDens = densSmoothed;\r\n    prevTsun = Tsun_cached;\r\n\r\n    t = min(t + baseStep, t1);\r\n    iter += 1;\r\n  }\r\n\r\n  // compose\r\n  var newCol: vec4<f32>;\r\n  if (opt.writeRGB == 1u) {\r\n    newCol = vec4<f32>(rgb, 1.0 - Tr);\r\n  } else {\r\n    let a = 1.0 - Tr;\r\n    if (opt.outputChannel == 0u)      { newCol = vec4<f32>(a, 0.0, 0.0, 1.0); }\r\n    else if (opt.outputChannel == 1u) { newCol = vec4<f32>(0.0, a, 0.0, 1.0); }\r\n    else if (opt.outputChannel == 2u) { newCol = vec4<f32>(0.0, 0.0, a, 1.0); }\r\n    else                              { newCol = vec4<f32>(0.0, 0.0, 0.0, a); }\r\n  }\r\n\r\n  // soft fluff + ambient tint\r\n  {\r\n    let a = newCol.a;\r\n    let fluff = clamp(0.28 * a * mix_f(1.0, 1.4, saturate(1.0 - cosVS)), 0.02, 0.50);\r\n    let sunTint = mix_v3(vec3<f32>(0.92, 0.93, 0.96), C.sunColor, saturate(0.5 + 0.5 * cosVS));\r\n    let ambientFill = sunTint * 0.06;\r\n    newCol = vec4<f32>(mix_v3(newCol.rgb, newCol.rgb + ambientFill * a, fluff), smoothstep(0.0, 1.0, a * 1.03));\r\n  }\r\n\r\n  // TAA with variance clamp\r\n  if (reproj.enabled == 1u) {\r\n    let fullRes = vec2<f32>(f32(reproj.fullWidth), f32(reproj.fullHeight));\r\n    let uv_full = (vec2<f32>(fullPixFromCurrent(pixI)) + 0.5) / fullRes;\r\n\r\n    var motion = textureSampleLevel(motionTex, sampMotion, uv_full, 0.0).rg;\r\n    if (reproj.motionIsNormalized == 0u) { motion = motion / fullRes; }\r\n    let prevUV = uv_full - motion;\r\n\r\n    if (prevUV.x < 0.0 || prevUV.y < 0.0 || prevUV.x > 1.0 || prevUV.y > 1.0) {\r\n      textureStore(outTex, pixI, frame.layerIndex, newCol);\r\n      store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);\r\n    } else {\r\n      let prevCol = textureSampleLevel(historyPrev, sampHistory, prevUV, frame.layerIndex, 0.0);\r\n      if (reproj.frameIndex == 0u || prevCol.a < 1e-5 || reproj.temporalBlend <= 0.0001) {\r\n        textureStore(outTex, pixI, frame.layerIndex, newCol);\r\n        store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);\r\n      } else {\r\n        let motionPix = motion * fullRes;\r\n        let motionMag = length(motionPix);\r\n        let alphaDiff = abs(prevCol.a - newCol.a);\r\n        var stability = exp(-motionMag * 0.9) * exp(-alphaDiff * 6.0);\r\n        var tb = clamp(reproj.temporalBlend * stability, 0.0, 0.985);\r\n        tb *= mix_f(1.0, TUNE.farTaaHistoryBoost, farF);\r\n\r\n        if (reproj.depthTest == 1u) {\r\n          let prevDepth = textureSampleLevel(depthPrev, sampDepth, prevUV, 0.0).r;\r\n          tb *= select(1.0 - saturate(reproj.depthTolerance), 0.25, prevDepth < 1e-6 || prevDepth > 1.0);\r\n        }\r\n\r\n        let relBase = mix_f(TUNE.taaRelMax, TUNE.taaRelMin, saturate(stability));\r\n        let rel     = relBase * mix_f(1.0, 0.80, farF);\r\n        let newClampedRGB = clamp_luma_to(newCol.rgb, prevCol.rgb, rel, TUNE.taaAbsEps);\r\n        let newClamped = vec4<f32>(newClampedRGB, newCol.a);\r\n\r\n        let blended = mix_v4(newClamped, prevCol, tb);\r\n        textureStore(outTex, pixI, frame.layerIndex, blended);\r\n        store_history_full_res_if_owner(pixI, frame.layerIndex, blended);\r\n      }\r\n    }\r\n  } else {\r\n    textureStore(outTex, pixI, frame.layerIndex, newCol);\r\n    store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);\r\n  }\r\n}\r\n\r\n// ---------------------- Auxiliary\r\nfn clamp_luma_to(val: vec3<f32>, refc: vec3<f32>, rel: f32, abs_eps: f32) -> vec3<f32> {\r\n  let tL = luminance(refc);\r\n  let vL = max(luminance(val), 1e-6);\r\n  let hi = tL * (1.0 + rel) + abs_eps;\r\n  let lo = max(tL * (1.0 - rel) - abs_eps, 0.0);\r\n  if (vL > hi) { return val * (hi / vL); }\r\n  if (vL < lo) { return val * (max(lo, 1e-6) / vL); }\r\n  return val;\r\n}\r\n";
+  var clouds_default = "const PI  : f32 = 3.141592653589793;\r\nconst EPS : f32 = 1e-6;\r\nconst LN2 : f32 = 0.6931471805599453;\r\nconst INV_LN2 : f32 = 1.4426950408889634;\r\n\r\n// ---------------------- TUNING UNIFORM\r\nstruct CloudTuning {\r\n  // Marching\r\n  maxSteps         : i32,\r\n  _pad0_i          : i32,\r\n  minStep          : f32,\r\n  maxStep          : f32,\r\n\r\n  // Sun marching\r\n  sunSteps         : i32,\r\n  sunStride        : i32,\r\n  sunMinTr         : f32,\r\n  _pad1_f          : f32,\r\n\r\n  // Dither\r\n  phaseJitter      : f32,\r\n  stepJitter       : f32,\r\n  _pad2            : vec2<f32>,\r\n\r\n  // Noise warp\r\n  baseJitterFrac   : f32,\r\n  topJitterFrac    : f32,\r\n  _pad3            : vec2<f32>,\r\n\r\n  // LOD and bounds\r\n  lodBiasWeather   : f32,\r\n  aabbFaceOffset   : f32,\r\n  _pad4            : vec2<f32>,\r\n\r\n  // Weather skipping\r\n  weatherRejectGate: f32,\r\n  weatherRejectMip : f32,\r\n  emptySkipMult    : f32,\r\n  _pad5            : f32,\r\n\r\n  // Near tweaks\r\n  nearFluffDist    : f32,\r\n  nearStepScale    : f32,\r\n  nearLodBias      : f32,\r\n  nearDensityMult  : f32,\r\n  nearDensityRange : f32,\r\n  _pad6            : vec3<f32>,\r\n\r\n  // LOD blending\r\n  lodBlendThreshold: f32,\r\n  _pad7            : vec3<f32>,\r\n\r\n  // Anti-speckle & temporal\r\n  sunDensityGate   : f32,\r\n  fflyRelClamp     : f32,\r\n  fflyAbsFloor     : f32,\r\n  taaRelMin        : f32,\r\n  taaRelMax        : f32,\r\n  taaAbsEps        : f32,\r\n  _pad8            : vec2<f32>,\r\n\r\n  // Far-field calm\r\n  farStart         : f32,\r\n  farFull          : f32,\r\n  farLodPush       : f32,\r\n  farDetailAtten   : f32,\r\n  farStepMult      : f32,\r\n  bnFarScale       : f32,\r\n  farTaaHistoryBoost: f32,\r\n  _pad9            : vec2<f32>,\r\n\r\n  // On-ray smoothing\r\n  raySmoothDens    : f32,\r\n  raySmoothSun     : f32,\r\n  _pad10           : vec2<f32>,\r\n}\r\n@group(0) @binding(10) var<uniform> TUNE : CloudTuning;\r\n\r\n// ---------------------- existing uniforms / resources (preserved layout)\r\nstruct CloudOptions {\r\n  useCustomPos : u32,\r\n  outputChannel: u32,\r\n  writeRGB     : u32,\r\n  _p0          : u32,\r\n  _r0          : f32,\r\n  _r1          : f32,\r\n  _r2          : f32,\r\n  _r3          : f32,\r\n}\r\n@group(0) @binding(0) var<uniform> opt : CloudOptions;\r\n\r\nstruct CloudParams {\r\n  globalCoverage: f32,\r\n  globalDensity : f32,\r\n  cloudAnvilAmount: f32,\r\n  cloudBeer      : f32,\r\n  attenuationClamp: f32,\r\n  inScatterG     : f32,\r\n  silverIntensity: f32,\r\n  silverExponent : f32,\r\n  outScatterG    : f32,\r\n  inVsOut        : f32,\r\n  outScatterAmbientAmt: f32,\r\n  ambientMinimum : f32,\r\n  sunColor       : vec3<f32>,\r\n\r\n  densityDivMin  : f32,\r\n  silverDirectionBias: f32,\r\n  silverHorizonBoost : f32,\r\n  _pad0          : f32,\r\n}\r\n@group(0) @binding(1) var<uniform> C : CloudParams;\r\n\r\nstruct Dummy { _pad: u32, }\r\n@group(0) @binding(2) var<storage, read> unused : Dummy;\r\n\r\nstruct NoiseTransforms {\r\n  shapeOffsetWorld  : vec3<f32>,\r\n  _pad0             : f32,\r\n  detailOffsetWorld : vec3<f32>,\r\n  _pad1             : f32,\r\n  shapeScale        : f32,\r\n  detailScale       : f32,\r\n  _pad2             : vec2<f32>,\r\n}\r\n@group(0) @binding(3) var<uniform> NTransform : NoiseTransforms;\r\n\r\n@group(0) @binding(4) var outTex : texture_storage_2d_array<rgba16float, write>;\r\n@group(0) @binding(5) var<storage, read> posBuf : array<vec4<f32>>;\r\n\r\nstruct Frame {\r\n  fullWidth : u32, fullHeight: u32,\r\n  tileWidth : u32, tileHeight: u32,\r\n  originX   : i32, originY   : i32, originZ: i32,\r\n  fullDepth : u32, tileDepth : u32,\r\n  layerIndex: i32, layers    : u32,\r\n  _pad0     : u32,\r\n  originXf  : f32, originYf : f32, _pad1: f32, _pad2: f32,\r\n}\r\n@group(0) @binding(6) var<uniform> frame : Frame;\r\n\r\n@group(0) @binding(7) var historyOut : texture_storage_2d_array<rgba16float, write>;\r\n\r\nstruct ReprojSettings {\r\n  enabled : u32,\r\n  subsample: u32,\r\n  sampleOffset: u32,\r\n  motionIsNormalized: u32,\r\n  temporalBlend: f32,\r\n  depthTest: u32,\r\n  depthTolerance: f32,\r\n  frameIndex: u32,\r\n  fullWidth: u32,\r\n  fullHeight: u32,\r\n}\r\n@group(0) @binding(8) var<uniform> reproj : ReprojSettings;\r\n\r\nstruct PerfParams {\r\n  lodBiasMul : f32,\r\n  coarseMipBias : f32,\r\n  _pad0: f32,\r\n  _pad1: f32,\r\n}\r\n@group(0) @binding(9) var<uniform> perf : PerfParams;\r\n\r\n@group(1) @binding(0) var weather2D : texture_2d_array<f32>;\r\n@group(1) @binding(1) var samp2D    : sampler;\r\n\r\n@group(1) @binding(2) var shape3D   : texture_3d<f32>;\r\n@group(1) @binding(3) var sampShape : sampler;\r\n\r\n@group(1) @binding(4) var blueTex   : texture_2d_array<f32>;\r\n@group(1) @binding(5) var sampBN    : sampler;\r\n\r\n@group(1) @binding(6) var detail3D  : texture_3d<f32>;\r\n@group(1) @binding(7) var sampDetail: sampler;\r\n\r\nstruct LightInputs { sunDir: vec3<f32>, _0: f32, camPos: vec3<f32>, _1: f32, }\r\n@group(1) @binding(8) var<uniform> L : LightInputs;\r\n\r\nstruct View {\r\n  camPos : vec3<f32>, _v0: f32,\r\n  right  : vec3<f32>, _v1: f32,\r\n  up     : vec3<f32>, _v2: f32,\r\n  fwd    : vec3<f32>, _v3: f32,\r\n  fovY   : f32, aspect: f32, stepBase: f32, stepInc: f32,\r\n  planetRadius: f32, cloudBottom: f32, cloudTop: f32, volumeLayers: f32,\r\n  worldToUV: f32, _a: f32, _b: f32, _c: f32,\r\n}\r\n@group(1) @binding(9) var<uniform> V : View;\r\n\r\nstruct Box {\r\n  center: vec3<f32>, _b0: f32,\r\n  half: vec3<f32>, uvScale: f32,\r\n}\r\n@group(1) @binding(10) var<uniform> B : Box;\r\n\r\n@group(1) @binding(11) var historyPrev : texture_2d_array<f32>;\r\n@group(1) @binding(12) var sampHistory : sampler;\r\n\r\n@group(1) @binding(13) var motionTex : texture_2d<f32>;\r\n@group(1) @binding(14) var sampMotion: sampler;\r\n\r\n@group(1) @binding(15) var depthPrev : texture_2d<f32>;\r\n@group(1) @binding(16) var sampDepth: sampler;\r\n\r\n// Workgroup cache\r\nvar<workgroup> wg_weatherDim : vec2<f32>;\r\nvar<workgroup> wg_blueDim    : vec2<f32>;\r\nvar<workgroup> wg_shapeDim   : vec3<f32>;\r\nvar<workgroup> wg_detailDim  : vec3<f32>;\r\nvar<workgroup> wg_maxMipW    : f32;\r\nvar<workgroup> wg_maxMipS    : f32;\r\nvar<workgroup> wg_maxMipD    : f32;\r\nvar<workgroup> wg_scaleS     : f32;\r\nvar<workgroup> wg_scaleD     : f32;\r\nvar<workgroup> wg_finestWorld: f32;\r\n\r\n// ---------------------- helpers\r\nfn saturate(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }\r\nfn mix_f(a: f32, b: f32, t: f32) -> f32 { return a * (1.0 - t) + b * t; }\r\nfn mix_v3(a: vec3<f32>, b: vec3<f32>, t: f32) -> vec3<f32> { return a * (1.0 - t) + b * t; }\r\nfn mix_v4(a: vec4<f32>, b: vec4<f32>, t: f32) -> vec4<f32> { return a * (1.0 - t) + b * t; }\r\nfn remap(v: f32, a: f32, b: f32, c: f32, d: f32) -> f32 { return c + (v - a) * (d - c) / max(b - a, EPS); }\r\nfn luminance(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)); }\r\n\r\nfn clamp_luma_to(val: vec3<f32>, refc: vec3<f32>, rel: f32, abs_eps: f32) -> vec3<f32> {\r\n  let tL = luminance(refc);\r\n  let vL = max(luminance(val), 1e-6);\r\n  let hi = tL * (1.0 + rel) + abs_eps;\r\n  let lo = max(tL * (1.0 - rel) - abs_eps, 0.0);\r\n  if (vL > hi) { return val * (hi / vL); }\r\n  if (vL < lo) { return val * (max(lo, 1e-6) / vL); }\r\n  return val;\r\n}\r\n\r\n// tiny hash\r\nfn hash13_i(p: vec3<i32>) -> f32 {\r\n  var h: u32 = 374761393u * u32(p.x) + 668265263u * u32(p.y) + 362437u * u32(p.z);\r\n  h = (h ^ (h >> 13u)) * 1274126177u;\r\n  h = h ^ (h >> 16u);\r\n  return f32(h) * 2.3283064365386963e-10;\r\n}\r\nfn smoothCellHash2D(p: vec2<f32>, freq: f32) -> f32 {\r\n  let uv = p * freq;\r\n  let i  = floor(uv);\r\n  let f  = fract(uv);\r\n  let h00 = hash13_i(vec3<i32>(i32(i.x),     i32(i.y),     0));\r\n  let h10 = hash13_i(vec3<i32>(i32(i.x) + 1, i32(i.y),     0));\r\n  let h01 = hash13_i(vec3<i32>(i32(i.x),     i32(i.y) + 1, 0));\r\n  let h11 = hash13_i(vec3<i32>(i32(i.x) + 1, i32(i.y) + 1, 0));\r\n  let u = f * f * (3.0 - 2.0 * f);\r\n  return mix_f(mix_f(h00, h10, u.x), mix_f(h01, h11, u.x), u.y);\r\n}\r\n\r\n// texture wrappers\r\nfn wrap2D(tex: texture_2d_array<f32>, samp: sampler, uv: vec2<f32>, layer_idx: i32, lod: f32) -> vec4<f32> {\r\n  let d = wg_weatherDim;\r\n  let ep = vec2<f32>(0.5 / max(d.x, 1.0), 0.5 / max(d.y, 1.0));\r\n  let u  = uv * (vec2<f32>(1.0) - 2.0 * ep) + ep;\r\n  return textureSampleLevel(tex, samp, u, layer_idx, lod);\r\n}\r\nfn wrap3D_shape(tex: texture_3d<f32>, samp: sampler, uvw: vec3<f32>, lod: f32) -> vec4<f32> {\r\n  let d = wg_shapeDim;\r\n  let ep = vec3<f32>(0.5 / max(d.x,1.0), 0.5 / max(d.y,1.0), 0.5 / max(d.z,1.0));\r\n  let u  = uvw * (vec3<f32>(1.0) - 2.0 * ep) + ep;\r\n  return textureSampleLevel(tex, samp, u, lod);\r\n}\r\nfn wrap3D_detail(tex: texture_3d<f32>, samp: sampler, uvw: vec3<f32>, lod: f32) -> vec4<f32> {\r\n  let d = wg_detailDim;\r\n  let ep = vec3<f32>(0.5 / max(d.x, 1.0), 0.5 / max(d.y, 1.0), 0.5 / max(d.z, 1.0));\r\n  let u  = uvw * (vec3<f32>(1.0) - 2.0 * ep) + ep;\r\n  return textureSampleLevel(tex, samp, u, lod);\r\n}\r\n\r\n// blue noise\r\nfn sampleBlueScreen(pixI: vec2<i32>) -> f32 {\r\n  let res = vec2<f32>(f32(frame.fullWidth), f32(frame.fullHeight));\r\n  let bnD = wg_blueDim;\r\n  let uvSS = (vec2<f32>(pixI) + 0.5) / res;\r\n  let uvBN = fract(uvSS * res / bnD);\r\n  return textureSampleLevel(blueTex, sampBN, uvBN, 0i, 0.0).r;\r\n}\r\n\r\n// box helpers\r\nfn boxMin() -> vec3<f32> { return B.center - B.half; }\r\nfn boxMax() -> vec3<f32> { return B.center + B.half; }\r\n\r\n// robust AABB intersect\r\nfn intersectAABB_robust(ro: vec3<f32>, rd: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> vec2<f32> {\r\n  let rdSafe = select(vec3<f32>(EPS), rd, vec3<bool>(abs(rd) > vec3<f32>(EPS)));\r\n  let inv = vec3<f32>(1.0) / rdSafe;\r\n  let t0 = (bmin - ro) * inv;\r\n  let t1 = (bmax - ro) * inv;\r\n  let tmin3 = min(t0, t1);\r\n  let tmax3 = max(t0, t1);\r\n  let tmin = max(max(tmin3.x, tmin3.y), tmin3.z);\r\n  let tmax = min(min(tmax3.x, tmax3.y), tmax3.z);\r\n  return vec2<f32>(tmin, tmax);\r\n}\r\n\r\n// world warp in XZ\r\nfn worldWarpXZ(pos_xz: vec2<f32>, ph: f32, boxMaxXZ: f32) -> vec2<f32> {\r\n  let norm = max(boxMaxXZ, 1.0);\r\n  let p = pos_xz / norm;\r\n\r\n  let warpAmp  = TUNE.baseJitterFrac * boxMaxXZ * 0.5;\r\n\r\n  let s1x = smoothCellHash2D(p + vec2<f32>(12.34, 78.9), 4.0);\r\n  let s1y = smoothCellHash2D(p + vec2<f32>(98.7,  6.54), 4.0);\r\n  let s2x = smoothCellHash2D(p * 1.73 + vec2<f32>(3.21, 4.56), 8.28);\r\n  let s2y = smoothCellHash2D(p * 1.91 + vec2<f32>(7.89, 1.23), 8.28);\r\n\r\n  let ox = (s1x - 0.5) + 0.5 * (s2x - 0.5);\r\n  let oz = (s1y - 0.5) + 0.5 * (s2y - 0.5);\r\n\r\n  let ang = smoothCellHash2D(p * 3.0 + vec2<f32>(9.7, 2.3), 16.0) * 2.0 * PI;\r\n  let rad = (smoothCellHash2D(p * 3.0 + vec2<f32>(1.1, 7.7), 16.0) - 0.5) * (TUNE.baseJitterFrac * 0.4 * boxMaxXZ);\r\n  let rot = vec2<f32>(cos(ang), sin(ang)) * rad;\r\n\r\n  let user = vec2<f32>(cos(opt._r3), sin(opt._r3)) * opt._r2 * 0.001;\r\n\r\n  return vec2<f32>(ox, oz) * warpAmp + rot * mix_f(0.3, 1.2, ph) + user;\r\n}\r\n\r\n// shape & detail samplers\r\nfn sampleShapeRGBA(pos: vec3<f32>, ph: f32, lod: f32) -> vec4<f32> {\r\n  let scaleS = max(wg_scaleS, EPS);\r\n  let boxMaxXZ = max(B.half.x, B.half.z);\r\n\r\n  let w = worldWarpXZ(pos.xz, ph, boxMaxXZ);\r\n\r\n  let pW = vec3<f32>(\r\n    pos.x + w.x + NTransform.shapeOffsetWorld.x,\r\n    pos.y + ph * 7.0 + NTransform.shapeOffsetWorld.y,\r\n    pos.z + w.y + NTransform.shapeOffsetWorld.z\r\n  );\r\n\r\n  return wrap3D_shape(shape3D, sampShape, pW * scaleS * NTransform.shapeScale, lod);\r\n}\r\n\r\nfn sampleDetailRGB(pos: vec3<f32>, ph: f32, lod: f32) -> vec3<f32> {\r\n  let scaleD = max(wg_scaleD, EPS);\r\n  let boxMaxXZ = max(B.half.x, B.half.z);\r\n\r\n  let w = worldWarpXZ(pos.xz, ph, boxMaxXZ);\r\n\r\n  let pW = vec3<f32>(\r\n    pos.x + w.x + NTransform.detailOffsetWorld.x,\r\n    pos.y + NTransform.detailOffsetWorld.y,\r\n    pos.z + w.y + NTransform.detailOffsetWorld.z\r\n  );\r\n\r\n  return wrap3D_detail(detail3D, sampDetail, pW * scaleD * NTransform.detailScale, lod).rgb;\r\n}\r\n\r\n// height shape and density\r\nfn heightShape(ph: f32, wBlue: f32) -> f32 {\r\n  let sr_bottom = saturate(remap(ph, 0.0, 0.07, 0.0, 1.0));\r\n  let stop_h = saturate(wBlue + 0.12);\r\n  let sr_top  = saturate(remap(ph, stop_h * 0.2, stop_h, 1.0, 0.0));\r\n  var base = sr_bottom * sr_top;\r\n  let anvilFactor = saturate(C.cloudAnvilAmount) * saturate(C.globalCoverage);\r\n  let expo = saturate(remap(ph, 0.65, 0.95, 1.0, 1.0 - anvilFactor * 0.9));\r\n  return pow(base, expo);\r\n}\r\nfn computePH(p_world: vec3<f32>, wm: vec4<f32>) -> f32 {\r\n  let boxH = max(B.half.y * 2.0, EPS);\r\n  let jBase = (wm.r * 2.0 - 1.0) * (TUNE.baseJitterFrac * boxH);\r\n  let jTop  = (wm.g * 2.0 - 1.0) * (TUNE.topJitterFrac  * boxH);\r\n  let baseY = (B.center.y - B.half.y) + jBase;\r\n  let topY  = (B.center.y + B.half.y) + jTop;\r\n  return saturate((p_world.y - baseY) / max(topY - baseY, EPS));\r\n}\r\nfn detailMod(ph: f32, d: vec3<f32>) -> f32 {\r\n  let fbm = d.r * 0.625 + d.g * 0.25 + d.b * 0.125;\r\n  return 0.35 * exp(-C.globalCoverage * 0.75) * mix_f(fbm, 1.0 - fbm, saturate(ph * 5.0));\r\n}\r\nfn densityHeight(ph: f32) -> f32 {\r\n  var ret = ph;\r\n  ret *= saturate(remap(ph, 0.0, 0.2, 0.0, 1.0));\r\n  ret *= mix_f(1.0, saturate(remap(sqrt(max(ph,0.0)), 0.4, 0.95, 1.0, 0.2)), saturate(C.cloudAnvilAmount));\r\n  ret *= saturate(remap(ph, 0.9, 1.0, 1.0, 0.0));\r\n  ret *= max(C.globalDensity, 0.0);\r\n  return ret;\r\n}\r\nfn weatherCoverageGate(wm: vec4<f32>) -> f32 {\r\n  let wHi = saturate(remap(C.globalCoverage, 0.0, 1.0, 0.0, 1.0) - 0.5) * wm.g * 2.0;\r\n  let WMc = max(wm.r, wHi);\r\n  return 1.0 - C.globalCoverage * saturate(WMc - opt._r1);\r\n}\r\nfn densityFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>) -> f32 {\r\n  let fbm_s = s.g * 0.625 + s.b * 0.25 + s.a * 0.125 - 1.0;\r\n  let SNsample = remap(s.r, fbm_s, 1.0, 0.0, 1.0);\r\n\r\n  var SA = saturate(heightShape(ph, 1.0));\r\n  let wVar = fract(wm.r * 1.7 + wm.g * 2.3);\r\n  let bulge = 1.0 + 0.18 * (abs(fract(ph * (1.0 + wVar * 1.7)) - 0.5) * 2.0 - 0.5) * 0.5;\r\n  SA = saturate(SA * bulge);\r\n\r\n  let gate = weatherCoverageGate(wm);\r\n  let SNnd = saturate(remap(SNsample * SA, gate, 1.0, 0.0, 1.0));\r\n  let DN = detailMod(ph, det);\r\n  let core = saturate(remap(SNnd, DN, 1.0, 0.0, 1.0));\r\n  return max(core * densityHeight(ph), 0.0);\r\n}\r\n\r\n// scattering and lighting\r\nfn HG(cos_angle: f32, g: f32) -> f32 {\r\n  let gg = clamp(g, -0.999, 0.999);\r\n  let g2 = gg * gg;\r\n  let ca = clamp(cos_angle, -1.0, 1.0);\r\n  let denom = pow(max(1.0 + g2 - 2.0 * gg * ca, 1e-6), 1.5);\r\n  return (1.0 - g2) / denom;\r\n}\r\n\r\nfn InOutScatter(cos_angle: f32) -> f32 {\r\n  let ca = clamp(cos_angle, -1.0, 1.0);\r\n\r\n  let in_hg  = HG(ca,  C.inScatterG);\r\n  let out_hg = HG(ca, -C.outScatterG);\r\n\r\n  let absCa = saturate(abs(ca));\r\n  let silverBase = pow(absCa, max(C.silverExponent, 0.0));\r\n\r\n  let horizon = pow(saturate(1.0 - absCa), 2.0);\r\n  let silverH = mix_f(silverBase, max(silverBase, horizon), saturate(C.silverHorizonBoost));\r\n\r\n  let dir01 = saturate(ca * 0.5 + 0.5);\r\n  let bias01 = saturate(C.silverDirectionBias * 0.5 + 0.5);\r\n  let dirPref = mix_f(1.0 - dir01, dir01, bias01) * 2.0;\r\n\r\n  let silver = C.silverIntensity * silverH * dirPref;\r\n\r\n  let in_scatter  = in_hg + silver;\r\n  let out_scatter = out_hg;\r\n\r\n  return mix_f(in_scatter, out_scatter, saturate(C.inVsOut));\r\n}\r\n\r\nfn Attenuation(Tsun: f32, cos_angle: f32) -> f32 {\r\n  let beer = max(C.cloudBeer, EPS);\r\n  let Tprim = clamp(Tsun, 0.0, 1.0);\r\n\r\n  let ca01 = saturate(cos_angle * 0.5 + 0.5);\r\n  let clampScale = mix_f(1.15, 0.70, ca01);\r\n  let clampOD = max(C.attenuationClamp, 0.0) * clampScale;\r\n\r\n  let Tfloor = exp2(- (beer * clampOD) * INV_LN2);\r\n  return max(Tprim, Tfloor);\r\n}\r\n\r\nfn OutScatterAmbient(density: f32, percent_height: f32) -> f32 {\r\n  let d = max(density, 0.0);\r\n  let ph = saturate(percent_height);\r\n\r\n  let h = mix_f(0.35, 1.0, ph);\r\n  let vertical = pow(saturate(remap(ph, 0.0, 0.3, 0.8, 1.0)), 0.8);\r\n\r\n  let depth = C.outScatterAmbientAmt * d * h;\r\n  return exp2(- (depth * vertical) * INV_LN2);\r\n}\r\n\r\nfn surfaceShadowFactor(n: vec3<f32>, sunDir: vec3<f32>, minLit: f32, exponent: f32) -> f32 {\r\n  let s = saturate(dot(n, sunDir) * 0.5 + 0.5);\r\n  return mix_f(minLit, 1.0, pow(s, exponent));\r\n}\r\n\r\nfn CalculateLight(\r\n  density: f32,\r\n  Tsun: f32,\r\n  cos_angle: f32,\r\n  percent_height: f32,\r\n  bluenoise: f32,\r\n  dist_along_ray: f32,\r\n  rimBoost: f32\r\n) -> vec3<f32> {\r\n  let scatter = InOutScatter(cos_angle);\r\n  let attenT  = Attenuation(Tsun, cos_angle);\r\n  let ambT    = OutScatterAmbient(density, percent_height);\r\n\r\n  var atten = attenT * scatter * ambT;\r\n\r\n  let amb = density * C.ambientMinimum * (1.0 - pow(saturate(dist_along_ray / 4000.0), 2.0));\r\n  atten = atten + amb * (1.0 - saturate(atten));\r\n\r\n  atten = atten + bluenoise * 0.0025;\r\n  atten = atten * (1.0 + 0.35 * rimBoost);\r\n\r\n  return atten * C.sunColor;\r\n}\r\n\r\n// ---------- helper: approximate surface normal from coarse shape mip\r\nfn approxShapeNormal(pos: vec3<f32>, ph: f32, lodShape: f32) -> vec3<f32> {\r\n  let probe = max(wg_finestWorld * 1.25, 1e-3);\r\n\r\n  let c  = sampleShapeRGBA(pos, ph, lodShape).r;\r\n  let px = sampleShapeRGBA(pos + vec3<f32>(probe, 0.0, 0.0), ph, lodShape).r;\r\n  let nx = sampleShapeRGBA(pos - vec3<f32>(probe, 0.0, 0.0), ph, lodShape).r;\r\n  let pz = sampleShapeRGBA(pos + vec3<f32>(0.0, 0.0, probe), ph, lodShape).r;\r\n  let nz = sampleShapeRGBA(pos - vec3<f32>(0.0, 0.0, probe), ph, lodShape).r;\r\n  let py = sampleShapeRGBA(pos + vec3<f32>(0.0, probe, 0.0), ph, lodShape).r;\r\n\r\n  let gy = (py - c) / probe;\r\n  let gx = (px - nx) * 0.5 / probe;\r\n  let gz = (pz - nz) * 0.5 / probe;\r\n\r\n  var n = normalize(vec3<f32>(-gx, -gy, -gz));\r\n  if (length(n) < 1e-4) { return vec3<f32>(0.0, 1.0, 0.0); }\r\n  return n;\r\n}\r\n\r\n// weather UV (precomputed parameters)\r\nfn weatherUV_from(pos_world: vec3<f32>, bmin_xz: vec2<f32>, invAabb_xz: vec2<f32>, mul: f32) -> vec2<f32> {\r\n  return (pos_world.xz - bmin_xz) * invAabb_xz * mul;\r\n}\r\n\r\n// sun march\r\nfn sunSingle(\r\n  p0: vec3<f32>,\r\n  sunDir: vec3<f32>,\r\n  weatherLOD: f32,\r\n  lodShapeBase: f32,\r\n  lodDetailBase: f32,\r\n  stepLen: f32,\r\n  bmin_xz: vec2<f32>,\r\n  invAabb_xz: vec2<f32>,\r\n  mulW: f32\r\n) -> f32 {\r\n  var T = 1.0;\r\n  let parity = f32(i32(reproj.frameIndex % 2u));\r\n  var p = p0 + sunDir * (0.5 * stepLen * parity);\r\n\r\n  for (var i: i32 = 0; i < TUNE.sunSteps; i = i + 1) {\r\n    let uv = weatherUV_from(p, bmin_xz, invAabb_xz, mulW);\r\n    let wm = wrap2D(weather2D, samp2D, uv, 0i, weatherLOD);\r\n\r\n    let ph  = computePH(p, wm);\r\n    let s   = sampleShapeRGBA(p, ph, lodShapeBase  + f32(i) * 0.5);\r\n    let det = sampleDetailRGB(p, ph, lodDetailBase + f32(i) * 0.5);\r\n    let d   = densityFromSamples(ph, wm, s, det);\r\n\r\n    T *= exp2(- (C.cloudBeer * d * stepLen) * INV_LN2);\r\n    if (T < TUNE.sunMinTr) { break; }\r\n    p += sunDir * stepLen;\r\n  }\r\n\r\n  return T;\r\n}\r\n\r\nfn sunTransmittance(\r\n  p: vec3<f32>,\r\n  sunDir: vec3<f32>,\r\n  weatherLOD: f32,\r\n  lodShapeBase: f32,\r\n  lodDetailBase: f32,\r\n  stepLen: f32,\r\n  bmin_xz: vec2<f32>,\r\n  invAabb_xz: vec2<f32>,\r\n  mulW: f32\r\n) -> f32 {\r\n  return 0.5 * (\r\n    sunSingle(p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, stepLen, bmin_xz, invAabb_xz, mulW) +\r\n    sunSingle(p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, stepLen, bmin_xz, invAabb_xz, mulW)\r\n  );\r\n}\r\n\r\n// quick empty probe\r\nfn weatherProbeEmpty(\r\n  p_start: vec3<f32>,\r\n  rd: vec3<f32>,\r\n  stepLen: f32,\r\n  nProbes: i32,\r\n  coarseMip: f32,\r\n  bmin_xz: vec2<f32>,\r\n  invAabb_xz: vec2<f32>,\r\n  mulW: f32\r\n) -> bool {\r\n  var pos = p_start;\r\n  var emptyCount: i32 = 0;\r\n\r\n  for (var i: i32 = 0; i < nProbes; i = i + 1) {\r\n    let uv = weatherUV_from(pos, bmin_xz, invAabb_xz, mulW);\r\n    let wm = wrap2D(weather2D, samp2D, uv, 0i, coarseMip);\r\n    if (weatherCoverageGate(wm) >= TUNE.weatherRejectGate) { emptyCount = emptyCount + 1; }\r\n    pos = pos + rd * stepLen;\r\n  }\r\n\r\n  return (f32(emptyCount) / f32(nProbes)) > 0.66;\r\n}\r\n\r\n// reprojection helpers\r\nfn fullPixFromCurrent(pix: vec2<i32>) -> vec2<i32> {\r\n  let res = vec2<f32>(f32(frame.fullWidth), f32(frame.fullHeight));\r\n  let fullRes = vec2<f32>(f32(reproj.fullWidth), f32(reproj.fullHeight));\r\n  let xf = floor((vec2<f32>(pix) + 0.5) * (fullRes / res));\r\n  return vec2<i32>(\r\n    i32(clamp(xf.x, 0.0, fullRes.x - 1.0)),\r\n    i32(clamp(xf.y, 0.0, fullRes.y - 1.0))\r\n  );\r\n}\r\nfn store_history_full_res_if_owner(pixCurr: vec2<i32>, layer: i32, color: vec4<f32>) {\r\n  if (reproj.enabled == 0u) {\r\n    textureStore(historyOut, fullPixFromCurrent(pixCurr), layer, color);\r\n    return;\r\n  }\r\n\r\n  let ss = i32(max(reproj.subsample, 1u));\r\n  let off = i32(reproj.sampleOffset % u32(ss * ss));\r\n  let sx = off % ss;\r\n  let sy = off / ss;\r\n\r\n  let fullPix = fullPixFromCurrent(pixCurr);\r\n  if ((fullPix.x % ss) == sx && (fullPix.y % ss) == sy) {\r\n    textureStore(historyOut, fullPix, layer, color);\r\n  }\r\n}\r\n\r\n// fade near AABB faces\r\nfn insideFaceFade(p: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> f32 {\r\n  let dmin = p - bmin;\r\n  let dmax = bmax - p;\r\n  let edge = min(dmin, dmax);\r\n  let closest = min(min(edge.x, edge.y), edge.z);\r\n  let soft = max(0.75 * wg_finestWorld, 0.25);\r\n  return saturate(closest / soft);\r\n}\r\n\r\n// ---------------------- Main compute\r\n@compute @workgroup_size(8,8,1)\r\nfn computeCloud(\r\n  @builtin(global_invocation_id) gid_in: vec3<u32>,\r\n  @builtin(local_invocation_id) local_id: vec3<u32>\r\n) {\r\n  // workgroup cache\r\n  if (local_id.x == 0u && local_id.y == 0u) {\r\n    let wd = textureDimensions(weather2D, 0);\r\n    wg_weatherDim = vec2<f32>(f32(wd.x), f32(wd.y));\r\n\r\n    let bd = textureDimensions(blueTex, 0);\r\n    wg_blueDim = vec2<f32>(f32(bd.x), f32(bd.y));\r\n\r\n    let sd = textureDimensions(shape3D);\r\n    wg_shapeDim = vec3<f32>(f32(sd.x), f32(sd.y), f32(sd.z));\r\n\r\n    let dd = textureDimensions(detail3D);\r\n    wg_detailDim = vec3<f32>(f32(dd.x), f32(dd.y), f32(dd.z));\r\n\r\n    wg_maxMipW = f32(textureNumLevels(weather2D)) - 1.0;\r\n    wg_maxMipS = f32(textureNumLevels(shape3D)) - 1.0;\r\n    wg_maxMipD = f32(textureNumLevels(detail3D)) - 1.0;\r\n\r\n    let scaleS_local = max(V.worldToUV * B.uvScale, EPS);\r\n    wg_scaleS = scaleS_local;\r\n    wg_scaleD = max(scaleS_local * (128.0 / 32.0), EPS);\r\n    wg_finestWorld = min(1.0 / wg_scaleS, 1.0 / wg_scaleD) * 0.6;\r\n  }\r\n  workgroupBarrier();\r\n\r\n  // pixel and guard\r\n  let pixI = vec2<i32>(i32(gid_in.x), i32(gid_in.y)) + vec2<i32>(frame.originX, frame.originY);\r\n  if (pixI.x < 0 || pixI.y < 0 || pixI.x >= i32(frame.fullWidth) || pixI.y >= i32(frame.fullHeight)) {\r\n    return;\r\n  }\r\n\r\n  let fullResF = vec2<f32>(f32(frame.fullWidth), f32(frame.fullHeight));\r\n  let uvPix = (vec2<f32>(pixI) + 0.5) / fullResF;\r\n\r\n  // camera basis\r\n  let camFwd = normalize(V.fwd);\r\n\r\n  var basisRight = normalize(V.right);\r\n  if (length(basisRight) < EPS) { basisRight = vec3<f32>(1.0, 0.0, 0.0); }\r\n\r\n  var basisUp = normalize(V.up);\r\n  if (length(basisUp) < EPS) { basisUp = vec3<f32>(0.0, 1.0, 0.0); }\r\n\r\n  // ray\r\n  var rayRo = V.camPos;\r\n  if (opt.useCustomPos == 1u) {\r\n    let idx = u32(pixI.x) + u32(pixI.y) * frame.fullWidth;\r\n    rayRo = posBuf[idx].xyz;\r\n  }\r\n\r\n  let ndc = uvPix * 2.0 - vec2<f32>(1.0, 1.0);\r\n  let tanY = tan(0.5 * V.fovY);\r\n\r\n  let rd_camera = normalize(vec3<f32>(ndc.x * V.aspect * tanY, -ndc.y * tanY, -1.0));\r\n  let rayRd = normalize(basisRight * rd_camera.x + basisUp * rd_camera.y - camFwd * rd_camera.z);\r\n\r\n  // intersect volume\r\n  let bmin = boxMin();\r\n  let bmax = boxMax();\r\n  let ti = intersectAABB_robust(rayRo, rayRd, bmin, bmax);\r\n\r\n  if (ti.x > ti.y || ti.y <= 0.0) {\r\n    textureStore(outTex, pixI, frame.layerIndex, vec4<f32>(0.0));\r\n    if (reproj.enabled == 1u) { store_history_full_res_if_owner(pixI, frame.layerIndex, vec4<f32>(0.0)); }\r\n    return;\r\n  }\r\n\r\n  var t0 = max(ti.x - TUNE.aabbFaceOffset, 0.0);\r\n  var t1 = ti.y + TUNE.aabbFaceOffset;\r\n  if (t0 >= t1) {\r\n    textureStore(outTex, pixI, frame.layerIndex, vec4<f32>(0.0));\r\n    if (reproj.enabled == 1u) { store_history_full_res_if_owner(pixI, frame.layerIndex, vec4<f32>(0.0)); }\r\n    return;\r\n  }\r\n\r\n  // precompute weather mapping and LOD\r\n  let aabb = max(bmax - bmin, vec3<f32>(EPS, EPS, EPS));\r\n  let bmin_xz = bmin.xz;\r\n  let invAabb_xz = vec2<f32>(1.0, 1.0) / max(aabb.xz, vec2<f32>(EPS));\r\n\r\n  let mulW = select(opt._r0, 0.2, opt._r0 == 0.0);\r\n\r\n  let worldToTex = mulW * vec2<f32>(\r\n    wg_weatherDim.x / max(aabb.x, EPS),\r\n    wg_weatherDim.y / max(aabb.z, EPS)\r\n  );\r\n  let fp = max(worldToTex.x, worldToTex.y);\r\n  let weatherLOD_base = clamp(\r\n    log2(max(fp, 1.0)) + TUNE.lodBiasWeather * max(perf.lodBiasMul, 0.0001),\r\n    0.0,\r\n    wg_maxMipW\r\n  );\r\n\r\n  // noise and jitter\r\n  let bnPix  = sampleBlueScreen(pixI);\r\n  let rand0  = fract(bnPix + 0.61803398875 * f32(reproj.frameIndex));\r\n\r\n  // step sizing\r\n  let viewDir = normalize(-rayRd);\r\n  let cosVF   = max(dot(rayRd, camFwd), EPS);\r\n\r\n  let voxelBound = wg_finestWorld / max(abs(dot(rayRd, basisUp)), 0.15);\r\n\r\n  var baseStep = clamp(V.stepBase, TUNE.minStep, TUNE.maxStep);\r\n  baseStep = min(baseStep, voxelBound);\r\n  baseStep = baseStep * mix_f(1.0, 1.0 + TUNE.stepJitter, rand0 * 2.0 - 1.0);\r\n\r\n  let entryDepth = dot((rayRo + rayRd * t0) - V.camPos, camFwd);\r\n  let nearFactor = saturate(1.0 - entryDepth / TUNE.nearFluffDist);\r\n  baseStep = clamp(baseStep * mix_f(1.0, TUNE.nearStepScale, nearFactor), TUNE.minStep, TUNE.maxStep);\r\n\r\n  let farF = saturate(remap(entryDepth, TUNE.farStart, TUNE.farFull, 0.0, 1.0));\r\n  baseStep = clamp(baseStep * mix_f(1.0, TUNE.farStepMult, farF), TUNE.minStep, TUNE.maxStep);\r\n\r\n  var t = clamp(t0 + (rand0 * TUNE.phaseJitter) * baseStep, t0, t1);\r\n\r\n  // lighting setup\r\n  let sunDir = normalize(L.sunDir);\r\n  let cosVS  = dot(viewDir, sunDir);\r\n\r\n  // sun step length\r\n  let halfSpan = 0.5 * max(B.half.y * 2.0, EPS);\r\n  let sunStepLen = min(\r\n    halfSpan / f32(max(TUNE.sunSteps, 1)),\r\n    min(1.0 / wg_scaleS, 1.0 / wg_scaleD) * 0.6 / max(abs(sunDir.y), 0.15)\r\n  );\r\n\r\n  let weatherLOD = min(wg_maxMipW, weatherLOD_base + TUNE.farLodPush * farF);\r\n\r\n  // accumulators\r\n  var Tr  = 1.0;\r\n  var rgb = vec3<f32>(0.0);\r\n\r\n  var Tsun_cached = 1.0;\r\n  var prevDens : f32 = 0.0;\r\n  var prevTsun : f32 = 1.0;\r\n\r\n  var shapeN_cached = vec3<f32>(0.0, 1.0, 0.0);\r\n  var rim_cached : f32 = 0.0;\r\n\r\n  var runMeanL : f32 = 0.0;\r\n  var runN     : f32 = 0.0;\r\n\r\n  var iter: i32 = 0;\r\n\r\n  loop {\r\n    if (iter >= TUNE.maxSteps) { break; }\r\n    if (t >= t1 || Tr < 0.001) { break; }\r\n\r\n    let p = rayRo + rayRd * t;\r\n\r\n    // coarse weather skip\r\n    let subsample = f32(max(reproj.subsample, 1u));\r\n    let coarsePenalty = log2(max(subsample, 1.0));\r\n    var coarseMip = max(0.0, wg_maxMipW - (TUNE.weatherRejectMip + max(perf.coarseMipBias, 0.0) + coarsePenalty));\r\n    coarseMip = min(wg_maxMipW, coarseMip + farF * 1.0);\r\n\r\n    if (weatherProbeEmpty(p, rayRd, baseStep * 2.0, 3, coarseMip, bmin_xz, invAabb_xz, mulW)) {\r\n      t = min(t + baseStep * TUNE.emptySkipMult, t1);\r\n      iter += 1;\r\n      continue;\r\n    }\r\n\r\n    // quick weather density proxy\r\n    let uv_coarse = weatherUV_from(p, bmin_xz, invAabb_xz, mulW);\r\n    let wm_coarse = wrap2D(weather2D, samp2D, uv_coarse, 0i, min(weatherLOD, max(0.0, wg_maxMipW)));\r\n    let ph_coarse = computePH(p, wm_coarse);\r\n    let quickCoverage = saturate((wm_coarse.r - 0.35) * 2.5);\r\n    if (quickCoverage < 0.01 && (ph_coarse < 0.02)) {\r\n      t = min(t + baseStep * 2.0, t1);\r\n      iter += 1;\r\n      continue;\r\n    }\r\n\r\n    // LOD from step\r\n    let baseLOD  = clamp(log2(max(baseStep / wg_finestWorld, 1.0)), 0.0, wg_maxMipS);\r\n    let nearDepth = max(cosVF * (t - t0), 0.0);\r\n    let nearSmooth = pow(saturate(1.0 - nearDepth / TUNE.nearFluffDist), 0.85);\r\n\r\n    let lodBias  = mix_f(0.0, TUNE.nearLodBias, nearSmooth);\r\n    let lodShapeBase  = clamp(baseLOD + lodBias + TUNE.farLodPush * farF, 0.0, wg_maxMipS);\r\n    let lodDetailBase = clamp(baseLOD + lodBias + TUNE.farLodPush * farF, 0.0, wg_maxMipD);\r\n\r\n    // weather full\r\n    let uv = weatherUV_from(p, bmin_xz, invAabb_xz, mulW);\r\n    let wm = wrap2D(weather2D, samp2D, uv, 0i, weatherLOD);\r\n    let ph = computePH(p, wm);\r\n\r\n    // mip hysteresis\r\n    let sL : f32 = floor(lodShapeBase);\r\n    let sF : f32 = saturate(lodShapeBase - sL);\r\n    let dL : f32 = floor(lodDetailBase);\r\n    let dF : f32 = saturate(lodDetailBase - dL);\r\n\r\n    var s : vec4<f32>;\r\n    if (sF > TUNE.lodBlendThreshold) {\r\n      let s_lo = sampleShapeRGBA(p, ph, sL);\r\n      let s_hi = sampleShapeRGBA(p, ph, min(sL + 1.0, wg_maxMipS));\r\n      s = mix_v4(s_lo, s_hi, sF);\r\n    } else {\r\n      s = sampleShapeRGBA(p, ph, sL);\r\n    }\r\n\r\n    var det : vec3<f32>;\r\n    if (dF > TUNE.lodBlendThreshold) {\r\n      let d_lo = sampleDetailRGB(p, ph, dL);\r\n      let d_hi = sampleDetailRGB(p, ph, min(dL + 1.0, wg_maxMipD));\r\n      det = mix_v3(d_lo, d_hi, dF);\r\n    } else {\r\n      det = sampleDetailRGB(p, ph, dL);\r\n    }\r\n    det = mix_v3(det, det * TUNE.farDetailAtten, farF);\r\n\r\n    // density\r\n    var dens = densityFromSamples(ph, wm, s, det);\r\n    dens *= insideFaceFade(p, bmin, bmax);\r\n    dens *= mix_f(TUNE.nearDensityMult, 1.0, saturate(nearDepth / TUNE.nearDensityRange));\r\n\r\n    let densSmoothed = mix_f(dens, prevDens, saturate(TUNE.raySmoothDens));\r\n\r\n    if (densSmoothed > 0.00008) {\r\n      if ((iter % TUNE.sunStride) == 0) {\r\n        if (densSmoothed * baseStep > TUNE.sunDensityGate) {\r\n          Tsun_cached = sunTransmittance(\r\n            p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, sunStepLen,\r\n            bmin_xz, invAabb_xz, mulW\r\n          );\r\n        } else {\r\n          Tsun_cached = 1.0;\r\n        }\r\n\r\n        shapeN_cached = approxShapeNormal(p, ph, max(0.0, lodShapeBase));\r\n        rim_cached = pow(1.0 - saturate(dot(shapeN_cached, viewDir)), 2.0);\r\n      }\r\n\r\n      let TsunSmoothed = mix_f(Tsun_cached, prevTsun, saturate(TUNE.raySmoothSun));\r\n      let bnScaled = mix_f(bnPix, bnPix * TUNE.bnFarScale, farF);\r\n\r\n      let lightBase = CalculateLight(densSmoothed, TsunSmoothed, cosVS, ph, bnScaled, t - t0, rim_cached);\r\n\r\n      let surfShade = surfaceShadowFactor(shapeN_cached, sunDir, 0.25, 1.15);\r\n      let occlusion = mix_f(0.6, 1.0, saturate(TsunSmoothed));\r\n\r\n      var lightCol = lightBase * surfShade * occlusion;\r\n\r\n      let lNow = luminance(lightCol);\r\n      let meanL = select(lNow, runMeanL / max(runN, 1.0), runN > 0.0);\r\n      let allow = max(meanL * (1.0 + TUNE.fflyRelClamp), TUNE.fflyAbsFloor);\r\n      if (lNow > allow) { lightCol *= allow / max(lNow, 1e-6); }\r\n\r\n      let beer = max(C.cloudBeer, EPS);\r\n      let absorb = exp2(- (beer * densSmoothed * baseStep) * INV_LN2);\r\n      let alpha = 1.0 - absorb;\r\n\r\n      rgb += Tr * lightCol * alpha;\r\n      Tr  *= absorb;\r\n\r\n      runMeanL += lNow;\r\n      runN     += 1.0;\r\n\r\n      if (Tr < 0.002) { break; }\r\n    }\r\n\r\n    prevDens = densSmoothed;\r\n    prevTsun = Tsun_cached;\r\n\r\n    t = min(t + baseStep, t1);\r\n    iter += 1;\r\n  }\r\n\r\n  // compose\r\n  var newCol: vec4<f32>;\r\n  if (opt.writeRGB == 1u) {\r\n    newCol = vec4<f32>(rgb, 1.0 - Tr);\r\n  } else {\r\n    let a = 1.0 - Tr;\r\n    if (opt.outputChannel == 0u)      { newCol = vec4<f32>(a, 0.0, 0.0, 1.0); }\r\n    else if (opt.outputChannel == 1u) { newCol = vec4<f32>(0.0, a, 0.0, 1.0); }\r\n    else if (opt.outputChannel == 2u) { newCol = vec4<f32>(0.0, 0.0, a, 1.0); }\r\n    else                              { newCol = vec4<f32>(0.0, 0.0, 0.0, a); }\r\n  }\r\n\r\n  // soft fluff + ambient tint\r\n  {\r\n    let a = newCol.a;\r\n    let fluff = clamp(0.28 * a * mix_f(1.0, 1.4, saturate(1.0 - cosVS)), 0.02, 0.50);\r\n    let sunTint = mix_v3(vec3<f32>(0.92, 0.93, 0.96), C.sunColor, saturate(0.5 + 0.5 * cosVS));\r\n    let ambientFill = sunTint * 0.06;\r\n    newCol = vec4<f32>(mix_v3(newCol.rgb, newCol.rgb + ambientFill * a, fluff), smoothstep(0.0, 1.0, a * 1.03));\r\n  }\r\n\r\n  // TAA with variance clamp\r\n  if (reproj.enabled == 1u) {\r\n    let fullRes = vec2<f32>(f32(reproj.fullWidth), f32(reproj.fullHeight));\r\n    let uv_full = (vec2<f32>(fullPixFromCurrent(pixI)) + 0.5) / fullRes;\r\n\r\n    var motion = textureSampleLevel(motionTex, sampMotion, uv_full, 0.0).rg;\r\n    if (reproj.motionIsNormalized == 0u) { motion = motion / fullRes; }\r\n    let prevUV = uv_full - motion;\r\n\r\n    if (prevUV.x < 0.0 || prevUV.y < 0.0 || prevUV.x > 1.0 || prevUV.y > 1.0) {\r\n      textureStore(outTex, pixI, frame.layerIndex, newCol);\r\n      store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);\r\n    } else {\r\n      let prevCol = textureSampleLevel(historyPrev, sampHistory, prevUV, frame.layerIndex, 0.0);\r\n      if (reproj.frameIndex == 0u || prevCol.a < 1e-5 || reproj.temporalBlend <= 0.0001) {\r\n        textureStore(outTex, pixI, frame.layerIndex, newCol);\r\n        store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);\r\n      } else {\r\n        let motionPix = motion * fullRes;\r\n        let motionMag = length(motionPix);\r\n        let alphaDiff = abs(prevCol.a - newCol.a);\r\n\r\n        var stability = exp(-motionMag * 0.9) * exp(-alphaDiff * 6.0);\r\n        var tb = clamp(reproj.temporalBlend * stability, 0.0, 0.985);\r\n        tb *= mix_f(1.0, TUNE.farTaaHistoryBoost, farF);\r\n\r\n        if (reproj.depthTest == 1u) {\r\n          let prevDepth = textureSampleLevel(depthPrev, sampDepth, prevUV, 0.0).r;\r\n          tb *= select(1.0 - saturate(reproj.depthTolerance), 0.25, prevDepth < 1e-6 || prevDepth > 1.0);\r\n        }\r\n\r\n        let relBase = mix_f(TUNE.taaRelMax, TUNE.taaRelMin, saturate(stability));\r\n        let rel     = relBase * mix_f(1.0, 0.80, farF);\r\n\r\n        let newClampedRGB = clamp_luma_to(newCol.rgb, prevCol.rgb, rel, TUNE.taaAbsEps);\r\n        let newClamped = vec4<f32>(newClampedRGB, newCol.a);\r\n\r\n        let blended = mix_v4(newClamped, prevCol, tb);\r\n        textureStore(outTex, pixI, frame.layerIndex, blended);\r\n        store_history_full_res_if_owner(pixI, frame.layerIndex, blended);\r\n      }\r\n    }\r\n  } else {\r\n    textureStore(outTex, pixI, frame.layerIndex, newCol);\r\n    store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);\r\n  }\r\n}\r\n";
 
   // tools/clouds/cloudsRender.wgsl
   var cloudsRender_default = `// cloudsRender.wgsl \u2014 preview: world-space camera + directional sun,\r
