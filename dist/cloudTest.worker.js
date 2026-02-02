@@ -114,34 +114,32 @@ const INV_SQRT2    : f32 = 0.7071067811865476; // 1/\u221A2\r
 const U_SCALE : f32 = 3.0;\r
 const V_SCALE : f32 = 3.0;\r
 const T_SCALE : f32 = 2.0;\r
+const PACK_BIAS : vec4<f32> = vec4<f32>(0.37, 0.21, 0.29, 0.31);\r
 \r
-\r
-// pack like the HTML (x=cosU*uS, y=sinU*uS, z=cosV*vS+cosT*tS, w=sinV*vS+sinT*tS)\r
 fn packPeriodicUV(u: f32, v: f32, theta: f32) -> vec4<f32> {\r
-  let aU = u * TWO_PI;\r
-  let aV = v * TWO_PI;\r
-  let aT = (theta - floor(theta)) * TWO_PI;\r
+  let aU = fract(u) * TWO_PI;\r
+  let aV = fract(v) * TWO_PI;\r
+  let aT = fract(theta) * TWO_PI;\r
 \r
   let x = cos(aU) * U_SCALE;\r
   let y = sin(aU) * U_SCALE;\r
   let z = cos(aV) * V_SCALE + cos(aT) * T_SCALE;\r
   let w = sin(aV) * V_SCALE + sin(aT) * T_SCALE;\r
-  return vec4<f32>(x, y, z, w);\r
+\r
+  return vec4<f32>(x, y, z, w) + PACK_BIAS;\r
 }\r
+\r
 \r
 fn thetaFromDepth(fz: i32) -> f32 {\r
   let uses3D = writeTo3D() || readFrom3D();\r
   if (uses3D) {\r
-    if (frame.fullDepth <= 1u) { return 0.0; }\r
-    // center-of-slice mapping: 0.5/N .. (N-0.5)/N\r
-    return (f32(clampZ(fz)) + 0.5) / f32(frame.fullDepth);\r
+    let d = max(f32(frame.fullDepth), 1.0);\r
+    return (f32(clampZ(fz)) + 0.5) / d; // [0,1)\r
   }\r
   return layerToZ(frame.layerIndex, frame.layers);\r
 }\r
 \r
-fn fetchPos(fx:i32, fy:i32, fz:i32)->vec3<f32> {\r
-\r
-  // \u2500\u2500 original paths (unchanged) when not in toroidal mode \u2500\u2500\r
+fn fetchPos(fx: i32, fy: i32, fz: i32) -> vec3<f32> {\r
   if (options.useCustomPos == 1u) {\r
     let use3D = writeTo3D() || readFrom3D();\r
     let slice_i = select(frame.layerIndex, clampZ(fz), use3D);\r
@@ -150,6 +148,20 @@ fn fetchPos(fx:i32, fy:i32, fz:i32)->vec3<f32> {\r
     let cy = clamp(fy, 0, i32(frame.fullHeight) - 1);\r
     let idx = slice * frame.fullWidth * frame.fullHeight + u32(cy) * frame.fullWidth + u32(cx);\r
     return posBuf[idx].xyz;\r
+  }\r
+\r
+  if (params.toroidal == 1u) {\r
+    let cx = clamp(fx, 0, i32(frame.fullWidth) - 1);\r
+    let cy = clamp(fy, 0, i32(frame.fullHeight) - 1);\r
+\r
+    let invW = 1.0 / max(f32(frame.fullWidth), 1.0);\r
+    let invH = 1.0 / max(f32(frame.fullHeight), 1.0);\r
+\r
+    let U = (f32(cx) + 0.5) * invW;   // [0,1)\r
+    let V = (f32(cy) + 0.5) * invH;   // [0,1)\r
+    let theta = thetaFromDepth(fz);   // [0,1)\r
+\r
+    return vec3<f32>(U, V, theta);\r
   }\r
 \r
   let invW = 1.0 / max(f32(frame.fullWidth), 1.0);\r
@@ -162,22 +174,10 @@ fn fetchPos(fx:i32, fy:i32, fz:i32)->vec3<f32> {\r
     oy = f32(frame.originY);\r
   }\r
 \r
-  if (params.toroidal == 1u) {\r
-    // center-of-texel UVs (matches the HTML path)\r
-    let U = (ox + f32(fx) + 0.5) * invW;  // [0,1)\r
-    let V = (oy + f32(fy) + 0.5) * invH;  // [0,1)\r
-    let theta = thetaFromDepth(fz);       // derive \u03B8 from depth\r
-\r
-    // return (U,V,\u03B8) \u2014 z carries \u03B8, used by packPeriodicUV in generatePerlin4D\r
-    return vec3<f32>(U, V, theta);\r
-    //this is for 4d noise functions with toroidal implementations\r
-  }\r
-\r
-\r
   let x = (ox + f32(fx)) * invW;\r
   let y = (oy + f32(fy)) * invH;\r
 \r
-  var z : f32;\r
+  var z: f32;\r
   let uses3D = writeTo3D() || readFrom3D();\r
   if (uses3D) {\r
     if (frame.fullDepth <= 1u) { z = 0.0; }\r
@@ -185,8 +185,10 @@ fn fetchPos(fx:i32, fy:i32, fz:i32)->vec3<f32> {\r
   } else {\r
     z = layerToZ(frame.layerIndex, frame.layers);\r
   }\r
+\r
   return vec3<f32>(x, y, z);\r
 }\r
+\r
 \r
 \r
 \r
@@ -534,48 +536,48 @@ fn worley3D(p : vec3<f32>) -> f32 {\r
 \r
 \r
 /* ---------- 4D Worley (cellular) ---------- */\r
-fn worley4D(p: vec4<f32>) -> f32 {\r
-  let fx = i32(floor(p.x));\r
-  let fy = i32(floor(p.y));\r
-  let fz = i32(floor(p.z));\r
-  let fw = i32(floor(p.w));\r
+// fn worley4D(p: vec4<f32>) -> f32 {\r
+//   let fx = i32(floor(p.x));\r
+//   let fy = i32(floor(p.y));\r
+//   let fz = i32(floor(p.z));\r
+//   let fw = i32(floor(p.w));\r
 \r
-  var minDistSq : f32 = 1e9;\r
+//   var minDistSq : f32 = 1e9;\r
 \r
-  // iterate neighbor cells in 4D (3^4 = 81)\r
-  for (var dw = -1; dw <= 1; dw = dw + 1) {\r
-    for (var dz = -1; dz <= 1; dz = dz + 1) {\r
-      for (var dy = -1; dy <= 1; dy = dy + 1) {\r
-        for (var dx = -1; dx <= 1; dx = dx + 1) {\r
-          let xi = fx + dx;\r
-          let yi = fy + dy;\r
-          let zi = fz + dz;\r
-          let wi = fw + dw;\r
+//   // iterate neighbor cells in 4D (3^4 = 81)\r
+//   for (var dw = -1; dw <= 1; dw = dw + 1) {\r
+//     for (var dz = -1; dz <= 1; dz = dz + 1) {\r
+//       for (var dy = -1; dy <= 1; dy = dy + 1) {\r
+//         for (var dx = -1; dx <= 1; dx = dx + 1) {\r
+//           let xi = fx + dx;\r
+//           let yi = fy + dy;\r
+//           let zi = fz + dz;\r
+//           let wi = fw + dw;\r
 \r
-          // jitter within each cell using rotated rand4u calls to decorrelate axes\r
-          let rx = rand4u(xi, yi, zi, wi);\r
-          let ry = rand4u(yi, zi, wi, xi);\r
-          let rz = rand4u(zi, wi, xi, yi);\r
-          let rw = rand4u(wi, xi, yi, zi);\r
+//           // jitter within each cell using rotated rand4u calls to decorrelate axes\r
+//           let rx = rand4u(xi, yi, zi, wi);\r
+//           let ry = rand4u(yi, zi, wi, xi);\r
+//           let rz = rand4u(zi, wi, xi, yi);\r
+//           let rw = rand4u(wi, xi, yi, zi);\r
 \r
-          let px = f32(xi) + rx;\r
-          let py = f32(yi) + ry;\r
-          let pz = f32(zi) + rz;\r
-          let pw = f32(wi) + rw;\r
+//           let px = f32(xi) + rx;\r
+//           let py = f32(yi) + ry;\r
+//           let pz = f32(zi) + rz;\r
+//           let pw = f32(wi) + rw;\r
 \r
-          let dxv = px - p.x;\r
-          let dyv = py - p.y;\r
-          let dzv = pz - p.z;\r
-          let dwv = pw - p.w;\r
-          let d2 = dxv * dxv + dyv * dyv + dzv * dzv + dwv * dwv;\r
-          if (d2 < minDistSq) { minDistSq = d2; }\r
-        }\r
-      }\r
-    }\r
-  }\r
+//           let dxv = px - p.x;\r
+//           let dyv = py - p.y;\r
+//           let dzv = pz - p.z;\r
+//           let dwv = pw - p.w;\r
+//           let d2 = dxv * dxv + dyv * dyv + dzv * dzv + dwv * dwv;\r
+//           if (d2 < minDistSq) { minDistSq = d2; }\r
+//         }\r
+//       }\r
+//     }\r
+//   }\r
 \r
-  return sqrt(minDistSq);\r
-}\r
+//   return sqrt(minDistSq);\r
+// }\r
 \r
 \r
 fn cellular3D(p : vec3<f32>) -> f32 {\r
@@ -953,11 +955,157 @@ fn voronoi2D(pos : vec2<f32>) -> f32 {\r
 struct Voro3DMetrics { f1Sq: f32, f2Sq: f32, cellVal: f32 };\r
 struct Voro4DMetrics { f1Sq: f32, f2Sq: f32, cellVal: f32 };\r
 \r
-const VORO_CELL       : u32 = 0u;\r
-const VORO_F1         : u32 = 1u;\r
-const VORO_INTERIOR   : u32 = 2u;\r
-const VORO_EDGES      : u32 = 3u;\r
-const VORO_EDGE_THRESH: u32 = 4u;\r
+// ----------------- voro_eval: pick output depending on mode -----------------\r
+\r
+\r
+const VORO_CELL            : u32 = 0u;\r
+const VORO_F1              : u32 = 1u;\r
+const VORO_INTERIOR        : u32 = 2u;  // gap = F2 - F1\r
+const VORO_EDGES           : u32 = 3u;  // scaled gap\r
+const VORO_EDGE_THRESH     : u32 = 4u;  // gate gap >= threshold\r
+const VORO_FLAT_SHADE      : u32 = 5u;  // interior = 1, edges = 0 (edges defined by gap < threshold)\r
+const VORO_FLAT_SHADE_INV  : u32 = 6u;  // edges = 1, interior = 0 (gap < threshold)\r
+\r
+// Added: "old cellular3D" compatible squared-gap modes (F2^2 - F1^2)\r
+const VORO_INTERIOR_SQ        : u32 = 7u;  // gapSq = F2^2 - F1^2\r
+const VORO_EDGES_SQ           : u32 = 8u;  // scaled gapSq\r
+const VORO_EDGE_THRESH_SQ     : u32 = 9u;  // gate gapSq >= threshold\r
+const VORO_FLAT_SHADE_SQ      : u32 = 10u; // interior = 1, edges = 0 (gapSq < threshold)\r
+const VORO_FLAT_SHADE_INV_SQ  : u32 = 11u; // edges = 1, interior = 0 (gapSq < threshold)\r
+\r
+// Added: F1 threshold and masks (useful for "radius" gates, bubble masks, etc.)\r
+const VORO_F1_THRESH      : u32 = 12u; // gate F1 >= threshold, returns F1 * gate\r
+const VORO_F1_MASK        : u32 = 13u; // smooth mask: 0 below threshold, 1 above (feather=edgeK)\r
+const VORO_F1_MASK_INV    : u32 = 14u; // inverted mask: 1 below threshold, 0 above (feather=edgeK)\r
+\r
+// Added: softer edge line response (no threshold needed)\r
+const VORO_EDGE_RCP       : u32 = 15u; // 1 / (1 + gap*k)\r
+const VORO_EDGE_RCP_SQ    : u32 = 16u; // 1 / (1 + gapSq*k)\r
+\r
+fn voro_edge_dist(f1Sq: f32, f2Sq: f32) -> f32 {\r
+  let f1 = sqrt(max(f1Sq, 0.0));\r
+  let f2 = sqrt(max(f2Sq, 0.0));\r
+  return max(f2 - f1, 0.0);\r
+}\r
+\r
+// edgeDist is gap (or gapSq for *_SQ modes)\r
+// returns 1 near edges (small edgeDist), 0 in interior\r
+fn voro_edge_mask(edgeDist: f32, threshold: f32, feather: f32) -> f32 {\r
+  let t = max(threshold, 0.0);\r
+  if (t <= 0.0) { return 0.0; }\r
+\r
+  let f = max(feather, 0.0);\r
+  if (f > 0.0) {\r
+    return 1.0 - smoothstep(t, t + f, edgeDist);\r
+  }\r
+  return select(0.0, 1.0, edgeDist < t);\r
+}\r
+\r
+// returns 0 below threshold, 1 above (optionally smoothed)\r
+fn voro_thresh_mask(v: f32, threshold: f32, feather: f32) -> f32 {\r
+  let t = max(threshold, 0.0);\r
+  if (t <= 0.0) { return 0.0; }\r
+\r
+  let f = max(feather, 0.0);\r
+  if (f > 0.0) {\r
+    return smoothstep(t, t + f, v);\r
+  }\r
+  return select(0.0, 1.0, v >= t);\r
+}\r
+\r
+\r
+// f1Sq/f2Sq are squared distances; cellVal in [0,1].\r
+// edgeK is scale (edges modes) or feather (mask modes). freqOrScale unused.\r
+fn voro_eval(\r
+  f1Sq: f32,\r
+  f2Sq: f32,\r
+  cellVal: f32,\r
+  mode: u32,\r
+  edgeK: f32,\r
+  threshold: f32,\r
+  freqOrScale: f32\r
+) -> f32 {\r
+  let f1 = sqrt(max(f1Sq, 0.0));\r
+  let f2 = sqrt(max(f2Sq, 0.0));\r
+  let gap = max(f2 - f1, 0.0);\r
+\r
+  let gapSq = max(f2Sq - f1Sq, 0.0);\r
+\r
+  switch (mode) {\r
+    case VORO_CELL: {\r
+      return cellVal;\r
+    }\r
+    case VORO_F1: {\r
+      return f1;\r
+    }\r
+    case VORO_INTERIOR: {\r
+      return gap;\r
+    }\r
+    case VORO_EDGES: {\r
+      let k = max(edgeK, 0.0);\r
+      return clamp(gap * select(10.0, k, k > 0.0), 0.0, 1.0);\r
+    }\r
+    case VORO_EDGE_THRESH: {\r
+      let t = max(threshold, 0.0);\r
+      let gate = select(0.0, 1.0, gap >= t);\r
+      return gap * gate;\r
+    }\r
+    case VORO_FLAT_SHADE: {\r
+      let edge = voro_edge_mask(gap, threshold, edgeK);\r
+      return 1.0 - edge;\r
+    }\r
+    case VORO_FLAT_SHADE_INV: {\r
+      let edge = voro_edge_mask(gap, threshold, edgeK);\r
+      return edge;\r
+    }\r
+\r
+    case VORO_INTERIOR_SQ: {\r
+      return gapSq;\r
+    }\r
+    case VORO_EDGES_SQ: {\r
+      let k = max(edgeK, 0.0);\r
+      return clamp(gapSq * select(10.0, k, k > 0.0), 0.0, 1.0);\r
+    }\r
+    case VORO_EDGE_THRESH_SQ: {\r
+      let t = max(threshold, 0.0);\r
+      let gate = select(0.0, 1.0, gapSq >= t);\r
+      return gapSq * gate;\r
+    }\r
+    case VORO_FLAT_SHADE_SQ: {\r
+      let edge = voro_edge_mask(gapSq, threshold, edgeK);\r
+      return 1.0 - edge;\r
+    }\r
+    case VORO_FLAT_SHADE_INV_SQ: {\r
+      let edge = voro_edge_mask(gapSq, threshold, edgeK);\r
+      return edge;\r
+    }\r
+\r
+    case VORO_F1_THRESH: {\r
+      let t = max(threshold, 0.0);\r
+      let gate = select(0.0, 1.0, f1 >= t);\r
+      return f1 * gate;\r
+    }\r
+    case VORO_F1_MASK: {\r
+      return voro_thresh_mask(f1, threshold, edgeK);\r
+    }\r
+    case VORO_F1_MASK_INV: {\r
+      return 1.0 - voro_thresh_mask(f1, threshold, edgeK);\r
+    }\r
+\r
+    case VORO_EDGE_RCP: {\r
+      let k = max(edgeK, 0.0);\r
+      return 1.0 / (1.0 + gap * k*10);\r
+    }\r
+    case VORO_EDGE_RCP_SQ: {\r
+      let k = max(edgeK, 0.0);\r
+      return 1.0 / (1.0 + gapSq * k*10);\r
+    }\r
+\r
+    default: {\r
+      return gap;\r
+    }\r
+  }\r
+}\r
 \r
 // ----------------- helpers: metrics -----------------\r
 fn voro3D_metrics(pos: vec3<f32>) -> Voro3DMetrics {\r
@@ -1045,51 +1193,6 @@ fn voro4D_metrics(p: vec4<f32>) -> Voro4DMetrics {\r
   }\r
   return Voro4DMetrics(d1, d2, lab);\r
 }\r
-\r
-\r
-// ----------------- voro_eval: pick output depending on mode -----------------\r
-// f1Sq/f2Sq are squared distances; cellVal in [0,1]. edgeK: softening scale.\r
-// threshold: gate for EDGE_THRESH mode. freqOrScale unused in some modes but kept for potential normalization.\r
-fn voro_eval(f1Sq: f32, f2Sq: f32, cellVal: f32, mode: u32, edgeK: f32, threshold: f32, freqOrScale: f32) -> f32 {\r
-  let f1 = sqrt(max(f1Sq, 0.0));\r
-  let f2 = sqrt(max(f2Sq, 0.0));\r
-  let gap = f2 - f1; // F2 - F1, larger inside cells\r
-\r
-  // simple normalized gap if you want scale invariance: comment/uncomment as needed\r
-  // let normGap = gap * freqOrScale; // (freqOrScale could be ~freq, or 1.0)\r
-\r
-  switch (mode) {\r
-    case VORO_CELL: {\r
-      // piecewise-constant tile color/value\r
-      return cellVal;\r
-    }\r
-    case VORO_F1: {\r
-      // first-nearest distance\r
-      return f1;\r
-    }\r
-    case VORO_INTERIOR: {\r
-      // interior weight: larger in cell interior (proportional to gap)\r
-      return gap;\r
-    }\r
-    case VORO_EDGES: {\r
-      // edges bright, interior dark. Use edgeK to control contrast/width.\r
-      // edgeK==0 -> just use binary of gap>0, larger edgeK -> wider bright edges\r
-      if (edgeK <= 0.0) { return clamp(gap * 10.0, 0.0, 1.0); } // fallback scaling\r
-      return clamp(gap * edgeK, 0.0, 1.0);\r
-    }\r
-    case VORO_EDGE_THRESH: {\r
-      // identical to your voronoiTileRaw: return (F2-F1) if >= threshold else 0.\r
-      let ok = gap >= threshold;\r
-      let gate = select(0.0, 1.0, ok);\r
-      return gap * gate;\r
-    }\r
-    default: {\r
-      // fallback: return interior metric\r
-      return gap;\r
-    }\r
-  }\r
-}\r
-\r
 \r
 \r
 /*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Cellular 2-D  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
@@ -1743,133 +1846,22 @@ fn generateRidgedMultifractal4(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Anti\u2010Ridged Multifractal Noise \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateAntiRidgedMultifractal(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
-\r
-    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x, y, z)));\r
-    var amp : f32 = 1.0;\r
-\r
-    for (var i:u32 = 1u; i < params.octaves; i = i + 1u) {\r
-        x = x * params.lacunarity;\r
-        y = y * params.lacunarity;\r
-        z = z * params.lacunarity;\r
-        amp = amp * params.gain;\r
-\r
-        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
-        if (params.exp2 != 0.0) {\r
-            n = 1.0 - pow(n, params.exp2);\r
-        }\r
-        if (params.exp1 != 0.0) {\r
-            n = pow(n, params.exp1);\r
-        }\r
-\r
-        sum = sum - n * amp;\r
-\r
-        x = x + params.xShift;\r
-        y = y + params.yShift;\r
-        z = z + params.zShift;\r
-    }\r
-\r
-    return -sum;\r
+    return -generateRidgedMultifractal(pos, params);\r
 }\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Anti\u2010Ridged Multifractal Noise 2 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateAntiRidgedMultifractal2(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
-\r
-    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x, y, z)));\r
-    var amp : f32 = 1.0;\r
-    var angle : f32 = params.seedAngle;\r
-\r
-    for (var i:u32 = 1u; i < params.octaves; i = i + 1u) {\r
-        x = x * params.lacunarity;\r
-        y = y * params.lacunarity;\r
-        z = z * params.lacunarity;\r
-        amp = amp * params.gain;\r
-\r
-        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
-        if (params.exp2 != 0.0) {\r
-            n = 1.0 - pow(n, params.exp2);\r
-        }\r
-        if (params.exp1 != 0.0) {\r
-            n = pow(n, params.exp1);\r
-        }\r
-\r
-        sum = sum - n * amp;\r
-\r
-        // proper XY rotation\r
-        let c = cos(angle);\r
-        let s = sin(angle);\r
-        let nx = x * c - y * s;\r
-        let ny = x * s + y * c;\r
-        let nz = z;\r
-\r
-        x = nx + params.xShift;\r
-        y = ny + params.yShift;\r
-        z = nz + params.zShift;\r
-        angle = angle + ANGLE_INCREMENT;\r
-    }\r
-\r
-    return -sum;\r
+    return -generateRidgedMultifractal2(pos, params);\r
 }\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Anti\u2010Ridged Multifractal Noise 3 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateAntiRidgedMultifractal3(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
-    var sum : f32 = 0.0;\r
-    var amp : f32 = 1.0;\r
-\r
-    for (var i:u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        var n : f32 = lanczos3D(vec3<f32>(x, y, z));\r
-        n = max(1e-7, n + 1.0);\r
-        n = 2.0 * pow(n * 0.5, params.exp2+1.5) - 1.0;\r
-        n = 1.0 - abs(n);\r
-        if (params.exp1 - 1.0 != 0.0) {\r
-            n = 1.0 - pow(n, params.exp1 - 1.0);\r
-        }\r
-\r
-        sum = sum + n * amp;\r
-\r
-        x = x * params.lacunarity + params.xShift;\r
-        y = y * params.lacunarity + params.yShift;\r
-        z = z * params.lacunarity + params.zShift;\r
-        amp = amp * params.gain;\r
-    }\r
-\r
-    return -(sum - 1.0);\r
+    return -generateRidgedMultifractal3(pos, params);\r
 }\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Anti\u2010Ridged Multifractal Noise 4 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateAntiRidgedMultifractal4(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
-    var sum : f32 = 0.0;\r
-    var amp : f32 = 1.0;\r
-\r
-    for (var i:u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
-        if (params.exp2 != 0.0) {\r
-            n = 1.0 - pow(n, params.exp2);\r
-        }\r
-        if (params.exp1 != 0.0) {\r
-            n = pow(n, params.exp1);\r
-        }\r
-\r
-        sum = sum + n * amp;\r
-\r
-        x = x * params.lacunarity + params.xShift;\r
-        y = y * params.lacunarity + params.yShift;\r
-        z = z * params.lacunarity + params.zShift;\r
-        amp = amp * params.gain;\r
-    }\r
-\r
-    return -(sum - 1.0);\r
+    return -generateRidgedMultifractal4(pos, params);\r
 }\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Fractal Brownian Motion (3D Simplex) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
@@ -2009,247 +2001,49 @@ fn generateCellularBM3(pos : vec3<f32>, params : NoiseParams) -> f32 {\r
     return 1.5 * f3 - 1.0;\r
 }\r
 \r
-/*==============================================================================\r
-  Voronoi Brownian-Motion FBM helpers & generators\r
-==============================================================================*/\r
-fn generateVoronoi(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+/* ---- Voronoi and Voronoi Brownian-Motion flavours ---------------------------------- */\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 4D Voronoi Generator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateVoronoi4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
   let zoom = max(params.zoom, 1e-6);\r
-  var sum  : f32 = 0.0;\r
-  var amp  : f32 = 1.0;\r
-  var freqLoc : f32 = params.freq / zoom;\r
 \r
-  let mode      : u32 = params.voroMode;\r
-  let edgeK     : f32 = max(params.edgeK, 0.0);\r
-  let threshold : f32 = max(params.threshold, 0.0);\r
+  var sum: f32 = 0.0;\r
+  var amp: f32 = 1.0;\r
+  var freqLoc: f32 = params.freq / zoom;\r
 \r
+  let mode: u32 = params.voroMode;\r
+  let edgeK: f32 = max(params.edgeK, 0.0);\r
+  let threshold: f32 = max(params.threshold, 0.0);\r
+\r
+  var base: vec4<f32>;\r
   if (params.toroidal == 1u) {\r
-    // pos = (U,V,theta) -> pack to periodic 4D and sample\r
-    let base4 = packPeriodicUV(pos.x, pos.y, pos.z);\r
-    for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-      let P = base4 * freqLoc;\r
-      let m = voro4D_metrics(P);\r
-      let v = voro_eval(m.f1Sq, m.f2Sq, m.cellVal, mode, edgeK, threshold, freqLoc);\r
-      sum += v * amp;\r
-      freqLoc *= params.lacunarity;\r
-      amp     *= params.gain;\r
-    }\r
-    return sum;\r
+    base = packPeriodicUV(pos.x, pos.y, pos.z + params.time);\r
+  } else {\r
+    base = vec4<f32>(\r
+      (pos.x + params.xShift) / zoom,\r
+      (pos.y + params.yShift) / zoom,\r
+      (pos.z + params.zShift) / zoom,\r
+      params.time\r
+    );\r
   }\r
 \r
-  // classic 3D Voronoi FBM (octave shifts kept simple)\r
-  var x = (pos.x + params.xShift) / zoom;\r
-  var y = (pos.y + params.yShift) / zoom;\r
-  var z = (pos.z + params.zShift) / zoom;\r
+  var angle: f32 = params.seedAngle;\r
 \r
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-    let P = vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc);\r
-    let m = voro3D_metrics(P);\r
+    let P = base * freqLoc;\r
+    let m = voro4D_metrics(P);\r
     let v = voro_eval(m.f1Sq, m.f2Sq, m.cellVal, mode, edgeK, threshold, freqLoc);\r
+\r
     sum += v * amp;\r
 \r
     freqLoc *= params.lacunarity;\r
-    amp     *= params.gain;\r
+    amp *= params.gain;\r
 \r
-    // apply simple per-octave drift (matches your tile-style)\r
-    x += params.xShift;\r
-    y += params.yShift;\r
-    z += params.zShift;\r
-  }\r
-  return sum;\r
-}\r
-\r
-\r
-// Sample a Voronoi "cell value" similar to the CPU VoronoiNoise3D.noise()\r
-fn voronoiCellValue3D(p: vec3<f32>) -> f32 {\r
-    let m = voro3D_metrics(p);\r
-    return m.cellVal;\r
-}\r
-\r
-// Voronoi FBM that mirrors the CPU VoronoiBrownianMotion.fbm pattern\r
-fn fbmVoronoi3D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    let zoom = max(params.zoom, 1e-6);\r
-\r
-    // base coordinate: divide by zoom only (CPU style)\r
-    var x = pos.x / zoom;\r
-    var y = pos.y / zoom;\r
-    var z = pos.z / zoom;\r
-\r
-    var sum: f32 = 0.0;\r
-    var amp: f32 = 1.0;\r
-    var freqLoc: f32 = params.freq;\r
-\r
-    var angle: f32 = params.seedAngle; // host should set this to seedN * 2\u03C0\r
-    let angleInc: f32 = 2.0 * PI / f32(max(params.octaves, 1u));\r
-\r
-    for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        let samplePos = vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc);\r
-        let v = voronoiCellValue3D(samplePos);\r
-\r
-        sum = sum + amp * v;\r
-\r
-        freqLoc = freqLoc * params.lacunarity;\r
-        amp = amp * params.gain;\r
-\r
-        angle = angle + angleInc;\r
-        let offsetX = params.xShift * cos(angle);\r
-        let offsetY = params.yShift * sin(angle);\r
-        let offsetZ = params.zShift * sin(angle);\r
-\r
-        x = x + offsetX;\r
-        y = y + offsetY;\r
-        z = z + offsetZ;\r
-    }\r
-\r
-    return sum - 1.0;\r
-}\r
-\r
-/* ---- Voronoi Brownian-Motion flavours ---------------------------------- */\r
-\r
-// BM1: CPU VoronoiBrownianMotion.generateNoise\r
-fn generateVoronoiBM1(p: vec3<f32>, par: NoiseParams) -> f32 {\r
-    let f1 = fbmVoronoi3D(p, par);\r
-    return fbmVoronoi3D(vec3<f32>(f1 * par.zoom), par);\r
-}\r
-\r
-// BM2: CPU VoronoiBrownianMotion2.generateNoise\r
-fn generateVoronoiBM2(p: vec3<f32>, par: NoiseParams) -> f32 {\r
-    let f1 = fbmVoronoi3D(p, par);\r
-    let f2 = fbmVoronoi3D(vec3<f32>(f1 * par.zoom), par);\r
-    return fbmVoronoi3D(p + vec3<f32>(f2 * par.zoom), par);\r
-}\r
-\r
-// BM3: CPU VoronoiBrownianMotion3.generateNoise\r
-fn generateVoronoiBM3(p: vec3<f32>, par: NoiseParams) -> f32 {\r
-    let f1 = fbmVoronoi3D(p, par);\r
-    let f2 = fbmVoronoi3D(p + vec3<f32>(f1 * par.zoom), par);\r
-    return fbmVoronoi3D(p + vec3<f32>(f2 * par.zoom), par);\r
-}\r
-\r
-/*==============================================================================\r
-  Single-stage Cellular & Worley s\r
-==============================================================================*/\r
-\r
-fn generateCellular(pos : vec3<f32>, params : NoiseParams) -> f32 {\r
-    var x = (pos.x + params.xShift) / params.zoom;\r
-    var y = (pos.y + params.yShift) / params.zoom;\r
-    var z = (pos.z + params.zShift) / params.zoom;\r
-\r
-    var sum     : f32 = 0.0;\r
-    var amp     : f32 = 1.0;\r
-    var freqLoc : f32 = params.freq;\r
-    var angle   : f32 = params.seedAngle;\r
-\r
-    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        var n = cellular3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
-        if (params.turbulence == 1u) { n = abs(n); }\r
-        n = edgeCut(n, params.threshold);              \r
-        sum = sum + n * amp;\r
-\r
-        freqLoc = freqLoc * params.lacunarity;\r
-        amp     = amp     * params.gain;\r
-\r
-        let c = cos(angle);\r
-        let s = sin(angle);\r
-        let nx = x * c - y * s;\r
-        let ny = x * s + y * c;\r
-        let nz = y * s + z * c;\r
-\r
-        x = nx + params.xShift;\r
-        y = ny + params.yShift;\r
-        z = nz + params.zShift;\r
-        angle = angle + ANGLE_INCREMENT;\r
-    }\r
-\r
-    if (params.turbulence == 1u) { sum = sum - 1.0; }\r
-    return 2.0 * sum - 1.0;\r
-}\r
-\r
-fn generateAntiCellular(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    return -generateCellular(pos, params);\r
-}\r
-\r
-fn generateWorley(pos : vec3<f32>, params : NoiseParams) -> f32 {\r
-    var x = (pos.x + params.xShift) / params.zoom;\r
-    var y = (pos.y + params.yShift) / params.zoom;\r
-    var z = (pos.z + params.zShift) / params.zoom;\r
-\r
-    var sum     : f32 = 0.0;\r
-    var amp     : f32 = 1.0;\r
-    var freqLoc : f32 = params.freq;\r
-    var angle   : f32 = params.seedAngle;\r
-\r
-    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        var n = worley3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
-        if (params.turbulence == 1u) { n = abs(n); }\r
-        n = edgeCut(n, params.threshold);              \r
-        sum = sum + n * amp;\r
-\r
-        freqLoc = freqLoc * params.lacunarity;\r
-        amp     = amp     * params.gain;\r
-\r
-        let c = cos(angle);\r
-        let s = sin(angle);\r
-        let nx = x * c - y * s;\r
-        let ny = x * s + y * c;\r
-        let nz = y * s + z * c;\r
-\r
-        x = nx + params.xShift;\r
-        y = ny + params.yShift;\r
-        z = nz + params.zShift;\r
-        angle = angle + ANGLE_INCREMENT;\r
-    }\r
-\r
-    if (params.turbulence == 1u) { sum = sum - 1.0; }\r
-    return sum - 1.0;\r
-}\r
-\r
-fn generateAntiWorley(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    return -generateWorley(pos, params);\r
-}\r
-\r
-\r
-// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 4D Worley FBM \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
-fn generateWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-  let zoom = max(params.zoom, 1e-6);\r
-\r
-  // Prepare base coords + starting frequency\r
-  var base    : vec4<f32>;\r
-  var freqLoc : f32;\r
-\r
-  if (params.toroidal == 1u) {\r
-    // pos = (U,V,\u03B8); HTML-style uv_periodic packing\r
-    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom; // (freq/zoom) == (base/zoom * freq)\r
-    freqLoc = params.freq;\r
-  } else {\r
-    // original non-toroidal semantics (freq baked in pre-loop, then multiplied again)\r
-    base = vec4<f32>(\r
-      pos.x / zoom * params.freq + params.xShift,\r
-      pos.y / zoom * params.freq + params.yShift,\r
-      pos.z / zoom * params.freq + params.zShift,\r
-      params.time\r
-    );\r
-    freqLoc = params.freq;\r
-  }\r
-\r
-  var sum   : f32 = 0.0;\r
-  var amp   : f32 = 1.0;\r
-  var angle : f32 = params.seedAngle;\r
-\r
-  // Shared octave loop\r
-  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-    var v = worley4D(base * freqLoc) * amp;\r
-    if (params.turbulence == 1u) { v = abs(v); }\r
-    sum += v;\r
-\r
-    freqLoc *= params.lacunarity;\r
-    amp     *= params.gain;\r
-\r
-    // Only non-toroidal path uses octave rotation/offset churn\r
     if (params.toroidal != 1u) {\r
       let c = cos(angle);\r
       let s = sin(angle);\r
-      let xy = vec2<f32>( base.x * c - base.y * s, base.x * s + base.y * c );\r
-      let zw = vec2<f32>( base.z * c - base.w * s, base.z * s + base.w * c );\r
+      let xy = vec2<f32>(base.x * c - base.y * s, base.x * s + base.y * c);\r
+      let zw = vec2<f32>(base.z * c - base.w * s, base.z * s + base.w * c);\r
       base = vec4<f32>(\r
         xy.x + params.xShift,\r
         xy.y + params.yShift,\r
@@ -2260,15 +2054,7 @@ fn generateWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
     }\r
   }\r
 \r
-  if (params.turbulence == 1u) { sum -= 1.0; }\r
-  // match JS Worley wrapper (returns 1 - sum)\r
-  return 1.0 - sum;\r
-}\r
-\r
-\r
-\r
-fn generateAntiWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    return -generateWorley4D(pos, params);\r
+  return sum;\r
 }\r
 \r
 \r
@@ -2281,7 +2067,7 @@ fn generateVoronoiTileNoise(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
   var freqLoc : f32 = params.freq / zoom;\r
 \r
   // always use the edge-threshold mode for this tile-noise helper\r
-  let mode : u32 = VORO_EDGE_THRESH;\r
+  let mode : u32 = params.voroMode;\r
   let edgeK : f32 = max(params.edgeK, 0.0);      // kept if you want to tune\r
   let thresh : f32 = max(params.threshold, 0.0);\r
 \r
@@ -2316,6 +2102,747 @@ fn generateVoronoiTileNoise(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
   return sum;\r
 }\r
+\r
+\r
+// BM1: f( f(p) )\r
+fn generateVoronoiBM1(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateVoronoiTileNoise(p, par);\r
+  return generateVoronoiTileNoise(vec3<f32>(f1 * par.zoom), par);\r
+}\r
+\r
+// BM2: f( p + f(f(p)) )\r
+fn generateVoronoiBM2(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateVoronoiTileNoise(p, par);\r
+  let f2 = generateVoronoiTileNoise(vec3<f32>(f1 * par.zoom), par);\r
+  return generateVoronoiTileNoise(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+// BM3: f( p + f(p + f(p)) )\r
+fn generateVoronoiBM3(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateVoronoiTileNoise(p, par);\r
+  let f2 = generateVoronoiTileNoise(p + vec3<f32>(f1 * par.zoom), par);\r
+  return generateVoronoiTileNoise(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+/* ---- Voronoi Brownian-Motion flavours (4D) ---------------------------------- */\r
+\r
+// BM1 4D: f( f(p) )  (scalar feedback into XYZ, keep W/time from params)\r
+fn generateVoronoiBM1_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateVoronoi4D(p, par);\r
+  return generateVoronoi4D(vec3<f32>(f1 * par.zoom), par);\r
+}\r
+\r
+// BM2 4D: f( p + f(f(p)) )\r
+fn generateVoronoiBM2_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateVoronoi4D(p, par);\r
+  let f2 = generateVoronoi4D(vec3<f32>(f1 * par.zoom), par);\r
+  return generateVoronoi4D(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+// BM3 4D: f( p + f(p + f(p)) )\r
+fn generateVoronoiBM3_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateVoronoi4D(p, par);\r
+  let f2 = generateVoronoi4D(p + vec3<f32>(f1 * par.zoom), par);\r
+  return generateVoronoi4D(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+/* ---- vector-feedback variants (stronger, less axis-locked) ---------\r
+   These keep it cheap but reduce the "all axes get same scalar" look by building\r
+   a 3-vector from 3 decorrelated samples (offsets are constant, no extra params).\r
+*/\r
+\r
+fn _bm4D_vec(p: vec3<f32>, par: NoiseParams) -> vec3<f32> {\r
+  let a = generateVoronoi4D(p + vec3<f32>(17.13,  3.71,  9.23), par);\r
+  let b = generateVoronoi4D(p + vec3<f32>(-5.41, 11.19,  2.07), par);\r
+  let c = generateVoronoi4D(p + vec3<f32>( 8.09, -6.77, 13.61), par);\r
+  return vec3<f32>(a, b, c);\r
+}\r
+\r
+// BM1 4D (vec): f( vec(f(p)) )\r
+fn generateVoronoiBM1_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec(p, par);\r
+  return generateVoronoi4D(v1 * par.zoom, par);\r
+}\r
+\r
+// BM2 4D (vec): f( p + vec(f(vec(f(p)))) )\r
+fn generateVoronoiBM2_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec(p, par);\r
+  let v2 = _bm4D_vec(v1 * par.zoom, par);\r
+  return generateVoronoi4D(p + v2 * par.zoom, par);\r
+}\r
+\r
+// BM3 4D (vec): f( p + vec(f(p + vec(f(p)))) )\r
+fn generateVoronoiBM3_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec(p, par);\r
+  let v2 = _bm4D_vec(p + v1 * par.zoom, par);\r
+  return generateVoronoi4D(p + v2 * par.zoom, par);\r
+}\r
+\r
+// Generic "Voronoi-style" sampler for Cellular/Worley so they can share voro_eval modes.\r
+\r
+struct VoroSample {\r
+  f1Sq    : f32,\r
+  f2Sq    : f32,\r
+  cellVal : f32,\r
+};\r
+\r
+fn voro_sample3D(p: vec3<f32>) -> VoroSample {\r
+  let fx = i32(floor(p.x));\r
+  let fy = i32(floor(p.y));\r
+  let fz = i32(floor(p.z));\r
+\r
+  var d1: f32 = 1e9;\r
+  var d2: f32 = 1e9;\r
+  var cv: f32 = 0.0;\r
+\r
+  for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {\r
+    for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {\r
+      for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {\r
+        let xi = fx + dx;\r
+        let yi = fy + dy;\r
+        let zi = fz + dz;\r
+\r
+        let rx = rand3u(xi, yi, zi);\r
+        let ry = rand3u(yi, zi, xi);\r
+        let rz = rand3u(zi, xi, yi);\r
+\r
+        let px = f32(xi) + rx;\r
+        let py = f32(yi) + ry;\r
+        let pz = f32(zi) + rz;\r
+\r
+        let dxv = px - p.x;\r
+        let dyv = py - p.y;\r
+        let dzv = pz - p.z;\r
+        let dd  = dxv * dxv + dyv * dyv + dzv * dzv;\r
+\r
+        if (dd < d1) {\r
+          d2 = d1;\r
+          d1 = dd;\r
+          cv = rand3u(xi, zi, yi);\r
+        } else if (dd < d2) {\r
+          d2 = dd;\r
+        }\r
+      }\r
+    }\r
+  }\r
+\r
+  return VoroSample(d1, d2, cv);\r
+}\r
+\r
+fn voro_sample4D(p: vec4<f32>) -> VoroSample {\r
+  let fx = i32(floor(p.x));\r
+  let fy = i32(floor(p.y));\r
+  let fz = i32(floor(p.z));\r
+  let fw = i32(floor(p.w));\r
+\r
+  var d1: f32 = 1e9;\r
+  var d2: f32 = 1e9;\r
+  var cv: f32 = 0.0;\r
+\r
+  for (var dw: i32 = -1; dw <= 1; dw = dw + 1) {\r
+    for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {\r
+      for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {\r
+        for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {\r
+          let xi = fx + dx;\r
+          let yi = fy + dy;\r
+          let zi = fz + dz;\r
+          let wi = fw + dw;\r
+\r
+          let rx = rand4u(xi, yi, zi, wi);\r
+          let ry = rand4u(yi, zi, wi, xi);\r
+          let rz = rand4u(zi, wi, xi, yi);\r
+          let rw = rand4u(wi, xi, yi, zi);\r
+\r
+          let px = f32(xi) + rx;\r
+          let py = f32(yi) + ry;\r
+          let pz = f32(zi) + rz;\r
+          let pw = f32(wi) + rw;\r
+\r
+          let dxv = px - p.x;\r
+          let dyv = py - p.y;\r
+          let dzv = pz - p.z;\r
+          let dwv = pw - p.w;\r
+          let dd  = dxv * dxv + dyv * dyv + dzv * dzv + dwv * dwv;\r
+\r
+          if (dd < d1) {\r
+            d2 = d1;\r
+            d1 = dd;\r
+            cv = rand4u(xi, zi, yi, wi);\r
+          } else if (dd < d2) {\r
+            d2 = dd;\r
+          }\r
+        }\r
+      }\r
+    }\r
+  }\r
+\r
+  return VoroSample(d1, d2, cv);\r
+}\r
+\r
+fn cellular4D(p: vec4<f32>) -> f32 {\r
+  let s = voro_sample4D(p);\r
+  return voro_edge_dist(s.f1Sq, s.f2Sq);\r
+}\r
+\r
+fn worley4D(p: vec4<f32>) -> f32 {\r
+  let s = voro_sample4D(p);\r
+  return sqrt(max(s.f1Sq, 0.0));\r
+}\r
+\r
+// Expects you to pass the same controls you use for Voronoi: params.voroMode, params.edgeK, params.threshold.\r
+fn generateCellular(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  var x = (pos.x + params.xShift) / params.zoom;\r
+  var y = (pos.y + params.yShift) / params.zoom;\r
+  var z = (pos.z + params.zShift) / params.zoom;\r
+\r
+  var sum     : f32 = 0.0;\r
+  var amp     : f32 = 1.0;\r
+  var freqLoc : f32 = params.freq;\r
+  var angle   : f32 = params.seedAngle;\r
+\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    let s = voro_sample3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
+\r
+    var n = voro_eval(s.f1Sq, s.f2Sq, s.cellVal, params.voroMode, params.edgeK, params.threshold, freqLoc);\r
+    if (params.turbulence == 1u) { n = abs(n); }\r
+    n = clamp(n, 0.0, 1.0);\r
+\r
+    sum = sum + n * amp;\r
+\r
+    freqLoc = freqLoc * params.lacunarity;\r
+    amp     = amp     * params.gain;\r
+\r
+    let c = cos(angle);\r
+    let sA = sin(angle);\r
+    let nx = x * c - y * sA;\r
+    let ny = x * sA + y * c;\r
+    let nz = y * sA + z * c;\r
+\r
+    x = nx + params.xShift;\r
+    y = ny + params.yShift;\r
+    z = nz + params.zShift;\r
+    angle = angle + ANGLE_INCREMENT;\r
+  }\r
+\r
+  if (params.turbulence == 1u) { sum = sum - 1.0; }\r
+  return 2.0 * sum - 1.0;\r
+}\r
+\r
+fn generateAntiCellular(pos: vec3<f32>, params: NoiseParams) -> f32 { \r
+  return -generateCellular(pos,params);\r
+}\r
+\r
+fn generateWorley(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  var x = (pos.x + params.xShift) / params.zoom;\r
+  var y = (pos.y + params.yShift) / params.zoom;\r
+  var z = (pos.z + params.zShift) / params.zoom;\r
+\r
+  var sum     : f32 = 0.0;\r
+  var amp     : f32 = 1.0;\r
+  var freqLoc : f32 = params.freq;\r
+  var angle   : f32 = params.seedAngle;\r
+\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    let s = voro_sample3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
+\r
+    var n = voro_eval(s.f1Sq, s.f2Sq, s.cellVal, params.voroMode, params.edgeK, params.threshold, freqLoc);\r
+    if (params.turbulence == 1u) { n = abs(n); }\r
+    n = clamp(n, 0.0, 1.0);\r
+\r
+    sum = sum + n * amp;\r
+\r
+    freqLoc = freqLoc * params.lacunarity;\r
+    amp     = amp     * params.gain;\r
+\r
+    let c = cos(angle);\r
+    let sA = sin(angle);\r
+    let nx = x * c - y * sA;\r
+    let ny = x * sA + y * c;\r
+    let nz = y * sA + z * c;\r
+\r
+    x = nx + params.xShift;\r
+    y = ny + params.yShift;\r
+    z = nz + params.zShift;\r
+    angle = angle + ANGLE_INCREMENT;\r
+  }\r
+\r
+  if (params.turbulence == 1u) { sum = sum - 1.0; }\r
+  return sum - 1.0;\r
+}\r
+\r
+fn generateAntiWorley(pos: vec3<f32>, params: NoiseParams) -> f32 { \r
+  return -generateWorley(pos,params);\r
+}\r
+\r
+fn generateCellular4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let zoom = max(params.zoom, 1e-6);\r
+\r
+  var base    : vec4<f32>;\r
+  var freqLoc : f32;\r
+\r
+  if (params.toroidal == 1u) {\r
+    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
+    freqLoc = params.freq;\r
+  } else {\r
+    base = vec4<f32>(\r
+      pos.x / zoom * params.freq + params.xShift,\r
+      pos.y / zoom * params.freq + params.yShift,\r
+      pos.z / zoom * params.freq + params.zShift,\r
+      params.time\r
+    );\r
+    freqLoc = params.freq;\r
+  }\r
+\r
+  var sum   : f32 = 0.0;\r
+  var amp   : f32 = 1.0;\r
+  var angle : f32 = params.seedAngle;\r
+\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    let s = voro_sample4D(base * freqLoc);\r
+\r
+    var v = voro_eval(s.f1Sq, s.f2Sq, s.cellVal, params.voroMode, params.edgeK, params.threshold, freqLoc);\r
+    if (params.turbulence == 1u) { v = abs(v); }\r
+    v = clamp(v, 0.0, 1.0);\r
+\r
+    sum += v * amp;\r
+\r
+    freqLoc *= params.lacunarity;\r
+    amp     *= params.gain;\r
+\r
+    if (params.toroidal != 1u) {\r
+      let c = cos(angle);\r
+      let sA = sin(angle);\r
+      let xy = vec2<f32>( base.x * c - base.y * sA, base.x * sA + base.y * c );\r
+      let zw = vec2<f32>( base.z * c - base.w * sA, base.z * sA + base.w * c );\r
+      base = vec4<f32>(\r
+        xy.x + params.xShift,\r
+        xy.y + params.yShift,\r
+        zw.x + params.zShift,\r
+        zw.y + params.time\r
+      );\r
+      angle += ANGLE_INCREMENT;\r
+    }\r
+  }\r
+\r
+  if (params.turbulence == 1u) { sum -= 1.0; }\r
+  return 2.0 * sum - 1.0;\r
+}\r
+\r
+fn generateAntiCellular4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  return -generateCellular4D(pos,params);\r
+}\r
+\r
+fn generateWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let zoom = max(params.zoom, 1e-6);\r
+\r
+  var base    : vec4<f32>;\r
+  var freqLoc : f32;\r
+\r
+  if (params.toroidal == 1u) {\r
+    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
+    freqLoc = params.freq;\r
+  } else {\r
+    base = vec4<f32>(\r
+      pos.x / zoom * params.freq + params.xShift,\r
+      pos.y / zoom * params.freq + params.yShift,\r
+      pos.z / zoom * params.freq + params.zShift,\r
+      params.time\r
+    );\r
+    freqLoc = params.freq;\r
+  }\r
+\r
+  var sum    : f32 = 0.0;\r
+  var amp    : f32 = 1.0;\r
+  var ampSum : f32 = 0.0;\r
+  var angle  : f32 = params.seedAngle;\r
+\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    let s = voro_sample4D(base * freqLoc);\r
+\r
+    var v = voro_eval(s.f1Sq, s.f2Sq, s.cellVal, params.voroMode, params.edgeK, params.threshold, freqLoc);\r
+    if (params.turbulence == 1u) { v = abs(v); }\r
+    v = clamp(v, 0.0, 1.0);\r
+\r
+    sum    += v * amp;\r
+    ampSum += amp;\r
+\r
+    freqLoc *= params.lacunarity;\r
+    amp     *= params.gain;\r
+\r
+    if (params.toroidal != 1u) {\r
+      let c = cos(angle);\r
+      let sA = sin(angle);\r
+      let xy = vec2<f32>( base.x * c - base.y * sA, base.x * sA + base.y * c );\r
+      let zw = vec2<f32>( base.z * c - base.w * sA, base.z * sA + base.w * c );\r
+      base = vec4<f32>(\r
+        xy.x + params.xShift,\r
+        xy.y + params.yShift,\r
+        zw.x + params.zShift,\r
+        zw.y + params.time\r
+      );\r
+      angle += ANGLE_INCREMENT;\r
+    }\r
+  }\r
+\r
+  let out = select(0.0, sum / ampSum, ampSum > 0.0);\r
+\r
+  if (params.turbulence == 1u) { return clamp(out - 1.0, -1.0, 1.0); }\r
+  return clamp(1.0 - out, 0.0, 1.0);\r
+}\r
+\r
+fn generateAntiWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  return 1-generateWorley4D(pos,params);\r
+}\r
+\r
+/* ---- Cellular Brownian-Motion flavours (4D) ---------------------------------- */\r
+\r
+// BM1 4D: f( f(p) )\r
+fn generateCellularBM1_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateCellular4D(p, par);\r
+  return generateCellular4D(vec3<f32>(f1 * par.zoom), par);\r
+}\r
+\r
+// BM2 4D: f( p + f(f(p)) )\r
+fn generateCellularBM2_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateCellular4D(p, par);\r
+  let f2 = generateCellular4D(vec3<f32>(f1 * par.zoom), par);\r
+  return generateCellular4D(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+// BM3 4D: f( p + f(p + f(p)) )\r
+fn generateCellularBM3_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateCellular4D(p, par);\r
+  let f2 = generateCellular4D(p + vec3<f32>(f1 * par.zoom), par);\r
+  return generateCellular4D(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+\r
+/* ---- Worley Brownian-Motion flavours (4D) ----------------------------------- */\r
+\r
+// BM1 4D: f( f(p) )\r
+fn generateWorleyBM1_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateWorley4D(p, par);\r
+  return generateWorley4D(vec3<f32>(f1 * par.zoom), par);\r
+}\r
+\r
+// BM2 4D: f( p + f(f(p)) )\r
+fn generateWorleyBM2_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateWorley4D(p, par);\r
+  let f2 = generateWorley4D(vec3<f32>(f1 * par.zoom), par);\r
+  return generateWorley4D(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+// BM3 4D: f( p + f(p + f(p)) )\r
+fn generateWorleyBM3_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateWorley4D(p, par);\r
+  let f2 = generateWorley4D(p + vec3<f32>(f1 * par.zoom), par);\r
+  return generateWorley4D(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+\r
+/* ---- vector-feedback variants (stronger, less axis-locked) ------------------ */\r
+\r
+fn _bm4D_vec_cellular(p: vec3<f32>, par: NoiseParams) -> vec3<f32> {\r
+  let a = generateCellular4D(p + vec3<f32>(17.13,  3.71,  9.23), par);\r
+  let b = generateCellular4D(p + vec3<f32>(-5.41, 11.19,  2.07), par);\r
+  let c = generateCellular4D(p + vec3<f32>( 8.09, -6.77, 13.61), par);\r
+  return vec3<f32>(a, b, c);\r
+}\r
+\r
+fn _bm4D_vec_worley(p: vec3<f32>, par: NoiseParams) -> vec3<f32> {\r
+  let a = generateWorley4D(p + vec3<f32>(17.13,  3.71,  9.23), par);\r
+  let b = generateWorley4D(p + vec3<f32>(-5.41, 11.19,  2.07), par);\r
+  let c = generateWorley4D(p + vec3<f32>( 8.09, -6.77, 13.61), par);\r
+  return vec3<f32>(a, b, c);\r
+}\r
+\r
+\r
+// BM1 4D (vec): f( vec(f(p)) )\r
+fn generateCellularBM1_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec_cellular(p, par);\r
+  return generateCellular4D(v1 * par.zoom, par);\r
+}\r
+\r
+// BM2 4D (vec): f( p + vec(f(vec(f(p)))) )\r
+fn generateCellularBM2_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec_cellular(p, par);\r
+  let v2 = _bm4D_vec_cellular(v1 * par.zoom, par);\r
+  return generateCellular4D(p + v2 * par.zoom, par);\r
+}\r
+\r
+// BM3 4D (vec): f( p + vec(f(p + vec(f(p)))) )\r
+fn generateCellularBM3_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec_cellular(p, par);\r
+  let v2 = _bm4D_vec_cellular(p + v1 * par.zoom, par);\r
+  return generateCellular4D(p + v2 * par.zoom, par);\r
+}\r
+\r
+\r
+// BM1 4D (vec): f( vec(f(p)) )\r
+fn generateWorleyBM1_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec_worley(p, par);\r
+  return generateWorley4D(v1 * par.zoom, par);\r
+}\r
+\r
+// BM2 4D (vec): f( p + vec(f(vec(f(p)))) )\r
+fn generateWorleyBM2_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec_worley(p, par);\r
+  let v2 = _bm4D_vec_worley(v1 * par.zoom, par);\r
+  return generateWorley4D(p + v2 * par.zoom, par);\r
+}\r
+\r
+// BM3 4D (vec): f( p + vec(f(p + vec(f(p)))) )\r
+fn generateWorleyBM3_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec_worley(p, par);\r
+  let v2 = _bm4D_vec_worley(p + v1 * par.zoom, par);\r
+  return generateWorley4D(p + v2 * par.zoom, par);\r
+}\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 4D Billow Noise Generator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let zoom = max(params.zoom, 1e-6);\r
+\r
+  var base: vec4<f32>;\r
+  if (params.toroidal == 1u) {\r
+    base = packPeriodicUV(pos.x, pos.y, pos.z + params.time) / zoom;\r
+  } else {\r
+    base = vec4<f32>(\r
+      (pos.x / zoom) * params.freq + params.xShift,\r
+      (pos.y / zoom) * params.freq + params.yShift,\r
+      (pos.z / zoom) * params.freq + params.zShift,\r
+      params.time\r
+    );\r
+  }\r
+\r
+  var sum: f32 = 0.0;\r
+  var amp: f32 = 1.0;\r
+  var freqLoc: f32 = params.freq;\r
+  var ampSum: f32 = 0.0;\r
+  var angle: f32 = params.seedAngle;\r
+\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    let n = noise4D(base * freqLoc);\r
+    let b = pow(abs(n), 0.75);\r
+    sum += b * amp;\r
+    ampSum += amp;\r
+\r
+    freqLoc *= params.lacunarity;\r
+    amp *= params.gain;\r
+\r
+    if (params.toroidal != 1u) {\r
+      let c = cos(angle);\r
+      let s = sin(angle);\r
+      let xy = vec2<f32>(base.x * c - base.y * s, base.x * s + base.y * c);\r
+      let zw = vec2<f32>(base.z * c - base.w * s, base.z * s + base.w * c);\r
+      base = vec4<f32>(\r
+        xy.x + params.xShift,\r
+        xy.y + params.yShift,\r
+        zw.x + params.zShift,\r
+        zw.y + params.time\r
+      );\r
+      angle += ANGLE_INCREMENT;\r
+    }\r
+  }\r
+\r
+  if (ampSum > 0.0) { sum /= ampSum; }\r
+\r
+  let k: f32 = 1.2;\r
+  let cMid = sum - 0.5;\r
+  let shaped = 0.5 + cMid * k / (1.0 + abs(cMid) * (k - 1.0));\r
+\r
+  return clamp(shaped, 0.0, 1.0);\r
+}\r
+\r
+fn generateAntiBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  return 1.0 - generateBillow4D(pos, params);\r
+}\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 4D Terrace + Foam + Turbulence \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateTerraceNoise4D(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let base = generatePerlin4D(pos, par);\r
+  return terrace(base, par.terraceStep);\r
+}\r
+\r
+fn generateFoamNoise4D(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let base = generateBillow4D(pos, par);\r
+  return foamify(base);\r
+}\r
+\r
+fn generateTurbulence4D(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let base = generatePerlin4D(pos, par);\r
+  return turbulence(base);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 4D "Lanczos-like" Lowpass \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn lowpass4D(p: vec4<f32>) -> f32 {\r
+  let o = vec4<f32>(0.37, 0.21, 0.29, 0.31);\r
+  let a = noise4D(p);\r
+  let b = noise4D(p + vec4<f32>(o.x, 0.0, 0.0, 0.0));\r
+  let c = noise4D(p + vec4<f32>(0.0, o.y, 0.0, 0.0));\r
+  let d = noise4D(p + vec4<f32>(0.0, 0.0, o.z, 0.0));\r
+  let e = noise4D(p + vec4<f32>(0.0, 0.0, 0.0, o.w));\r
+  return (a + b + c + d + e) * 0.2;\r
+}\r
+\r
+fn generateLanczosBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let zoom = max(params.zoom, 1e-6);\r
+\r
+  var base: vec4<f32>;\r
+  if (params.toroidal == 1u) {\r
+    base = packPeriodicUV(pos.x, pos.y, pos.z + params.time) / zoom;\r
+  } else {\r
+    base = vec4<f32>(\r
+      (pos.x / zoom) * params.freq + params.xShift,\r
+      (pos.y / zoom) * params.freq + params.yShift,\r
+      (pos.z / zoom) * params.freq + params.zShift,\r
+      params.time\r
+    );\r
+  }\r
+\r
+  var sum: f32 = 0.0;\r
+  var amp: f32 = 1.0;\r
+  var maxAmp: f32 = 0.0;\r
+  var freqLoc: f32 = params.freq;\r
+  var angle: f32 = params.seedAngle;\r
+\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    let n = lowpass4D(base * freqLoc);\r
+    sum += (2.0 * abs(n) - 1.0) * amp;\r
+    maxAmp += amp;\r
+\r
+    freqLoc *= params.lacunarity;\r
+    amp *= params.gain;\r
+\r
+    if (params.toroidal != 1u) {\r
+      let c = cos(angle);\r
+      let s = sin(angle);\r
+      let xy = vec2<f32>(base.x * c - base.y * s, base.x * s + base.y * c);\r
+      let zw = vec2<f32>(base.z * c - base.w * s, base.z * s + base.w * c);\r
+      base = vec4<f32>(\r
+        xy.x + params.xShift,\r
+        xy.y + params.yShift,\r
+        zw.x + params.zShift,\r
+        zw.y + params.time\r
+      );\r
+      angle += ANGLE_INCREMENT;\r
+    }\r
+  }\r
+\r
+  return select(0.0, sum / maxAmp, maxAmp > 0.0);\r
+}\r
+\r
+fn generateLanczosAntiBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  return -generateLanczosBillow4D(pos, params);\r
+}\r
+\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 4D FBM core + generators \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn fbm4D_core(base: vec4<f32>, params: NoiseParams) -> f32 {\r
+  var p = base;\r
+\r
+  var sum: f32 = 0.0;\r
+  var amp: f32 = 1.0;\r
+  var maxAmp: f32 = 0.0;\r
+  var freqLoc: f32 = params.freq;\r
+\r
+  var angle: f32 = params.seedAngle;\r
+  let angleInc: f32 = 2.0 * PI / max(f32(params.octaves), 1.0);\r
+\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    sum += amp * noise4D(p * freqLoc);\r
+    maxAmp += amp;\r
+\r
+    freqLoc *= params.lacunarity;\r
+    amp *= params.gain;\r
+\r
+    if (params.toroidal != 1u) {\r
+      angle += angleInc;\r
+      let c = cos(angle);\r
+      let s = sin(angle);\r
+      let xy = vec2<f32>(p.x * c - p.y * s, p.x * s + p.y * c);\r
+      let zw = vec2<f32>(p.z * c - p.w * s, p.z * s + p.w * c);\r
+      p = vec4<f32>(\r
+        xy.x + params.xShift,\r
+        xy.y + params.yShift,\r
+        zw.x + params.zShift,\r
+        zw.y + params.time\r
+      );\r
+    }\r
+  }\r
+\r
+  return select(0.0, sum / maxAmp, maxAmp > 0.0);\r
+}\r
+\r
+fn fbm4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let zoom = max(params.zoom, 1e-6);\r
+\r
+  if (params.toroidal == 1u) {\r
+    let base = packPeriodicUV(pos.x, pos.y, pos.z + params.time) / zoom;\r
+    return fbm4D_core(base, params);\r
+  }\r
+\r
+  let base = vec4<f32>(\r
+    (pos.x + params.xShift) / zoom,\r
+    (pos.y + params.yShift) / zoom,\r
+    (pos.z + params.zShift) / zoom,\r
+    params.time\r
+  );\r
+  return fbm4D_core(base, params);\r
+}\r
+\r
+fn generateFBM4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let fbm1 = fbm4D(pos, params);\r
+  let fbm2 = fbm4D_core(vec4<f32>(fbm1, fbm1, fbm1, fbm1), params);\r
+  return 2.0 * fbm2;\r
+}\r
+\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Domain-warp FBM (4D)  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+\r
+fn domainWarpFBM4D(p: vec3<f32>, params: NoiseParams, warpAmp: f32, stages: u32) -> f32 {\r
+  var q = p;\r
+  for (var i: u32 = 0u; i < stages; i = i + 1u) {\r
+    let w = fbm4D(q, params) * warpAmp;\r
+    q = q + vec3<f32>(w, w, w);\r
+  }\r
+  return fbm4D(q, params);\r
+}\r
+\r
+fn generateDomainWarpFBM1_4D(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+  return domainWarpFBM4D(pos, par, par.warpAmp, 1u);\r
+}\r
+\r
+fn generateDomainWarpFBM2_4D(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+  return domainWarpFBM4D(pos, par, par.warpAmp, 2u);\r
+}\r
+\r
+fn _warpVecFrom4D(p: vec3<f32>, par: NoiseParams) -> vec3<f32> {\r
+  let a = fbm4D(p + vec3<f32>(17.13,  3.71,  9.23), par);\r
+  let b = fbm4D(p + vec3<f32>(-5.41, 11.19,  2.07), par);\r
+  let c = fbm4D(p + vec3<f32>( 8.09, -6.77, 13.61), par);\r
+  return vec3<f32>(a, b, c);\r
+}\r
+\r
+fn domainWarpFBM4D_vec(p: vec3<f32>, params: NoiseParams, warpAmp: f32, stages: u32) -> f32 {\r
+  var q = p;\r
+  for (var i: u32 = 0u; i < stages; i = i + 1u) {\r
+    let v = _warpVecFrom4D(q, params) * warpAmp;\r
+    q = q + v;\r
+  }\r
+  return fbm4D(q, params);\r
+}\r
+\r
+fn generateDomainWarpFBM1_4D_vec(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+  return domainWarpFBM4D_vec(pos, par, par.warpAmp, 1u);\r
+}\r
+\r
+fn generateDomainWarpFBM2_4D_vec(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+  return domainWarpFBM4D_vec(pos, par, par.warpAmp, 2u);\r
+}\r
+\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Lanczos Billow Noise \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateLanczosBillow(pos : vec3<f32>, p : NoiseParams) -> f32 {\r
@@ -2366,38 +2893,7 @@ fn generateLanczosBillow(pos : vec3<f32>, p : NoiseParams) -> f32 {\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Lanczos Anti-Billow Noise \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateLanczosAntiBillow(pos : vec3<f32>, p : NoiseParams) -> f32 {\r
-    var x       = (pos.x + p.xShift) / p.zoom;\r
-    var y       = (pos.y + p.yShift) / p.zoom;\r
-    var z       = (pos.z + p.zShift) / p.zoom;\r
-    var sum     : f32 = 0.0;\r
-    var maxAmp  : f32 = 0.0;\r
-    var amp     : f32 = 1.0;\r
-    var freqLoc : f32 = p.freq;\r
-    var angle   : f32 = p.seedAngle;\r
-\r
-    for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {\r
-        let n = lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
-        sum = sum + (2.0 * abs(n) - 1.0) * amp;\r
-        maxAmp = maxAmp + amp;\r
-\r
-        freqLoc = freqLoc * p.lacunarity;\r
-        amp     = amp     * p.gain;\r
-\r
-        // simple Z\u2010axis rotation + tilt into Z\r
-        let c = cos(angle);\r
-        let s = sin(angle);\r
-        var newX = x * c - y * s;\r
-        var newY = x * s + y * c;\r
-        var newZ = y * s + z * c;\r
-\r
-        x = newX + p.xShift;\r
-        y = newY + p.yShift;\r
-        z = newZ + p.zShift;\r
-\r
-        angle = angle + ANGLE_INCREMENT;\r
-    }\r
-\r
-    return -sum / maxAmp;\r
+    return -generateLanczosBillow(pos, p);\r
 }\r
 \r
 \r
@@ -3819,6 +4315,31 @@ fn computeAntiCellular(@builtin(global_invocation_id) gid: vec3<u32>) {\r
     let v0 = generateAntiCellular(p, params);\r
     writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
 }\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 22.2) Cellular\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellular4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateCellular4D(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+  22.3) AntiCellular\r
+\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeAntiCellular4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateAntiCellular4D(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 // 23) Worley\r
@@ -3883,6 +4404,157 @@ fn computeAntiWorley4D(@builtin(global_invocation_id) gid : vec3<u32>) {\r
 \r
     // write into output\r
     writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// Worley 4D BM variants (time as W)\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeWorleyBM1_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateWorleyBM1_4D(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeWorleyBM2_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateWorleyBM2_4D(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeWorleyBM3_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateWorleyBM3_4D(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeWorleyBM1_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateWorleyBM1_4D_vec(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeWorleyBM2_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateWorleyBM2_4D_vec(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeWorleyBM3_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateWorleyBM3_4D_vec(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// Cellular 4D BM variants (time as W)\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellularBM1_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateCellularBM1_4D(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellularBM2_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateCellularBM2_4D(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellularBM3_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateCellularBM3_4D(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellularBM1_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateCellularBM1_4D_vec(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellularBM2_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateCellularBM2_4D_vec(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellularBM3_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateCellularBM3_4D_vec(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
 }\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
@@ -4209,13 +4881,176 @@ fn computeTurbulence(@builtin(global_invocation_id) gid: vec3<u32>){\r
   writeChannel(fx, fy, fz, generateTurbulence(p, params), options.outputChannel, 0u);\r
 }\r
 \r
+@compute @workgroup_size(8,8,1)\r
+fn computeBillow4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateBillow4D(p, params), options.outputChannel, 0u);\r
+}\r
 \r
+@compute @workgroup_size(8,8,1)\r
+fn computeAntiBillow4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateAntiBillow4D(p, params), options.outputChannel, 0u);\r
+}\r
 \r
+@compute @workgroup_size(8,8,1)\r
+fn computeLanczosBillow4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateLanczosBillow4D(p, params), options.outputChannel, 0u);\r
+}\r
 \r
+@compute @workgroup_size(8,8,1)\r
+fn computeLanczosAntiBillow4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateLanczosAntiBillow4D(p, params), options.outputChannel, 0u);\r
+}\r
 \r
+@compute @workgroup_size(8,8,1)\r
+fn computeFBM4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateFBM4D(p, params), options.outputChannel, 0u);\r
+}\r
 \r
+@compute @workgroup_size(8,8,1)\r
+fn computeVoronoi4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateVoronoi4D(p, params), options.outputChannel, 0u);\r
+}\r
 \r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiBM1_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateVoronoiBM1_4D(p, params), options.outputChannel, 0u);\r
+}\r
 \r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiBM2_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateVoronoiBM2_4D(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiBM3_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateVoronoiBM3_4D(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiBM1_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateVoronoiBM1_4D_vec(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiBM2_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateVoronoiBM2_4D_vec(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiBM3_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateVoronoiBM3_4D_vec(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeDomainWarpFBM1_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateDomainWarpFBM1_4D(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeDomainWarpFBM2_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateDomainWarpFBM2_4D(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeDomainWarpFBM1_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateDomainWarpFBM1_4D_vec(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeDomainWarpFBM2_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateDomainWarpFBM2_4D_vec(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeTerraceNoise4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateTerraceNoise4D(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeFoamNoise4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateFoamNoise4D(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeTurbulence4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateTurbulence4D(p, params), options.outputChannel, 0u);\r
+}\r
 \r
 \r
 \r
@@ -4487,6 +5322,7 @@ fn computeGauss5x5(\r
         "computeWhiteNoise",
         "computeBlueNoise",
         "computeSimplex",
+        "computeSimplexFBM",
         "computeCurl2D",
         "computeCurlFBM2D",
         "computeDomainWarpFBM1",
@@ -4498,6 +5334,35 @@ fn computeGauss5x5(\r
         "computePerlin4D",
         "computeWorley4D",
         "computeAntiWorley4D",
+        "computeCellular4D",
+        "computeAntiCellular4D",
+        "computeBillow4D",
+        "computeAntiBillow4D",
+        "computeLanczosBillow4D",
+        "computeLanczosAntiBillow4D",
+        "computeFBM4D",
+        "computeVoronoi4D",
+        "computeVoronoiBM1_4D",
+        "computeVoronoiBM2_4D",
+        "computeVoronoiBM3_4D",
+        "computeVoronoiBM1_4D_vec",
+        "computeVoronoiBM2_4D_vec",
+        "computeVoronoiBM3_4D_vec",
+        "computeWorleyBM1_4D",
+        "computeWorleyBM2_4D",
+        "computeWorleyBM3_4D",
+        "computeWorleyBM1_4D_vec",
+        "computeWorleyBM2_4D_vec",
+        "computeWorleyBM3_4D_vec",
+        "computeCellularBM1_4D",
+        "computeCellularBM2_4D",
+        "computeCellularBM3_4D",
+        "computeCellularBM1_4D_vec",
+        "computeCellularBM2_4D_vec",
+        "computeCellularBM3_4D_vec",
+        "computeTerraceNoise4D",
+        "computeFoamNoise4D",
+        "computeTurbulence4D",
         "computeGauss5x5",
         "computeNormal",
         "computeNormal8",
@@ -6003,6 +6868,189 @@ fn computeGauss5x5(\r
       });
       return blob;
     }
+    // Render a single Z slice from a 3D texture view into an RGBA8 pixel buffer (RGBA order).
+    // zNorm is in [0,1]. channel selects which packed channel to display.
+    async _render3DSliceToRGBA8Pixels(view3D, width, height, zNorm, channel = 0) {
+      if (!view3D)
+        throw new Error("_render3DSliceToRGBA8Pixels: view3D is required");
+      const W = Math.max(1, width | 0);
+      const H = Math.max(1, height | 0);
+      this.initBlitRender();
+      const z = Math.min(Math.max(Number(zNorm) || 0, 0), 1);
+      const format = "bgra8unorm";
+      const captureTexture = this.device.createTexture({
+        size: [W, H, 1],
+        format,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC
+      });
+      const ab = new ArrayBuffer(16);
+      const dv = new DataView(ab);
+      dv.setFloat32(0, z, true);
+      dv.setUint32(4, channel >>> 0, true);
+      dv.setUint32(8, 0, true);
+      dv.setUint32(12, 0, true);
+      this.queue.writeBuffer(this.blit3DUbo, 0, ab);
+      const bg = this.device.createBindGroup({
+        layout: this.bgl3D,
+        entries: [
+          { binding: 0, resource: this.sampler },
+          { binding: 1, resource: view3D },
+          { binding: 2, resource: { buffer: this.blit3DUbo } }
+        ]
+      });
+      const encoder = this.device.createCommandEncoder();
+      const rpass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: captureTexture.createView(),
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 1 }
+          }
+        ]
+      });
+      rpass.setPipeline(this.pipeline3D);
+      rpass.setBindGroup(0, bg);
+      rpass.draw(6, 1, 0, 0);
+      rpass.end();
+      const bytesPerPixel = 4;
+      const align = 256;
+      const bytesPerRowUnaligned = W * bytesPerPixel;
+      const bytesPerRow = Math.ceil(bytesPerRowUnaligned / align) * align;
+      const bufferSize = bytesPerRow * H;
+      const readBuffer = this.device.createBuffer({
+        size: bufferSize,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+      });
+      encoder.copyTextureToBuffer(
+        { texture: captureTexture },
+        { buffer: readBuffer, bytesPerRow, rowsPerImage: H },
+        { width: W, height: H, depthOrArrayLayers: 1 }
+      );
+      this.queue.submit([encoder.finish()]);
+      if (this.queue && this.queue.onSubmittedWorkDone) {
+        await this.queue.onSubmittedWorkDone();
+      }
+      await readBuffer.mapAsync(GPUMapMode.READ);
+      const mapped = readBuffer.getMappedRange();
+      const src = new Uint8Array(mapped);
+      const pixels = new Uint8ClampedArray(W * H * bytesPerPixel);
+      let dst = 0;
+      for (let y = 0; y < H; y++) {
+        const rowStart = y * bytesPerRow;
+        for (let x = 0; x < W; x++) {
+          const si = rowStart + x * 4;
+          pixels[dst++] = src[si + 2];
+          pixels[dst++] = src[si + 1];
+          pixels[dst++] = src[si + 0];
+          pixels[dst++] = src[si + 3];
+        }
+      }
+      readBuffer.unmap();
+      readBuffer.destroy();
+      captureTexture.destroy();
+      return pixels;
+    }
+    // Export a full 3D volume as a single PNG tileset.
+    // Tiles are laid out row-major: z=0 is top-left, z increases left->right then top->bottom.
+    // target can be a raw 3D view OR your { views: [...], meta: { tile: { d }}} bundle.
+    // tileWidth/tileHeight are the per-slice render size in pixels (usually TOROIDAL_SIZE).
+    // opts:
+    //  - depth (required if target has no meta)
+    //  - channel (default 0)
+    //  - chunk (default 0, if target is bundle)
+    //  - tilesAcross (default 16)
+    //  - tilesDown (default ceil(depth/tilesAcross))
+    //  - startSlice (default 0)
+    //  - sliceCount (default depth-startSlice)
+    async export3DTilesetToPNGBlob(target, tileWidth, tileHeight, opts = {}) {
+      if (!target)
+        throw new Error("export3DTilesetToPNGBlob: target is required");
+      const TW = Math.max(1, tileWidth | 0);
+      const TH = Math.max(1, (tileHeight ?? tileWidth) | 0);
+      const {
+        depth,
+        channel = 0,
+        chunk = 0,
+        tilesAcross = 16,
+        tilesDown = null,
+        startSlice = 0,
+        sliceCount = null
+      } = opts;
+      this.initBlitRender();
+      if (this.queue && this.queue.onSubmittedWorkDone) {
+        try {
+          await this.queue.onSubmittedWorkDone();
+        } catch (e) {
+          console.warn(
+            "export3DTilesetToPNGBlob: onSubmittedWorkDone before export failed",
+            e
+          );
+        }
+      }
+      let view3D;
+      let d;
+      if (target && target.views && Array.isArray(target.views)) {
+        const idx = Math.max(0, Math.min(chunk | 0, target.views.length - 1));
+        view3D = target.views[idx];
+        d = target.meta?.tile?.d ?? depth;
+      } else {
+        view3D = target;
+        d = depth;
+      }
+      if (!view3D) throw new Error("export3DTilesetToPNGBlob: missing 3D view");
+      if (!d || d <= 0)
+        throw new Error(
+          "export3DTilesetToPNGBlob: depth must be provided and > 0"
+        );
+      const across = Math.max(1, tilesAcross | 0);
+      const down = tilesDown !== null && tilesDown !== void 0 ? Math.max(1, tilesDown | 0) : Math.ceil(d / across);
+      const start = Math.min(Math.max(startSlice | 0, 0), d - 1);
+      const count = sliceCount !== null && sliceCount !== void 0 ? Math.max(0, sliceCount | 0) : d - start;
+      const outW = TW * across;
+      const outH = TH * down;
+      const outPixels = new Uint8ClampedArray(outW * outH * 4);
+      const maxZ = Math.min(d, start + count);
+      for (let z = start; z < maxZ; z++) {
+        const rel = z - start;
+        const col = rel % across;
+        const row = rel / across | 0;
+        if (row >= down) break;
+        const zNorm = (z + 0.5) / d;
+        const tilePixels = await this._render3DSliceToRGBA8Pixels(
+          view3D,
+          TW,
+          TH,
+          zNorm,
+          channel
+        );
+        const dstBaseX = col * TW;
+        const dstBaseY = row * TH;
+        for (let y = 0; y < TH; y++) {
+          const srcRowStart = y * TW * 4;
+          const dstRowStart = ((dstBaseY + y) * outW + dstBaseX) * 4;
+          outPixels.set(
+            tilePixels.subarray(srcRowStart, srcRowStart + TW * 4),
+            dstRowStart
+          );
+        }
+      }
+      const tmpCanvas = document.createElement("canvas");
+      tmpCanvas.width = outW;
+      tmpCanvas.height = outH;
+      const ctx2d = tmpCanvas.getContext("2d");
+      if (!ctx2d)
+        throw new Error("export3DTilesetToPNGBlob: unable to get 2D context");
+      ctx2d.putImageData(new ImageData(outPixels, outW, outH), 0, 0);
+      const blob = await new Promise((resolve, reject) => {
+        tmpCanvas.toBlob((b) => {
+          if (b) resolve(b);
+          else
+            reject(new Error("export3DTilesetToPNGBlob: toBlob returned null"));
+        }, "image/png");
+      });
+      return blob;
+    }
   };
   var BaseNoise = class {
     constructor(seed = Date.now()) {
@@ -6336,9 +7384,23 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this._initBuffers();
       this.setOptions();
       this.setParams();
-      this.setTileScaling({ shapeOffsetWorld: [0, 0], detailOffsetWorld: [0, 0] });
+      this.setTileScaling({
+        shapeOffsetWorld: [0, 0],
+        detailOffsetWorld: [0, 0]
+      });
       this.setSamplingOpts({ useManualWrap: 0, weatherLayer: 0 });
-      this.setReprojSettings({ enabled: 0, subsample: 1, sampleOffset: 0, motionIsNormalized: 0, temporalBlend: 0, depthTest: 0, depthTolerance: 0, frameIndex: 0, fullWidth: 0, fullHeight: 0 });
+      this.setReprojSettings({
+        enabled: 0,
+        subsample: 1,
+        sampleOffset: 0,
+        motionIsNormalized: 0,
+        temporalBlend: 0,
+        depthTest: 0,
+        depthTolerance: 0,
+        frameIndex: 0,
+        fullWidth: 0,
+        fullHeight: 0
+      });
       this.setPerfParams();
       this.setSunByAngles();
       this.setBox();
@@ -6380,104 +7442,334 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this.module = d.createShaderModule({ code: clouds_default });
       this.bgl0 = d.createBindGroupLayout({
         entries: [
-          { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 0,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // options
-          { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // params
-          { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "read-only-storage" }
+          },
           // dummy storage
-          { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 3,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // offsets
-          { binding: 4, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: this.outFormat, viewDimension: "2d-array" } },
+          {
+            binding: 4,
+            visibility: GPUShaderStage.COMPUTE,
+            storageTexture: {
+              access: "write-only",
+              format: this.outFormat,
+              viewDimension: "2d-array"
+            }
+          },
           // out
-          { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+          {
+            binding: 5,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "read-only-storage" }
+          },
           // pos
-          { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 6,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // frame
-          { binding: 7, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: this.outFormat, viewDimension: "2d-array" } },
+          {
+            binding: 7,
+            visibility: GPUShaderStage.COMPUTE,
+            storageTexture: {
+              access: "write-only",
+              format: this.outFormat,
+              viewDimension: "2d-array"
+            }
+          },
           // historyOut or dummy
-          { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 8,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // reproj
-          { binding: 9, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 9,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // perf
-          { binding: 10, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } }
+          {
+            binding: 10,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          }
           // tuning
         ]
       });
       this.bgl1 = d.createBindGroupLayout({
         entries: [
-          { binding: 0, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "2d-array" } },
+          {
+            binding: 0,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d-array" }
+          },
           // weather
-          { binding: 1, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
-          { binding: 2, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "3d" } },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "3d" }
+          },
           // shape3D
-          { binding: 3, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
-          { binding: 4, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "2d-array" } },
+          {
+            binding: 3,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 4,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d-array" }
+          },
           // blue
-          { binding: 5, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
-          { binding: 6, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "3d" } },
+          {
+            binding: 5,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 6,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "3d" }
+          },
           // detail3D
-          { binding: 7, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
-          { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 7,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 8,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // light
-          { binding: 9, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 9,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // view
-          { binding: 10, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 10,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // box
-          { binding: 11, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "2d-array" } },
+          {
+            binding: 11,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d-array" }
+          },
           // historyPrev
-          { binding: 12, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
-          { binding: 13, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "2d" } },
+          {
+            binding: 12,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 13,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d" }
+          },
           // motion
-          { binding: 14, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
-          { binding: 15, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "2d" } },
+          {
+            binding: 14,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 15,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d" }
+          },
           // depthPrev
-          { binding: 16, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } }
+          {
+            binding: 16,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" }
+          }
         ]
       });
       this.pipeline = d.createComputePipeline({
-        layout: d.createPipelineLayout({ bindGroupLayouts: [this.bgl0, this.bgl1] }),
+        layout: d.createPipelineLayout({
+          bindGroupLayouts: [this.bgl0, this.bgl1]
+        }),
         compute: { module: this.module, entryPoint: "computeCloud" }
       });
-      this._samp2D = d.createSampler({ magFilter: "linear", minFilter: "linear", addressModeU: "repeat", addressModeV: "repeat" });
-      this._sampShape = d.createSampler({ magFilter: "linear", minFilter: "linear", addressModeU: "repeat", addressModeV: "repeat", addressModeW: "repeat" });
-      this._sampDetail = d.createSampler({ magFilter: "linear", minFilter: "linear", addressModeU: "repeat", addressModeV: "repeat", addressModeW: "repeat" });
-      this._sampBN = d.createSampler({ magFilter: "linear", minFilter: "linear", addressModeU: "repeat", addressModeV: "repeat" });
-      const tex2Desc = { size: [1, 1, 1], format: "r8unorm", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST };
+      this._samp2D = d.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+        addressModeU: "repeat",
+        addressModeV: "repeat"
+      });
+      this._sampShape = d.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+        addressModeU: "repeat",
+        addressModeV: "repeat",
+        addressModeW: "repeat"
+      });
+      this._sampDetail = d.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+        addressModeU: "repeat",
+        addressModeV: "repeat",
+        addressModeW: "repeat"
+      });
+      this._sampBN = d.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+        addressModeU: "repeat",
+        addressModeV: "repeat"
+      });
+      const tex2Desc = {
+        size: [1, 1, 1],
+        format: "r8unorm",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
+      };
       this._dummy2DMotion = d.createTexture(tex2Desc);
-      this._dummy2DMotionView = this._dummy2DMotion.createView({ dimension: "2d" });
+      this._dummy2DMotionView = this._dummy2DMotion.createView({
+        dimension: "2d"
+      });
       this._dummy2DDepth = d.createTexture(tex2Desc);
       this._dummy2DDepthView = this._dummy2DDepth.createView({ dimension: "2d" });
-      this.queue.writeTexture({ texture: this._dummy2DMotion }, new Uint8Array([128]), { bytesPerRow: 1 }, { width: 1, height: 1, depthOrArrayLayers: 1 });
-      this.queue.writeTexture({ texture: this._dummy2DDepth }, new Uint8Array([128]), { bytesPerRow: 1 }, { width: 1, height: 1, depthOrArrayLayers: 1 });
-      const histDesc = { size: [1, 1, 1], format: this.outFormat, usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING };
+      this.queue.writeTexture(
+        { texture: this._dummy2DMotion },
+        new Uint8Array([128]),
+        { bytesPerRow: 1 },
+        { width: 1, height: 1, depthOrArrayLayers: 1 }
+      );
+      this.queue.writeTexture(
+        { texture: this._dummy2DDepth },
+        new Uint8Array([128]),
+        { bytesPerRow: 1 },
+        { width: 1, height: 1, depthOrArrayLayers: 1 }
+      );
+      const histDesc = {
+        size: [1, 1, 1],
+        format: this.outFormat,
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING
+      };
       this._dummyHistoryPrev = d.createTexture(histDesc);
-      this._dummyHistoryPrevView = this._dummyHistoryPrev.createView({ dimension: "2d-array", arrayLayerCount: 1 });
+      this._dummyHistoryPrevView = this._dummyHistoryPrev.createView({
+        dimension: "2d-array",
+        arrayLayerCount: 1
+      });
       this._dummyHistoryOut = d.createTexture(histDesc);
-      this._dummyHistoryOutView = this._dummyHistoryOut.createView({ dimension: "2d-array", arrayLayerCount: 1 });
-      this.queue.writeTexture({ texture: this._dummyHistoryPrev }, new Float32Array([0, 0, 0, 0]), { bytesPerRow: 4 * 4 }, { width: 1, height: 1, depthOrArrayLayers: 1 });
-      this.queue.writeTexture({ texture: this._dummyHistoryOut }, new Float32Array([0, 0, 0, 0]), { bytesPerRow: 4 * 4 }, { width: 1, height: 1, depthOrArrayLayers: 1 });
+      this._dummyHistoryOutView = this._dummyHistoryOut.createView({
+        dimension: "2d-array",
+        arrayLayerCount: 1
+      });
+      this.queue.writeTexture(
+        { texture: this._dummyHistoryPrev },
+        new Float32Array([0, 0, 0, 0]),
+        { bytesPerRow: 4 * 4 },
+        { width: 1, height: 1, depthOrArrayLayers: 1 }
+      );
+      this.queue.writeTexture(
+        { texture: this._dummyHistoryOut },
+        new Float32Array([0, 0, 0, 0]),
+        { bytesPerRow: 4 * 4 },
+        { width: 1, height: 1, depthOrArrayLayers: 1 }
+      );
     }
     _initBuffers() {
       const d = this.device;
-      this.optionsBuffer = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
-      this.paramsBuffer = d.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
-      this.offsetsBuffer = d.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.dummyBuffer = d.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-      this.posBuffer = d.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-      this.frameBuffer = d.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.lightBuffer = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
-      this.viewBuffer = d.createBuffer({ size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.boxBuffer = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.samplingBuffer = d.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.reprojBuffer = d.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.perfBuffer = d.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.tuningBuffer = d.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.renderParams = d.createBuffer({ size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      this.optionsBuffer = d.createBuffer({
+        size: 32,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+      });
+      this.paramsBuffer = d.createBuffer({
+        size: 96,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+      });
+      this.offsetsBuffer = d.createBuffer({
+        size: 48,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      this.dummyBuffer = d.createBuffer({
+        size: 4,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+      });
+      this.posBuffer = d.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+      });
+      this.frameBuffer = d.createBuffer({
+        size: 64,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      this.lightBuffer = d.createBuffer({
+        size: 32,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+      });
+      this.viewBuffer = d.createBuffer({
+        size: 128,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      this.boxBuffer = d.createBuffer({
+        size: 32,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      this.samplingBuffer = d.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      this.reprojBuffer = d.createBuffer({
+        size: 48,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      this.perfBuffer = d.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      this.tuningBuffer = d.createBuffer({
+        size: 256,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      this.renderParams = d.createBuffer({
+        size: 128,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
       this.queue.writeBuffer(this.dummyBuffer, 0, new Uint8Array(4));
     }
     // -------------------- UBO setters --------------------
-    setOptions({ useCustomPos = false, outputChannel = 0, writeRGB = true, debugForceFog = 0, temporalSeed = 0, windDisp = 0, windAngleRad = 0 } = {}) {
+    setOptions({
+      useCustomPos = false,
+      outputChannel = 0,
+      writeRGB = true,
+      debugForceFog = 0,
+      temporalSeed = 0,
+      windDisp = 0,
+      windAngleRad = 0
+    } = {}) {
       const dv = this._dvOptions;
       dv.setUint32(0, useCustomPos ? 1 : 0, true);
       dv.setUint32(4, outputChannel >>> 0, true);
@@ -6580,15 +7872,32 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this._writeIfChanged("sampling", this.samplingBuffer, this._abSampling);
     }
     setWeatherLayer(layer = 0) {
-      this.setSamplingOpts({ useManualWrap: this._dvSampling.getUint32(0, true), weatherLayer: layer });
+      this.setSamplingOpts({
+        useManualWrap: this._dvSampling.getUint32(0, true),
+        weatherLayer: layer
+      });
     }
     setManualWrap(on = true) {
-      this.setSamplingOpts({ useManualWrap: on ? 1 : 0, weatherLayer: this.getWeatherLayer() });
+      this.setSamplingOpts({
+        useManualWrap: on ? 1 : 0,
+        weatherLayer: this.getWeatherLayer()
+      });
     }
     getWeatherLayer() {
       return this._dvSampling.getUint32(4, true) || 0;
     }
-    setReprojSettings({ enabled = 0, subsample = 1, sampleOffset = 0, motionIsNormalized = 0, temporalBlend = 0, depthTest = 0, depthTolerance = 0, frameIndex = 0, fullWidth = 0, fullHeight = 0 } = {}) {
+    setReprojSettings({
+      enabled = 0,
+      subsample = 1,
+      sampleOffset = 0,
+      motionIsNormalized = 0,
+      temporalBlend = 0,
+      depthTest = 0,
+      depthTolerance = 0,
+      frameIndex = 0,
+      fullWidth = 0,
+      fullHeight = 0
+    } = {}) {
       const dv = this._dvReproj;
       dv.setUint32(0, enabled >>> 0, true);
       dv.setUint32(4, subsample >>> 0, true);
@@ -6639,9 +7948,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this._writeIfChanged("light", this.lightBuffer, this._abLight);
       this._bg1Dirty = true;
     }
-    setSunByAngles({ azimuthDeg = 45, elevationDeg = 35, camPos = [0, 0, 2] } = {}) {
+    setSunByAngles({
+      azimuthDeg = 45,
+      elevationDeg = 35,
+      camPos = [0, 0, 2]
+    } = {}) {
       const az = azimuthDeg * Math.PI / 180, el = elevationDeg * Math.PI / 180;
-      const sd = [Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)];
+      const sd = [
+        Math.cos(el) * Math.sin(az),
+        Math.sin(el),
+        Math.cos(el) * Math.cos(az)
+      ];
       this.setLight({ sunDir: sd, camPos });
     }
     setBox({ center = [0, 0, 0], half = [1, 0.6, 1], uvScale = 1.5 } = {}) {
@@ -6657,7 +7974,21 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this._writeIfChanged("box", this.boxBuffer, this._abBox);
       this._bg1Dirty = true;
     }
-    setFrame({ fullWidth = 0, fullHeight = 0, tileWidth = 0, tileHeight = 0, originX = 0, originY = 0, originZ = 0, fullDepth = 1, tileDepth = 1, layerIndex = 0, layers = 1, originXf = 0, originYf = 0 } = {}) {
+    setFrame({
+      fullWidth = 0,
+      fullHeight = 0,
+      tileWidth = 0,
+      tileHeight = 0,
+      originX = 0,
+      originY = 0,
+      originZ = 0,
+      fullDepth = 1,
+      tileDepth = 1,
+      layerIndex = 0,
+      layers = 1,
+      originXf = 0,
+      originYf = 0
+    } = {}) {
       const dv = this._dvFrame;
       dv.setUint32(0, fullWidth >>> 0, true);
       dv.setUint32(4, fullHeight >>> 0, true);
@@ -6687,7 +8018,21 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this._dvFrame.setInt32(36, i | 0, true);
       this._writeIfChanged("frame", this.frameBuffer, this._abFrame);
     }
-    setViewFromCamera({ camPos = [0, 0, 3], right = [1, 0, 0], up = [0, 1, 0], fwd = [0, 0, 1], fovYDeg = 60, aspect = 1, planetRadius = 0, cloudBottom = -1, cloudTop = 1, worldToUV = 1, stepBase = 0.02, stepInc = 0.04, volumeLayers = 1 } = {}) {
+    setViewFromCamera({
+      camPos = [0, 0, 3],
+      right = [1, 0, 0],
+      up = [0, 1, 0],
+      fwd = [0, 0, 1],
+      fovYDeg = 60,
+      aspect = 1,
+      planetRadius = 0,
+      cloudBottom = -1,
+      cloudTop = 1,
+      worldToUV = 1,
+      stepBase = 0.02,
+      stepInc = 0.04,
+      volumeLayers = 1
+    } = {}) {
       const dv = this._dvView;
       const norm2 = (v) => {
         const L = Math.hypot(v[0], v[1], v[2]) || 1;
@@ -6695,8 +8040,16 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       };
       const f = norm2(fwd);
       const u0 = norm2(up);
-      const r = norm2([u0[1] * f[2] - u0[2] * f[1], u0[2] * f[0] - u0[0] * f[2], u0[0] * f[1] - u0[1] * f[0]]);
-      const u = [f[1] * r[2] - f[2] * r[1], f[2] * r[0] - f[0] * r[2], f[0] * r[1] - f[1] * r[0]];
+      const r = norm2([
+        u0[1] * f[2] - u0[2] * f[1],
+        u0[2] * f[0] - u0[0] * f[2],
+        u0[0] * f[1] - u0[1] * f[0]
+      ]);
+      const u = [
+        f[1] * r[2] - f[2] * r[1],
+        f[2] * r[0] - f[0] * r[2],
+        f[0] * r[1] - f[1] * r[0]
+      ];
       const floats = [
         camPos[0],
         camPos[1],
@@ -6731,7 +8084,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         0,
         0
       ];
-      for (let i = 0; i < floats.length; i++) dv.setFloat32(i * 4, floats[i], true);
+      for (let i = 0; i < floats.length; i++)
+        dv.setFloat32(i * 4, floats[i], true);
       this._writeIfChanged("view", this.viewBuffer, this._abView);
       this._bg1Dirty = true;
     }
@@ -6903,43 +8257,65 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this._bg0Dirty = true;
     }
     // -------------------- input maps and history hooks --------------------
-    setInputMaps({ weatherView, shape3DView, detail3DView, blueTex, blueView, motionView: motionView2, depthPrevView, historyPrevView: historyPrevView2 } = {}) {
-      let changed = false;
+    setInputMaps({
+      weatherView,
+      shape3DView,
+      detail3DView,
+      blueTex,
+      blueView,
+      motionView: motionView2,
+      depthPrevView,
+      historyPrevView: historyPrevView2,
+      historyOutView: historyOutView2
+    } = {}) {
+      let bg1Changed = false;
+      let bg0Changed = false;
       if (typeof weatherView !== "undefined" && weatherView !== this.weatherView) {
         this.weatherView = weatherView;
-        changed = true;
+        bg1Changed = true;
       }
       if (typeof shape3DView !== "undefined" && shape3DView !== this.shape3DView) {
         this.shape3DView = shape3DView;
-        changed = true;
+        bg1Changed = true;
       }
       if (typeof detail3DView !== "undefined" && detail3DView !== this.detail3DView) {
         this.detail3DView = detail3DView;
-        changed = true;
-      }
-      if (typeof blueView !== "undefined" && blueView !== this.blueView) {
-        this.blueView = blueView;
-        changed = true;
+        bg1Changed = true;
       }
       if (typeof blueTex !== "undefined" && blueTex !== this.blueTex) {
-        this.blueTex = blueTex;
+        if (this._ownsBlue && this.blueTex && this.blueTex !== blueTex) {
+          try {
+            this.blueTex.destroy();
+          } catch (_) {
+          }
+        }
+        this.blueTex = blueTex || null;
         this._ownsBlue = false;
-        this.blueView = null;
-        changed = true;
+        if (typeof blueView === "undefined") this.blueView = null;
+        bg1Changed = true;
+      }
+      if (typeof blueView !== "undefined" && blueView !== this.blueView) {
+        this.blueView = blueView || null;
+        bg1Changed = true;
       }
       if (typeof motionView2 !== "undefined" && motionView2 !== this.motionView) {
         this.motionView = motionView2;
-        changed = true;
+        bg1Changed = true;
       }
       if (typeof depthPrevView !== "undefined" && depthPrevView !== this.depthPrevView) {
         this.depthPrevView = depthPrevView;
-        changed = true;
+        bg1Changed = true;
       }
       if (typeof historyPrevView2 !== "undefined" && historyPrevView2 !== this.historyPrevView) {
         this.historyPrevView = historyPrevView2;
-        changed = true;
+        bg1Changed = true;
       }
-      if (changed) this._bg1Dirty = true;
+      if (typeof historyOutView2 !== "undefined" && historyOutView2 !== this.historyOutView) {
+        this.historyOutView = historyOutView2;
+        bg0Changed = true;
+      }
+      if (bg1Changed) this._bg1Dirty = true;
+      if (bg0Changed) this._bg0Dirty = true;
     }
     setHistoryPrevView(view) {
       if (view !== this.historyPrevView) {
@@ -6954,7 +8330,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     // -------------------- outputs --------------------
     createOutputTexture(width, height, layers = 1, format = "rgba16float") {
       if (this.outTexture && this.width === width && this.height === height && this.layers === layers && this.outFormat === format) {
-        this.setFrame({ fullWidth: width, fullHeight: height, tileWidth: width, tileHeight: height, originX: 0, originY: 0, layerIndex: 0, originXf: 0, originYf: 0 });
+        this.setFrame({
+          fullWidth: width,
+          fullHeight: height,
+          tileWidth: width,
+          tileHeight: height,
+          originX: 0,
+          originY: 0,
+          layerIndex: 0,
+          originXf: 0,
+          originYf: 0
+        });
         this._reprojFullW = width;
         this._reprojFullH = height;
         const curFW = this._dvReproj.getUint32(32, true) || 0, curFH = this._dvReproj.getUint32(36, true) || 0;
@@ -6966,10 +8352,11 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         }
         return this.outView;
       }
-      if (this.outTexture) try {
-        this.outTexture.destroy();
-      } catch (_) {
-      }
+      if (this.outTexture)
+        try {
+          this.outTexture.destroy();
+        } catch (_) {
+        }
       this.outTexture = null;
       this.outView = null;
       this.outFormat = format;
@@ -6978,7 +8365,10 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         format: this.outFormat,
         usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT
       });
-      this.outView = this.outTexture.createView({ dimension: "2d-array", arrayLayerCount: layers });
+      this.outView = this.outTexture.createView({
+        dimension: "2d-array",
+        arrayLayerCount: layers
+      });
       this.width = width;
       this.height = height;
       this.layers = layers;
@@ -6987,7 +8377,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this._dvReproj.setUint32(32, this._reprojFullW >>> 0, true);
       this._dvReproj.setUint32(36, this._reprojFullH >>> 0, true);
       this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
-      this.setFrame({ fullWidth: width, fullHeight: height, tileWidth: width, tileHeight: height, originX: 0, originY: 0, layerIndex: 0, originXf: 0, originYf: 0 });
+      this.setFrame({
+        fullWidth: width,
+        fullHeight: height,
+        tileWidth: width,
+        tileHeight: height,
+        originX: 0,
+        originY: 0,
+        layerIndex: 0,
+        originXf: 0,
+        originYf: 0
+      });
       this._bg0Dirty = true;
       this._bg1Dirty = true;
       this._renderBgCache = /* @__PURE__ */ new WeakMap();
@@ -7004,7 +8404,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         this.width = width;
         this.height = height;
         this.layers = layers;
-        this.setFrame({ fullWidth: width, fullHeight: height, tileWidth: width, tileHeight: height, originX: 0, originY: 0, layerIndex: 0, originXf: 0, originYf: 0 });
+        this.setFrame({
+          fullWidth: width,
+          fullHeight: height,
+          tileWidth: width,
+          tileHeight: height,
+          originX: 0,
+          originY: 0,
+          layerIndex: 0,
+          originXf: 0,
+          originYf: 0
+        });
         this._reprojFullW = width;
         this._reprojFullH = height;
         this._dvReproj.setUint32(32, this._reprojFullW >>> 0, true);
@@ -7061,16 +8471,32 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     _ensureBlueView() {
       if (this.blueView) return this.blueView;
       if (!this.blueTex) {
-        const tex = this.device.createTexture({ size: [1, 1, 1], format: "r8unorm", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
-        this.queue.writeTexture({ texture: tex }, new Uint8Array([128]), { bytesPerRow: 1 }, { width: 1, height: 1, depthOrArrayLayers: 1 });
+        const tex = this.device.createTexture({
+          size: [1, 1, 1],
+          format: "r8unorm",
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
+        });
+        this.queue.writeTexture(
+          { texture: tex },
+          new Uint8Array([128]),
+          { bytesPerRow: 1 },
+          { width: 1, height: 1, depthOrArrayLayers: 1 }
+        );
         this.blueTex = tex;
         this._ownsBlue = true;
       }
-      this.blueView = this.blueTex.createView({ dimension: "2d-array", baseArrayLayer: 0, arrayLayerCount: 1 });
+      this.blueView = this.blueTex.createView({
+        dimension: "2d-array",
+        baseArrayLayer: 0,
+        arrayLayerCount: 1
+      });
       return this.blueView;
     }
     _createBg0ForKey() {
-      if (!this.outView) throw new Error("No output view: call createOutputTexture or setOutputView first");
+      if (!this.outView)
+        throw new Error(
+          "No output view: call createOutputTexture or setOutputView first"
+        );
       const canUseExplicitHistoryOut = this.historyOutView && this._getResId(this.historyOutView) !== this._getResId(this.outView);
       const historyOutForBind = canUseExplicitHistoryOut ? this.historyOutView : this._dummyHistoryOutView;
       return this.device.createBindGroup({
@@ -7091,9 +8517,18 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       });
     }
     _createBg1ForKey() {
-      if (!this.weatherView) throw new Error("Missing weatherView (texture_2d_array view). Call setInputMaps().");
-      if (!this.shape3DView) throw new Error("Missing shape3DView (texture_3d view). Call setInputMaps().");
-      if (!this.detail3DView) throw new Error("Missing detail3DView (texture_3d view). Call setInputMaps().");
+      if (!this.weatherView)
+        throw new Error(
+          "Missing weatherView (texture_2d_array view). Call setInputMaps()."
+        );
+      if (!this.shape3DView)
+        throw new Error(
+          "Missing shape3DView (texture_3d view). Call setInputMaps()."
+        );
+      if (!this.detail3DView)
+        throw new Error(
+          "Missing detail3DView (texture_3d view). Call setInputMaps()."
+        );
       const blueView = this.blueView || this._ensureBlueView();
       const motionView2 = this.motionView || this._dummy2DMotionView;
       const depthView2 = this.depthPrevView || this._dummy2DDepthView;
@@ -7123,7 +8558,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     }
     _makeBindGroups() {
       const k0 = this._buildBg0Key();
-      if (!this._bg0Dirty && this._bg0Cache.has(k0)) this._currentBg0 = this._bg0Cache.get(k0);
+      if (!this._bg0Dirty && this._bg0Cache.has(k0))
+        this._currentBg0 = this._bg0Cache.get(k0);
       else {
         if (this._bg0Cache.has(k0) && this._bg0Dirty) {
           const idx = this._bg0Keys.indexOf(k0);
@@ -7141,7 +8577,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         }
       }
       const k1 = this._buildBg1Key();
-      if (!this._bg1Dirty && this._bg1Cache.has(k1)) this._currentBg1 = this._bg1Cache.get(k1);
+      if (!this._bg1Dirty && this._bg1Cache.has(k1))
+        this._currentBg1 = this._bg1Cache.get(k1);
       else {
         if (this._bg1Cache.has(k1) && this._bg1Dirty) {
           const idx = this._bg1Keys.indexOf(k1);
@@ -7212,7 +8649,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     }
     // -------------------- dispatch helpers (coarse integrated) --------------------
     async dispatchRect({ x, y, w, h, wait = false, coarseFactor = 1 } = {}) {
-      if (!this.outView) throw new Error("dispatchRect: createOutputTexture/setOutputView first.");
+      if (!this.outView)
+        throw new Error("dispatchRect: createOutputTexture/setOutputView first.");
       const cf = Math.max(1, coarseFactor | 0);
       if (cf < 2) return await this.dispatchRectNoCoarse({ x, y, w, h, wait });
       const cW = Math.max(1, Math.ceil((w || this.width) / cf));
@@ -7227,7 +8665,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this.width = cW;
       this.height = cH;
       this.outFormat = this._coarseTexture?.format || savedFormat;
-      this.setFrame({ fullWidth: cW, fullHeight: cH, tileWidth: cW, tileHeight: cH, originX: baseX, originY: baseY, layerIndex: this._dvFrame.getInt32(36, true) | 0, originXf: 0, originYf: 0 });
+      this.setFrame({
+        fullWidth: cW,
+        fullHeight: cH,
+        tileWidth: cW,
+        tileHeight: cH,
+        originX: baseX,
+        originY: baseY,
+        layerIndex: this._dvFrame.getInt32(36, true) | 0,
+        originXf: 0,
+        originYf: 0
+      });
       const curFW = this._dvReproj.getUint32(32, true) || 0, curFH = this._dvReproj.getUint32(36, true) || 0;
       if (curFW !== savedFullW >>> 0 || curFH !== savedFullH >>> 0) {
         this._dvReproj.setUint32(32, savedFullW >>> 0, true);
@@ -7241,20 +8689,53 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this.width = savedWidth;
       this.height = savedHeight;
       this.outFormat = savedFormat;
-      this.setFrame({ fullWidth: savedWidth, fullHeight: savedHeight, tileWidth: w || savedWidth, tileHeight: h || savedHeight, originX: x || 0, originY: y || 0, layerIndex: this._dvFrame.getInt32(36, true) | 0, originXf: 0, originYf: 0 });
-      await this._upsampleCoarseToOut({ srcX: baseX, srcY: baseY, srcW: cW, srcH: cH, dstX: x || 0, dstY: y || 0, dstW: w || this.width, dstH: h || this.height, wait });
+      this.setFrame({
+        fullWidth: savedWidth,
+        fullHeight: savedHeight,
+        tileWidth: w || savedWidth,
+        tileHeight: h || savedHeight,
+        originX: x || 0,
+        originY: y || 0,
+        layerIndex: this._dvFrame.getInt32(36, true) | 0,
+        originXf: 0,
+        originYf: 0
+      });
+      await this._upsampleCoarseToOut({
+        srcX: baseX,
+        srcY: baseY,
+        srcW: cW,
+        srcH: cH,
+        dstX: x || 0,
+        dstY: y || 0,
+        dstW: w || this.width,
+        dstH: h || this.height,
+        wait
+      });
       this._lastHadWork = true;
       return this.outView;
     }
     async dispatchRectNoCoarse({ x, y, w, h, wait = false } = {}) {
-      if (!this.outView) throw new Error("dispatchRectNoCoarse: createOutputTexture/setOutputView first.");
+      if (!this.outView)
+        throw new Error(
+          "dispatchRectNoCoarse: createOutputTexture/setOutputView first."
+        );
       const baseX = Math.max(0, Math.floor(x || 0)), baseY = Math.max(0, Math.floor(y || 0));
       const tw = Math.max(0, Math.floor(w || 0)), th = Math.max(0, Math.floor(h || 0));
       if (tw === 0 || th === 0) {
         this._lastHadWork = false;
         return this.outView;
       }
-      this.setFrame({ fullWidth: this.width, fullHeight: this.height, tileWidth: tw, tileHeight: th, originX: baseX, originY: baseY, layerIndex: this._dvFrame.getInt32(36, true) | 0, originXf: 0, originYf: 0 });
+      this.setFrame({
+        fullWidth: this.width,
+        fullHeight: this.height,
+        tileWidth: tw,
+        tileHeight: th,
+        originX: baseX,
+        originY: baseY,
+        layerIndex: this._dvFrame.getInt32(36, true) | 0,
+        originXf: 0,
+        originYf: 0
+      });
       if (!this._reprojFullW) {
         this._dvReproj.setUint32(32, this.width >>> 0, true);
         this._dvReproj.setUint32(36, this.height >>> 0, true);
@@ -7266,23 +8747,66 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       return this.outView;
     }
     async dispatchForBox({ padPx = 8, wait = false, coarseFactor = 1 } = {}) {
-      if (!this.outView) throw new Error("dispatchForBox: createOutputTexture/setOutputView first.");
+      if (!this.outView)
+        throw new Error(
+          "dispatchForBox: createOutputTexture/setOutputView first."
+        );
       const view = {
-        camPos: [this._dvView.getFloat32(0, true), this._dvView.getFloat32(4, true), this._dvView.getFloat32(8, true)],
-        right: [this._dvView.getFloat32(16, true), this._dvView.getFloat32(20, true), this._dvView.getFloat32(24, true)],
-        up: [this._dvView.getFloat32(32, true), this._dvView.getFloat32(36, true), this._dvView.getFloat32(40, true)],
-        fwd: [this._dvView.getFloat32(48, true), this._dvView.getFloat32(52, true), this._dvView.getFloat32(56, true)],
+        camPos: [
+          this._dvView.getFloat32(0, true),
+          this._dvView.getFloat32(4, true),
+          this._dvView.getFloat32(8, true)
+        ],
+        right: [
+          this._dvView.getFloat32(16, true),
+          this._dvView.getFloat32(20, true),
+          this._dvView.getFloat32(24, true)
+        ],
+        up: [
+          this._dvView.getFloat32(32, true),
+          this._dvView.getFloat32(36, true),
+          this._dvView.getFloat32(40, true)
+        ],
+        fwd: [
+          this._dvView.getFloat32(48, true),
+          this._dvView.getFloat32(52, true),
+          this._dvView.getFloat32(56, true)
+        ],
         fovYRad: this._dvView.getFloat32(64, true),
         aspect: this._dvView.getFloat32(68, true)
       };
-      const box = { center: [this._dvBox.getFloat32(0, true), this._dvBox.getFloat32(4, true), this._dvBox.getFloat32(8, true)], half: [this._dvBox.getFloat32(16, true), this._dvBox.getFloat32(20, true), this._dvBox.getFloat32(24, true)] };
-      const rect = this._computeAABBScreenRect(view, box, this.width, this.height, padPx);
+      const box = {
+        center: [
+          this._dvBox.getFloat32(0, true),
+          this._dvBox.getFloat32(4, true),
+          this._dvBox.getFloat32(8, true)
+        ],
+        half: [
+          this._dvBox.getFloat32(16, true),
+          this._dvBox.getFloat32(20, true),
+          this._dvBox.getFloat32(24, true)
+        ]
+      };
+      const rect = this._computeAABBScreenRect(
+        view,
+        box,
+        this.width,
+        this.height,
+        padPx
+      );
       if (!rect.visible) {
         this._lastHadWork = false;
         return null;
       }
       const cf = Math.max(1, coarseFactor | 0);
-      return await this.dispatchRect({ x: rect.x, y: rect.y, w: rect.w, h: rect.h, wait, coarseFactor: cf });
+      return await this.dispatchRect({
+        x: rect.x,
+        y: rect.y,
+        w: rect.w,
+        h: rect.h,
+        wait,
+        coarseFactor: cf
+      });
     }
     async dispatch({ wait = false, coarseFactor = 1 } = {}) {
       const cf = Math.max(1, coarseFactor | 0);
@@ -7297,7 +8821,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         this.width = cW;
         this.height = cH;
         this.outFormat = this._coarseTexture?.format || savedFormat;
-        this.setFrame({ fullWidth: cW, fullHeight: cH, tileWidth: cW, tileHeight: cH, originX: 0, originY: 0, layerIndex: 0, originXf: 0, originYf: 0 });
+        this.setFrame({
+          fullWidth: cW,
+          fullHeight: cH,
+          tileWidth: cW,
+          tileHeight: cH,
+          originX: 0,
+          originY: 0,
+          layerIndex: 0,
+          originXf: 0,
+          originYf: 0
+        });
         const curFW = this._dvReproj.getUint32(32, true) || 0, curFH = this._dvReproj.getUint32(36, true) || 0;
         if (curFW !== savedFullW >>> 0 || curFH !== savedFullH >>> 0) {
           this._dvReproj.setUint32(32, savedFullW >>> 0, true);
@@ -7311,7 +8845,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         this.width = savedWidth;
         this.height = savedHeight;
         this.outFormat = savedFormat;
-        await this._upsampleCoarseToOut({ srcX: 0, srcY: 0, srcW: cW, srcH: cH, dstX: 0, dstY: 0, dstW: this.width, dstH: this.height, wait });
+        await this._upsampleCoarseToOut({
+          srcX: 0,
+          srcY: 0,
+          srcW: cW,
+          srcH: cH,
+          dstX: 0,
+          dstY: 0,
+          dstW: this.width,
+          dstH: this.height,
+          wait
+        });
         this._lastHadWork = true;
         return this.outView;
       }
@@ -7320,7 +8864,10 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       return this.outView;
     }
     async dispatchAllLayers({ wait = false } = {}) {
-      if (!this.outView) throw new Error("Nothing to dispatch: createOutputTexture/setOutputView first.");
+      if (!this.outView)
+        throw new Error(
+          "Nothing to dispatch: createOutputTexture/setOutputView first."
+        );
       this._writeIfChanged("options", this.optionsBuffer, this._abOptions);
       this._writeIfChanged("params", this.paramsBuffer, this._abParams);
       this._writeIfChanged("offsets", this.offsetsBuffer, this._abOffsets);
@@ -7339,7 +8886,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         pass.end();
       }
       this.queue.submit([enc.finish()]);
-      if (wait && typeof this.queue.onSubmittedWorkDone === "function") await this.queue.onSubmittedWorkDone();
+      if (wait && typeof this.queue.onSubmittedWorkDone === "function")
+        await this.queue.onSubmittedWorkDone();
       this._lastHadWork = true;
       return this.outView;
     }
@@ -7360,7 +8908,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       pass.dispatchWorkgroups(this._wgX, this._wgY, 1);
       pass.end();
       this.queue.submit([enc.finish()]);
-      if (wait && typeof this.queue.onSubmittedWorkDone === "function") await this.queue.onSubmittedWorkDone();
+      if (wait && typeof this.queue.onSubmittedWorkDone === "function")
+        await this.queue.onSubmittedWorkDone();
     }
     // -------------------- render / preview blit --------------------
     _ensureRenderPipeline(format = "bgra8unorm") {
@@ -7368,9 +8917,21 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       const mod = this.device.createShaderModule({ code: cloudsRender_default });
       const bgl = this.device.createBindGroupLayout({
         entries: [
-          { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
-          { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: "2d-array" } },
-          { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } }
+          {
+            binding: 0,
+            visibility: GPUShaderStage.FRAGMENT,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: { viewDimension: "2d-array" }
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.FRAGMENT,
+            buffer: { type: "uniform" }
+          }
         ]
       });
       const pipe = this.device.createRenderPipeline({
@@ -7379,7 +8940,12 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         fragment: { module: mod, entryPoint: "fs_main", targets: [{ format }] },
         primitive: { topology: "triangle-list" }
       });
-      const samp = this.device.createSampler({ magFilter: "linear", minFilter: "linear", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" });
+      const samp = this.device.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+        addressModeU: "clamp-to-edge",
+        addressModeV: "clamp-to-edge"
+      });
       this._render = { pipe, bgl, samp, format };
       return this._render;
     }
@@ -7391,7 +8957,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       }
       const key = this._getResId(this.outView) + "|" + this._getResId(samp) + "|" + this._getResId(this.renderParams);
       if (map.has(key)) return map.get(key);
-      const bg = this.device.createBindGroup({ layout: bgl, entries: [{ binding: 0, resource: samp }, { binding: 1, resource: this.outView }, { binding: 2, resource: { buffer: this.renderParams, offset: 0, size: 128 } }] });
+      const bg = this.device.createBindGroup({
+        layout: bgl,
+        entries: [
+          { binding: 0, resource: samp },
+          { binding: 1, resource: this.outView },
+          {
+            binding: 2,
+            resource: { buffer: this.renderParams, offset: 0, size: 128 }
+          }
+        ]
+      });
       map.set(key, bg);
       if (map.size > 8) {
         const firstKey = map.keys().next().value;
@@ -7409,7 +8985,9 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       if (map.has(key)) return map.get(key);
       const bg = this._getOrCreateRenderBindGroup(canvas, bgl, samp);
       const format = this._render.format;
-      const rbe = this.device.createRenderBundleEncoder({ colorFormats: [format] });
+      const rbe = this.device.createRenderBundleEncoder({
+        colorFormats: [format]
+      });
       rbe.setPipeline(pipe);
       rbe.setBindGroup(0, bg);
       rbe.draw(6, 1, 0, 0);
@@ -7428,7 +9006,11 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       const sunBloom = opts.sunBloom ?? 0;
       const skyColor = opts.skyColor ?? [0.55, 0.7, 0.95];
       const rad = (d) => d * Math.PI / 180;
-      const cross2 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+      const cross2 = (a, b) => [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0]
+      ];
       const dot2 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
       const len = (a) => Math.hypot(a[0], a[1], a[2]) || 1;
       const norm2 = (a) => {
@@ -7501,39 +9083,87 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         this._canvasStates.set(canvas, state);
       }
       if (state.lastSize[0] !== displayW || state.lastSize[1] !== displayH || ctxRec.format !== format) {
-        ctx.configure({ device: this.device, format, alphaMode: "opaque", size: [displayW, displayH] });
+        ctx.configure({
+          device: this.device,
+          format,
+          alphaMode: "opaque",
+          size: [displayW, displayH]
+        });
         state.lastSize = [displayW, displayH];
         state.hasContent = false;
         ctxRec.format = format;
       }
       return { ctx, state };
     }
-    renderToCanvasWorld(canvas, { layerIndex = 0, cam, sunDir = [0, 1, 0], exposure = 1.2, skyColor = [0.55, 0.7, 0.95], sunBloom = 0 } = {}) {
-      if (!this.outView) throw new Error("Nothing to render: run dispatch() first or setOutputView().");
+    renderToCanvasWorld(canvas, {
+      layerIndex = 0,
+      cam,
+      sunDir = [0, 1, 0],
+      exposure = 1.2,
+      skyColor = [0.55, 0.7, 0.95],
+      sunBloom = 0
+    } = {}) {
+      if (!this.outView)
+        throw new Error(
+          "Nothing to render: run dispatch() first or setOutputView()."
+        );
       const { pipe, bgl, samp, format } = this._ensureRenderPipeline("bgra8unorm");
       const { ctx, state } = this._ensureCanvasConfigured(canvas, format);
       if (!this._lastHadWork || !this.outView) {
         const enc2 = this.device.createCommandEncoder();
         const tex2 = ctx.getCurrentTexture();
-        const pass2 = enc2.beginRenderPass({ colorAttachments: [{ view: tex2.createView(), loadOp: "clear", clearValue: { r: skyColor[0], g: skyColor[1], b: skyColor[2], a: 1 }, storeOp: "store" }] });
+        const pass2 = enc2.beginRenderPass({
+          colorAttachments: [
+            {
+              view: tex2.createView(),
+              loadOp: "clear",
+              clearValue: {
+                r: skyColor[0],
+                g: skyColor[1],
+                b: skyColor[2],
+                a: 1
+              },
+              storeOp: "store"
+            }
+          ]
+        });
         pass2.end();
         this.queue.submit([enc2.finish()]);
         state.hasContent = true;
         return;
       }
-      this._writeRenderUniforms({ layerIndex, cam, sunDir, exposure, skyColor, sunBloom });
+      this._writeRenderUniforms({
+        layerIndex,
+        cam,
+        sunDir,
+        exposure,
+        skyColor,
+        sunBloom
+      });
       const bundle = this._getOrCreateRenderBundle(canvas, pipe, bgl, samp);
       const enc = this.device.createCommandEncoder();
       const tex = ctx.getCurrentTexture();
       const loadOp = state.hasContent ? "load" : "clear";
-      const pass = enc.beginRenderPass({ colorAttachments: [{ view: tex.createView(), loadOp, clearValue: { r: skyColor[0], g: skyColor[1], b: skyColor[2], a: 1 }, storeOp: "store" }] });
+      const pass = enc.beginRenderPass({
+        colorAttachments: [
+          {
+            view: tex.createView(),
+            loadOp,
+            clearValue: { r: skyColor[0], g: skyColor[1], b: skyColor[2], a: 1 },
+            storeOp: "store"
+          }
+        ]
+      });
       pass.executeBundles([bundle]);
       pass.end();
       this.queue.submit([enc.finish()]);
       state.hasContent = true;
     }
     renderToCanvas(canvas, opts = {}) {
-      if (!this.outView) throw new Error("Nothing to render: run dispatch() first or setOutputView().");
+      if (!this.outView)
+        throw new Error(
+          "Nothing to render: run dispatch() first or setOutputView()."
+        );
       const { pipe, bgl, samp, format } = this._ensureRenderPipeline("bgra8unorm");
       if (opts.displayWidth || opts.displayHeight) {
         const w = opts.displayWidth || Math.round(opts.displayHeight * this.width / this.height);
@@ -7547,7 +9177,21 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       if (!this._lastHadWork || !this.outView) {
         const enc2 = this.device.createCommandEncoder();
         const tex2 = ctx.getCurrentTexture();
-        const pass2 = enc2.beginRenderPass({ colorAttachments: [{ view: tex2.createView(), loadOp: "clear", clearValue: { r: skyColor[0], g: skyColor[1], b: skyColor[2], a: 1 }, storeOp: "store" }] });
+        const pass2 = enc2.beginRenderPass({
+          colorAttachments: [
+            {
+              view: tex2.createView(),
+              loadOp: "clear",
+              clearValue: {
+                r: skyColor[0],
+                g: skyColor[1],
+                b: skyColor[2],
+                a: 1
+              },
+              storeOp: "store"
+            }
+          ]
+        });
         pass2.end();
         this.queue.submit([enc2.finish()]);
         state.hasContent = true;
@@ -7558,7 +9202,16 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       const enc = this.device.createCommandEncoder();
       const tex = ctx.getCurrentTexture();
       const loadOp = state.hasContent ? "load" : "clear";
-      const pass = enc.beginRenderPass({ colorAttachments: [{ view: tex.createView(), loadOp, clearValue: { r: skyColor[0], g: skyColor[1], b: skyColor[2], a: 1 }, storeOp: "store" }] });
+      const pass = enc.beginRenderPass({
+        colorAttachments: [
+          {
+            view: tex.createView(),
+            loadOp,
+            clearValue: { r: skyColor[0], g: skyColor[1], b: skyColor[2], a: 1 },
+            storeOp: "store"
+          }
+        ]
+      });
       pass.executeBundles([bundle]);
       pass.end();
       this.queue.submit([enc.finish()]);
@@ -7566,7 +9219,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     }
     // -------------------- coarse helpers --------------------
     _ensureCoarseTexture(w, h, layers = 1) {
-      if (this._coarseTexture && this._coarseW === w && this._coarseH === h && this._coarseLayers === layers) return;
+      if (this._coarseTexture && this._coarseW === w && this._coarseH === h && this._coarseLayers === layers)
+        return;
       try {
         if (this._coarseTexture?.destroy) this._coarseTexture.destroy();
       } catch (_) {
@@ -7574,14 +9228,22 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this._coarseW = w;
       this._coarseH = h;
       this._coarseLayers = layers;
-      this._coarseTexture = this.device.createTexture({ size: [w, h, layers], format: this.outFormat, usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC });
-      this._coarseView = this._coarseTexture.createView({ dimension: "2d-array", arrayLayerCount: layers });
+      this._coarseTexture = this.device.createTexture({
+        size: [w, h, layers],
+        format: this.outFormat,
+        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
+      });
+      this._coarseView = this._coarseTexture.createView({
+        dimension: "2d-array",
+        arrayLayerCount: layers
+      });
       this._bg0Dirty = true;
       this._bg1Dirty = true;
     }
     // upsample pipeline for coarse->full
     _ensureUpsamplePipeline(format = this.outFormat) {
-      if (this._upsample && this._upsample.format === format) return this._upsample;
+      if (this._upsample && this._upsample.format === format)
+        return this._upsample;
       const blitWGSL = `
       struct RenderParams { layerIndex : u32, _pad:u32, _pad2:u32, _pad3:u32, };
       @group(0) @binding(0) var samp : sampler;
@@ -7602,13 +9264,35 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       const mod = this.device.createShaderModule({ code: blitWGSL });
       const bgl = this.device.createBindGroupLayout({
         entries: [
-          { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
-          { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: "2d-array" } },
-          { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } }
+          {
+            binding: 0,
+            visibility: GPUShaderStage.FRAGMENT,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: { viewDimension: "2d-array" }
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.FRAGMENT,
+            buffer: { type: "uniform" }
+          }
         ]
       });
-      const pipe = this.device.createRenderPipeline({ layout: this.device.createPipelineLayout({ bindGroupLayouts: [bgl] }), vertex: { module: mod, entryPoint: "vs_main" }, fragment: { module: mod, entryPoint: "fs_main", targets: [{ format }] }, primitive: { topology: "triangle-list" } });
-      const samp = this.device.createSampler({ magFilter: "linear", minFilter: "linear", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" });
+      const pipe = this.device.createRenderPipeline({
+        layout: this.device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
+        vertex: { module: mod, entryPoint: "vs_main" },
+        fragment: { module: mod, entryPoint: "fs_main", targets: [{ format }] },
+        primitive: { topology: "triangle-list" }
+      });
+      const samp = this.device.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+        addressModeU: "clamp-to-edge",
+        addressModeV: "clamp-to-edge"
+      });
       this._upsample = { pipe, bgl, samp, format };
       return this._upsample;
     }
@@ -7621,7 +9305,10 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         entries: [
           { binding: 0, resource: up.samp },
           { binding: 1, resource: coarseView },
-          { binding: 2, resource: { buffer: this.renderParams, offset: 0, size: 128 } }
+          {
+            binding: 2,
+            resource: { buffer: this.renderParams, offset: 0, size: 128 }
+          }
         ]
       });
       this._upsampleBgCache.set(key, bg);
@@ -7631,7 +9318,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       }
       return bg;
     }
-    async _upsampleCoarseToOut({ srcX = 0, srcY = 0, srcW, srcH, dstX = 0, dstY = 0, dstW, dstH, wait = false } = {}) {
+    async _upsampleCoarseToOut({
+      srcX = 0,
+      srcY = 0,
+      srcW,
+      srcH,
+      dstX = 0,
+      dstY = 0,
+      dstW,
+      dstH,
+      wait = false
+    } = {}) {
       if (!this._coarseView || !this.outTexture) return;
       const up = this._ensureUpsamplePipeline(this.outFormat);
       const enc = this.device.createCommandEncoder();
@@ -7639,25 +9336,49 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         this._dvRender.setUint32(0, layer >>> 0, true);
         this._writeIfChanged("render", this.renderParams, this._abRender);
         const bg = this._getOrCreateUpsampleBindGroup(this._coarseView, layer);
-        const colorView = this.outTexture.createView({ baseArrayLayer: layer, arrayLayerCount: 1 });
-        const pass = enc.beginRenderPass({ colorAttachments: [{ view: colorView, loadOp: "load", storeOp: "store" }] });
+        const colorView = this.outTexture.createView({
+          baseArrayLayer: layer,
+          arrayLayerCount: 1
+        });
+        const pass = enc.beginRenderPass({
+          colorAttachments: [
+            { view: colorView, loadOp: "load", storeOp: "store" }
+          ]
+        });
         pass.setPipeline(up.pipe);
         pass.setBindGroup(0, bg);
         pass.draw(6, 1, 0, 0);
         pass.end();
       }
       this.queue.submit([enc.finish()]);
-      if (wait && typeof this.queue.onSubmittedWorkDone === "function") await this.queue.onSubmittedWorkDone();
+      if (wait && typeof this.queue.onSubmittedWorkDone === "function")
+        await this.queue.onSubmittedWorkDone();
     }
     // -------------------- cleanup --------------------
     destroy() {
-      const toDestroy = ["optionsBuffer", "paramsBuffer", "offsetsBuffer", "dummyBuffer", "posBuffer", "frameBuffer", "lightBuffer", "viewBuffer", "boxBuffer", "samplingBuffer", "reprojBuffer", "perfBuffer", "renderParams", "tuningBuffer"];
-      for (const k of toDestroy) try {
-        if (this[k]?.destroy) this[k].destroy();
-      } catch (_) {
-      } finally {
-        this[k] = null;
-      }
+      const toDestroy = [
+        "optionsBuffer",
+        "paramsBuffer",
+        "offsetsBuffer",
+        "dummyBuffer",
+        "posBuffer",
+        "frameBuffer",
+        "lightBuffer",
+        "viewBuffer",
+        "boxBuffer",
+        "samplingBuffer",
+        "reprojBuffer",
+        "perfBuffer",
+        "renderParams",
+        "tuningBuffer"
+      ];
+      for (const k of toDestroy)
+        try {
+          if (this[k]?.destroy) this[k].destroy();
+        } catch (_) {
+        } finally {
+          this[k] = null;
+        }
       try {
         if (this.outTexture?.destroy) this.outTexture.destroy();
       } catch (_) {
@@ -7670,10 +9391,11 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this.outView = null;
       this._coarseTexture = null;
       this._coarseView = null;
-      if (this._ownsBlue && this.blueTex) try {
-        this.blueTex.destroy();
-      } catch (_) {
-      }
+      if (this._ownsBlue && this.blueTex)
+        try {
+          this.blueTex.destroy();
+        } catch (_) {
+        }
       this.blueTex = null;
       this.blueView = null;
       this._ownsBlue = false;
@@ -7798,8 +9520,26 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     if (!nb) return;
     const s = Math.max(0, Math.min(SHAPE_SIZE - 1, currentSlice | 0));
     const d = Math.max(0, Math.min(DETAIL_SIZE - 1, Math.floor(s * DETAIL_SIZE / SHAPE_SIZE)));
-    if (dbg.shapeR && noise.shape128.view3D) nb.renderTexture3DSliceToCanvas(noise.shape128.view3D, dbg.shapeR, { depth: SHAPE_SIZE, slice: s, channel: 1, clear: true, width: DBG_W, height: DBG_H });
-    if (dbg.detailR && noise.detail32.view3D) nb.renderTexture3DSliceToCanvas(noise.detail32.view3D, dbg.detailR, { depth: DETAIL_SIZE, slice: d, channel: 1, clear: true, width: DBG_W, height: DBG_H });
+    if (dbg.shapeR && noise.shape128.view3D) {
+      nb.renderTexture3DSliceToCanvas(noise.shape128.view3D, dbg.shapeR, {
+        depth: SHAPE_SIZE,
+        slice: s,
+        channel: 1,
+        clear: true,
+        width: DBG_W,
+        height: DBG_H
+      });
+    }
+    if (dbg.detailR && noise.detail32.view3D) {
+      nb.renderTexture3DSliceToCanvas(noise.detail32.view3D, dbg.detailR, {
+        depth: DETAIL_SIZE,
+        slice: d,
+        channel: 1,
+        clear: true,
+        width: DBG_W,
+        height: DBG_H
+      });
+    }
   }
   function maybeApplySeedToPermTable(params) {
     if (!params) return;
@@ -7809,52 +9549,81 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     if (!Number.isFinite(s) || s === 0) return;
     try {
       nb.buildPermTable?.(s);
-      log("[SEED] Applied seed to perm table:", s);
     } catch (e) {
       console.warn("buildPermTable(seed) failed", e);
     }
+  }
+  function isEntry4D(ep) {
+    return typeof ep === "string" && /4D/.test(ep);
+  }
+  function getEntrySet() {
+    const eps = Array.isArray(nb?.entryPoints) ? nb.entryPoints : [];
+    return new Set(eps.filter((x) => typeof x === "string" && x.length));
+  }
+  function sanitizeEntry(entry, fallback, opts = {}) {
+    const { require4D = false } = opts;
+    const set = getEntrySet();
+    const s = typeof entry === "string" ? entry : "";
+    if (!s) return fallback;
+    if (!set.has(s)) return fallback;
+    if (require4D && !isEntry4D(s)) return fallback;
+    return s;
+  }
+  function stripKeys(src, keys) {
+    const out = {};
+    const o = src && typeof src === "object" ? src : {};
+    for (const k of Object.keys(o)) {
+      if (keys.has(k)) continue;
+      out[k] = o[k];
+    }
+    return out;
+  }
+  function withToroidalFromMode(params, mode) {
+    const p = params && typeof params === "object" ? { ...params } : {};
+    p.toroidal = isEntry4D(mode) ? 1 : 0;
+    return p;
   }
   async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {}) {
     if (noise.weather.arrayView && !force && !noise.weather.dirty) {
       if (dbg.weather) nb.renderTextureToCanvas(noise.weather.arrayView, dbg.weather, { preserveCanvasSize: true, clear: true, channel: 1, width: DBG_W, height: DBG_H });
       if (dbg.weatherG) nb.renderTextureToCanvas(noise.weather.arrayView, dbg.weatherG, { preserveCanvasSize: true, clear: true, channel: 2, width: DBG_W, height: DBG_H });
       noise.weather.dirty = false;
-      return { baseMs: 0, billowMs: 0, totalMs: 0 };
+      return { baseMs: 0, gMs: 0, totalMs: 0 };
     }
     const T0 = performance.now();
-    maybeApplySeedToPermTable(weatherParams);
+    const WEATHER_DROP = /* @__PURE__ */ new Set(["mode"]);
+    const baseMode = sanitizeEntry(weatherParams.mode, "computeFBM", { require4D: false });
+    const baseParamsRaw = stripKeys(weatherParams, WEATHER_DROP);
+    const baseParams = withToroidalFromMode(baseParamsRaw, baseMode);
+    maybeApplySeedToPermTable(baseParams);
     const t0 = performance.now();
     const baseView = await nb.computeToTexture(
       WEATHER_W,
       WEATHER_H,
-      weatherParams,
-      { noiseChoices: ["clearTexture", "computeFBM"], outputChannel: 1, textureKey: "weather2d", viewDimension: "2d-array" }
+      baseParams,
+      { noiseChoices: ["clearTexture", baseMode], outputChannel: 1, textureKey: "weather2d", viewDimension: "2d-array" }
     );
     const baseMs = performance.now() - t0;
-    let billowMs = 0;
-    const billowEnabled = !!(billowParams && billowParams.enabled === true) || !!(weatherParams && weatherParams.billowEnabled === true);
-    if (billowEnabled) {
-      maybeApplySeedToPermTable(billowParams);
-      const bp = {
-        zoom: typeof billowParams.zoom === "number" ? billowParams.zoom : weatherParams.zoom || 1,
-        freq: typeof billowParams.freq === "number" ? billowParams.freq : weatherParams.freq || 1,
-        octaves: typeof billowParams.octaves === "number" ? billowParams.octaves : weatherParams.octaves || 4,
-        lacunarity: typeof billowParams.lacunarity === "number" ? billowParams.lacunarity : weatherParams.lacunarity || 2,
-        seedAngle: typeof billowParams.seedAngle === "number" ? billowParams.seedAngle : weatherParams.seedAngle || 0,
-        gain: typeof billowParams.gain === "number" ? billowParams.gain : weatherParams.gain || 0.5,
-        threshold: typeof billowParams.threshold === "number" ? billowParams.threshold : weatherParams.threshold || 0,
-        scale: typeof billowParams.scale === "number" ? billowParams.scale : 1,
-        pos: Array.isArray(billowParams.pos) ? billowParams.pos.slice(0, 3) : [0, 0, 0],
-        vel: Array.isArray(billowParams.vel) ? billowParams.vel.slice(0, 3) : [0, 0, 0],
-        seed: billowParams.seed !== void 0 ? billowParams.seed : weatherParams.seed !== void 0 ? weatherParams.seed : void 0
-      };
-      const tb0 = performance.now();
-      await nb.computeToTexture(WEATHER_W, WEATHER_H, bp, { noiseChoices: ["clearTexture", "computeBillow"], outputChannel: 2, textureKey: "weather2d", viewDimension: "2d-array" });
-      billowMs = performance.now() - tb0;
+    const G_DROP = /* @__PURE__ */ new Set(["mode", "enabled"]);
+    const enabledG = !!(billowParams && billowParams.enabled === true);
+    let gMs = 0;
+    if (enabledG) {
+      const gMode = sanitizeEntry(billowParams.mode, "computeBillow", { require4D: false });
+      const gParamsRaw = stripKeys(billowParams, G_DROP);
+      const gParams = withToroidalFromMode(gParamsRaw, gMode);
+      maybeApplySeedToPermTable(gParams);
+      const tg0 = performance.now();
+      await nb.computeToTexture(
+        WEATHER_W,
+        WEATHER_H,
+        gParams,
+        { noiseChoices: ["clearTexture", gMode], outputChannel: 2, textureKey: "weather2d", viewDimension: "2d-array" }
+      );
+      gMs = performance.now() - tg0;
     } else {
       const tc0 = performance.now();
       await nb.computeToTexture(WEATHER_W, WEATHER_H, { zoom: 1 }, { noiseChoices: ["clearTexture"], outputChannel: 2, textureKey: "weather2d", viewDimension: "2d-array" });
-      billowMs = performance.now() - tc0;
+      gMs = performance.now() - tc0;
     }
     noise.weather.arrayView = (typeof nb.get2DView === "function" ? nb.get2DView("weather2d", { dimension: "2d-array" }) : baseView) || baseView;
     noise.weather.dirty = false;
@@ -7863,8 +9632,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       if (dbg.weatherG) nb.renderTextureToCanvas(noise.weather.arrayView, dbg.weatherG, { preserveCanvasSize: true, clear: true, channel: 2, width: DBG_W, height: DBG_H });
     }
     const totalMs = performance.now() - T0;
-    log("[BENCH] weather base(ms):", baseMs.toFixed(2), " billow/clearG(ms):", billowMs.toFixed(2), " total(ms):", totalMs.toFixed(2));
-    return { baseMs, billowMs, totalMs };
+    log("[BENCH] weather base(ms):", baseMs.toFixed(2), " g(ms):", gMs.toFixed(2), " total(ms):", totalMs.toFixed(2), " baseMode:", baseMode, " gEnabled:", enabledG);
+    return { baseMs, gMs, totalMs };
   }
   async function bakeBlue2D(blueParams = {}, force = false) {
     maybeApplySeedToPermTable(blueParams);
@@ -7893,26 +9662,37 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       return { baseMs: 0, bandsMs: [0, 0, 0], totalMs: 0 };
     }
     const T0 = performance.now();
+    const drop = /* @__PURE__ */ new Set(["baseModeA", "baseModeB", "bandMode2", "bandMode3", "bandMode4"]);
+    const baseParamsRaw = stripKeys(shapeParams, drop);
+    const baseParams = { ...baseParamsRaw, toroidal: 1, band: "base" };
+    const baseModeA = sanitizeEntry(shapeParams.baseModeA, "computePerlin4D", { require4D: true });
+    const baseModeB = sanitizeEntry(shapeParams.baseModeB, "computeAntiWorley4D", { require4D: true });
+    const baseChoices = ["clearTexture", baseModeA];
+    if (baseModeB && baseModeB !== baseModeA) baseChoices.push(baseModeB);
     const t0 = performance.now();
     await nb.computeToTexture3D(
       SHAPE_SIZE,
       SHAPE_SIZE,
       SHAPE_SIZE,
-      { ...shapeParams, band: "base", toroidal: 1 },
-      { noiseChoices: ["clearTexture", "computePerlin4D", "computeWorley4D"], outputChannel: 1, id: "shape128" }
+      baseParams,
+      { noiseChoices: baseChoices, outputChannel: 1, id: "shape128" }
     );
     const baseMs = performance.now() - t0;
+    const z = Number(shapeParams.zoom) || 1;
+    const bandSpecs = [
+      { ch: 2, zm: z / 2, mode: sanitizeEntry(shapeParams.bandMode2, "computeWorley4D", { require4D: true }) },
+      { ch: 3, zm: z / 4, mode: sanitizeEntry(shapeParams.bandMode3, "computeWorley4D", { require4D: true }) },
+      { ch: 4, zm: z / 8, mode: sanitizeEntry(shapeParams.bandMode4, "computeWorley4D", { require4D: true }) }
+    ];
     const bandsMs = [];
-    const z = shapeParams.zoom || 1;
-    const bands = [{ ch: 2, zm: z / 2 }, { ch: 3, zm: z / 4 }, { ch: 4, zm: z / 8 }];
-    for (const b of bands) {
+    for (const b of bandSpecs) {
       const tb0 = performance.now();
       await nb.computeToTexture3D(
         SHAPE_SIZE,
         SHAPE_SIZE,
         SHAPE_SIZE,
-        { ...shapeParams, zoom: b.zm, toroidal: 1 },
-        { noiseChoices: ["clearTexture", "computeWorley4D"], outputChannel: b.ch, id: "shape128" }
+        { ...baseParamsRaw, zoom: b.zm, toroidal: 1 },
+        { noiseChoices: ["clearTexture", b.mode], outputChannel: b.ch, id: "shape128" }
       );
       bandsMs.push(performance.now() - tb0);
     }
@@ -7921,7 +9701,20 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     if (typeof queue?.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
     renderDebugSlices();
     const totalMs = performance.now() - T0;
-    log("[BENCH] shape base(ms):", baseMs.toFixed(2), " bands(ms):", bandsMs.map((x) => x.toFixed(2)).join(", "), " total(ms):", totalMs.toFixed(2));
+    log(
+      "[BENCH] shape base(ms):",
+      baseMs.toFixed(2),
+      " bands(ms):",
+      bandsMs.map((x) => x.toFixed(2)).join(", "),
+      " total(ms):",
+      totalMs.toFixed(2),
+      " base:",
+      baseModeA,
+      "+",
+      baseModeB,
+      " bands:",
+      bandSpecs.map((b) => `${b.ch}:${b.mode}`).join(" ")
+    );
     return { baseMs, bandsMs, totalMs };
   }
   async function bakeDetail32(detailParams = {}, force = false) {
@@ -7933,17 +9726,26 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       return { bandsMs: [0, 0, 0], totalMs: 0 };
     }
     const T0 = performance.now();
+    const drop = /* @__PURE__ */ new Set(["mode1", "mode2", "mode3"]);
+    const baseParamsRaw = stripKeys(detailParams, drop);
+    const z = Number(detailParams.zoom) || 1;
+    const m1 = sanitizeEntry(detailParams.mode1, "computeAntiWorley4D", { require4D: true });
+    const m2 = sanitizeEntry(detailParams.mode2, "computeAntiWorley4D", { require4D: true });
+    const m3 = sanitizeEntry(detailParams.mode3, "computeAntiWorley4D", { require4D: true });
+    const bands = [
+      { ch: 1, zm: z, mode: m1 },
+      { ch: 2, zm: z / 2, mode: m2 },
+      { ch: 3, zm: z / 4, mode: m3 }
+    ];
     const bandsMs = [];
-    const z = detailParams.zoom || 1;
-    const bands = [{ ch: 1, zm: z }, { ch: 2, zm: z / 2 }, { ch: 3, zm: z / 4 }];
     for (const b of bands) {
       const tb0 = performance.now();
       await nb.computeToTexture3D(
         DETAIL_SIZE,
         DETAIL_SIZE,
         DETAIL_SIZE,
-        { ...detailParams, zoom: b.zm, toroidal: 1 },
-        { noiseChoices: ["clearTexture", "computeAntiWorley4D"], outputChannel: b.ch, id: "detail32" }
+        { ...baseParamsRaw, zoom: b.zm, toroidal: 1 },
+        { noiseChoices: ["clearTexture", b.mode], outputChannel: b.ch, id: "detail32" }
       );
       bandsMs.push(performance.now() - tb0);
     }
@@ -7952,7 +9754,7 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     if (typeof queue?.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
     renderDebugSlices();
     const totalMs = performance.now() - T0;
-    log("[BENCH] detail bands(ms):", bandsMs.map((x) => x.toFixed(2)).join(", "), " total(ms):", totalMs.toFixed(2));
+    log("[BENCH] detail bands(ms):", bandsMs.map((x) => x.toFixed(2)).join(", "), " total(ms):", totalMs.toFixed(2), " modes:", `${m1},${m2},${m3}`);
     return { bandsMs, totalMs };
   }
   function ensureHistoryTextures(w, h, layers = 1) {
@@ -7972,7 +9774,11 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     historyViewA = historyViewB = null;
     historyPrevView = null;
     historyOutView = null;
-    const desc = { size: [w, h, layers], format: "rgba16float", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC };
+    const desc = {
+      size: [w, h, layers],
+      format: "rgba16float",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC
+    };
     historyTexA = device.createTexture(desc);
     historyTexB = device.createTexture(desc);
     historyViewA = historyTexA.createView({ dimension: "2d-array", arrayLayerCount: layers });
@@ -8100,18 +9906,11 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     }
     if (changed) {
       workerTuningVersion = workerTuningVersion + 1 >>> 0;
-      log("[TUNING] merged patch, new version:", workerTuningVersion, workerTuning);
-    } else {
-      log("[TUNING] merged patch, no effective changes");
     }
   }
   function applyWorkerTuning() {
     if (!workerTuning) return false;
     if (workerTuningVersion === lastAppliedTuningVersion) return false;
-    try {
-      log("[TUNING] applying patch ->", workerTuning, "version", workerTuningVersion);
-    } catch {
-    }
     try {
       if (cb && typeof cb.setTuning === "function") {
         cb.setTuning(Object.assign({}, workerTuning));
@@ -8122,13 +9921,15 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         }
         return true;
       }
-      if (!cb) log("[TUNING] cb not ready yet; tuning cached for later");
       return false;
     } catch (e) {
       console.warn("applyWorkerTuning failed", e);
       log("[TUNING] apply failed", String(e));
       return false;
     }
+  }
+  function payloadHasTuning(obj) {
+    return !!(obj && obj.tuning && typeof obj.tuning === "object");
   }
   async function runFrame({
     weatherParams,
@@ -8270,7 +10071,14 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     if (!ctxMain) configureMainContext();
     cb._writeRenderUniforms({
       layerIndex: Math.max(0, Math.min((cb?.layers || 1) - 1, preview?.layer || 0)),
-      cam: { camPos: [preview?.cam?.x || 0, preview?.cam?.y || 0, preview?.cam?.z || 0], right, up, fwd, fovYDeg: preview?.cam?.fovYDeg || 60, aspect },
+      cam: {
+        camPos: [preview?.cam?.x || 0, preview?.cam?.y || 0, preview?.cam?.z || 0],
+        right,
+        up,
+        fwd,
+        fovYDeg: preview?.cam?.fovYDeg || 60,
+        aspect
+      },
       sunDir,
       exposure: preview?.exposure || 1,
       skyColor: preview?.sky || [0.5, 0.6, 0.8],
@@ -8298,9 +10106,6 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     const timings = { computeMs: tC1 - tC0, renderMs: tR1 - tR0, totalMs: tAll1 - tAll0 };
     log("[BENCH] compute(waited, ms):", timings.computeMs.toFixed(2), " render(waited, ms):", timings.renderMs.toFixed(2), " total(ms):", timings.totalMs.toFixed(2), " coarseFactor:", cf);
     return timings;
-  }
-  function payloadHasTuning(obj) {
-    return !!(obj && obj.tuning && typeof obj.tuning === "object");
   }
   function startLoop() {
     if (loopRunning) return;
@@ -8408,7 +10213,7 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         BN_H = constants.BN_H;
         await ensureDevice();
         configureMainContext();
-        respond(true, { ok: true });
+        respond(true, { ok: true, entryPoints: Array.isArray(nb?.entryPoints) ? nb.entryPoints.slice() : [] });
         return;
       }
       if (type === "resize") {
@@ -8568,10 +10373,7 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
             if (dVel) detailScrollVel = dVel;
             if (dPos) detailScrollPos = dPos;
           }
-          respond(true, {
-            shape: { pos: shapeScrollPos, vel: shapeScrollVel },
-            detail: { pos: detailScrollPos, vel: detailScrollVel }
-          });
+          respond(true, { shape: { pos: shapeScrollPos, vel: shapeScrollVel }, detail: { pos: detailScrollPos, vel: detailScrollVel } });
           return;
         }
       }
