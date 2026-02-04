@@ -276,7 +276,7 @@ function getZSliceIndexFromUI() {
   return idx;
 }
 
-function applyCanvasCSS(canvas, cssW = null, cssH = null) {
+function applyCanvasCSS(canvas, cssW = null, cssH = null, fit = "contain") {
   canvas.style.display = "block";
   canvas.style.margin = "0";
   canvas.style.padding = "0";
@@ -287,7 +287,7 @@ function applyCanvasCSS(canvas, cssW = null, cssH = null) {
   canvas.style.width = cssW != null ? `${cssW}px` : "100%";
   canvas.style.height = cssH != null ? `${cssH}px` : "100%";
 
-  canvas.style.objectFit = "contain";
+  canvas.style.objectFit = fit;
   canvas.style.objectPosition = "center";
 
   canvas.style.imageRendering = "crisp-edges";
@@ -315,29 +315,30 @@ function ensureCanvasSize(builder, canvas, w, h, cssW = null, cssH = null) {
   return changed;
 }
 
-function configureMosaicLayout(mosaicRoot, count) {
-  const n = Math.max(1, count | 0);
-  const cols = Math.round(Math.sqrt(n));
-  const rows = Math.ceil(n / cols);
-
+function configureMosaicLayout(mosaicRoot) {
   mosaicRoot.style.display = "grid";
 
-  /* fully fill the squareWrap */
   mosaicRoot.style.width = "100%";
   mosaicRoot.style.height = "100%";
+  mosaicRoot.style.aspectRatio = "1 / 1";
 
-  /* equal fractional cells */
-  mosaicRoot.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-  mosaicRoot.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-
+  mosaicRoot.style.gridTemplateColumns = "repeat(3, 1fr)";
+  mosaicRoot.style.gridTemplateRows = "repeat(3, 1fr)";
   mosaicRoot.style.gap = "0";
+
   mosaicRoot.style.padding = "0";
   mosaicRoot.style.margin = "0";
   mosaicRoot.style.border = "0";
   mosaicRoot.style.lineHeight = "0";
   mosaicRoot.style.fontSize = "0";
 
-  mosaicRoot.style.placeItems = "stretch";
+  mosaicRoot.style.alignItems = "stretch";
+  mosaicRoot.style.justifyItems = "stretch";
+  mosaicRoot.style.alignContent = "stretch";
+  mosaicRoot.style.justifyContent = "stretch";
+
+  mosaicRoot.style.overflow = "hidden";
+  mosaicRoot.style.background = "#000";
 }
 
 function initMainAndMosaicCanvases() {
@@ -356,35 +357,34 @@ function initMainAndMosaicCanvases() {
     throw new Error("Missing main preview canvas (#noise-canvas)");
   }
 
-  applyCanvasCSS(mainCanvas);
+  applyCanvasCSS(mainCanvas, null, null, "contain");
 
   const mosaicRoot = document.getElementById("mosaic");
   if (!mosaicRoot) {
     throw new Error("Missing #mosaic container");
   }
 
-  const mosaicCanvases = [];
-  const existing = mosaicRoot.querySelectorAll("canvas");
+  const desired = 9;
+  let existing = Array.from(mosaicRoot.querySelectorAll("canvas"));
 
-  if (!existing.length) {
-    for (let i = 0; i < 9; i++) {
+  if (existing.length !== desired) {
+    mosaicRoot.innerHTML = "";
+    existing = [];
+    for (let i = 0; i < desired; i++) {
       const c = document.createElement("canvas");
       c.width = TOROIDAL_SIZE;
       c.height = TOROIDAL_SIZE;
-      applyCanvasCSS(c);
+      applyCanvasCSS(c, null, null, "fill");
       mosaicRoot.appendChild(c);
-      mosaicCanvases.push(c);
+      existing.push(c);
     }
   } else {
-    existing.forEach((c) => {
-      applyCanvasCSS(c);
-      mosaicCanvases.push(c);
-    });
+    existing.forEach((c) => applyCanvasCSS(c, null, null, "fill"));
   }
 
-  configureMosaicLayout(mosaicRoot, mosaicCanvases.length || 9);
+  configureMosaicLayout(mosaicRoot);
 
-  return { mainCanvas, mosaicCanvases };
+  return { mainCanvas, mosaicCanvases: existing };
 }
 
 function buildModeLabelList(bits) {
@@ -713,10 +713,69 @@ function setPreviewStats(text) {
   if (previewStats) previewStats.textContent = text;
 }
 
+function readTileOffsetsFromUI() {
+  const getNum = (id, fallback = 0) => {
+    const el = document.getElementById(id);
+    if (!el) return fallback;
+    const v = Number(el.value);
+    return Number.isFinite(v) ? v : fallback;
+  };
+
+  return {
+    x: getNum("res-offsetX", 0),
+    y: getNum("res-offsetY", 0),
+    z: getNum("res-offsetZ", 0),
+  };
+}
+
+
+function _tileOffsetTag(tileOffsets) {
+  if (!tileOffsets) return "";
+  const ox = Number(tileOffsets.x) || 0;
+  const oy = Number(tileOffsets.y) || 0;
+  const oz = Number(tileOffsets.z) || 0;
+
+  const eps = 1e-9;
+  if (Math.abs(ox) < eps && Math.abs(oy) < eps && Math.abs(oz) < eps) return "";
+
+  const fmt = (v) => (Math.abs(v) >= 1 ? v.toFixed(2) : v.toFixed(6));
+  return ` · tile offset ${fmt(ox)},${fmt(oy)},${fmt(oz)}`;
+}
+
+
+function syncMainHeaderFromCache(info) {
+  if (!info) return;
+
+  const resW = info.resW | 0;
+  const resH = info.resH | 0;
+  const noiseBits = Array.isArray(info.noiseBits) ? info.noiseBits : [];
+
+  const any4D = noiseBits.some((b) => _isEntryPoint4D(ENTRY_POINTS[b]));
+  const tileTag = any4D ? " · toroidal(4D)" : "";
+  const worldDim = Math.max(resW, resH) | 0;
+
+  const offTag = _tileOffsetTag(info.tileOffsets);
+
+  setPreviewHeader(
+    `Height field preview · ${resW}×${resH} · world ${worldDim}×${worldDim} · modes: ` +
+      `${buildModeLabelList(noiseBits)}${tileTag}${offTag}`,
+  );
+
+  if (typeof info.computeMs === "number" && typeof info.blitMs === "number") {
+    setPreviewStats(
+      `GPU compute ${info.computeMs.toFixed(1)} ms · blit ${info.blitMs.toFixed(1)} ms`,
+    );
+  } else {
+    setPreviewStats("");
+  }
+}
+
 async function renderMainNoise(builder, mainCanvas, opts = {}) {
   const updateUI = opts.updateUI !== false;
 
   const { w: resW, h: resH } = readLockedResolutionFromUI(builder, 800);
+  const tileOffsets = readTileOffsetsFromUI();
+  const worldScale = Math.max(resW, resH) | 0;
 
   ensurePreviewCanvas(builder, mainCanvas, resW, resH);
 
@@ -736,10 +795,17 @@ async function renderMainNoise(builder, mainCanvas, opts = {}) {
     worldMode: "crop",
   };
 
+  const scrollOptions = {
+    offsetX: Number(tileOffsets.x) || 0,
+    offsetY: Number(tileOffsets.y) || 0,
+    offsetZ: Number(tileOffsets.z) || 0,
+  };
+
   const tComputeStart = performance.now();
 
   await builder.computeToTexture(resW, resH, globalParams, {
     ...commonOptions,
+    ...scrollOptions,
     noiseChoices: ["clearTexture"],
   });
 
@@ -750,6 +816,7 @@ async function renderMainNoise(builder, mainCanvas, opts = {}) {
 
     await builder.computeToTexture(resW, resH, params, {
       ...commonOptions,
+      ...scrollOptions,
       noiseChoices: [bit],
     });
   }
@@ -768,55 +835,27 @@ async function renderMainNoise(builder, mainCanvas, opts = {}) {
   }
   const tBlitEnd = performance.now();
 
+  const computeMs = tComputeEnd - tComputeStart;
+  const blitMs = tBlitEnd - tBlitStart;
+
   if (updateUI) {
     const any4D = noiseBits.some((b) => _isEntryPoint4D(ENTRY_POINTS[b]));
     const tileTag = any4D ? " · toroidal(4D)" : "";
-    const worldDim = Math.max(resW, resH) | 0;
+    const offTag = _tileOffsetTag(tileOffsets);
 
     setPreviewHeader(
-      `Height field preview · ${resW}×${resH} · world ${worldDim}×${worldDim} · modes: ` +
-        `${buildModeLabelList(noiseBits)}${tileTag}`,
+      `Height field preview · ${resW}×${resH} · world ${worldScale}×${worldScale} · modes: ` +
+        `${buildModeLabelList(noiseBits)}${tileTag}${offTag}`,
     );
 
-    const computeMs = (tComputeEnd - tComputeStart).toFixed(1);
-    const blitMs = (tBlitEnd - tBlitStart).toFixed(1);
-    setPreviewStats(`GPU compute ${computeMs} ms · blit ${blitMs} ms`);
+    setPreviewStats(
+      `GPU compute ${computeMs.toFixed(1)} ms · blit ${blitMs.toFixed(1)} ms`,
+    );
   }
 
-  return { resW, resH, noiseBits };
+  return { resW, resH, noiseBits, computeMs, blitMs, tileOffsets };
 }
 
-function renderToroidalSlice(builder, volumeView, mosaicCanvases, opts = {}) {
-  if (!volumeView) return 0;
-
-  const depth = TOROIDAL_SIZE;
-  const zIndex = getZSliceIndexFromUI();
-  const zNorm = (zIndex + 0.5) / depth;
-
-  const canvases = Array.isArray(mosaicCanvases) ? mosaicCanvases : [];
-  const count = canvases.length || 9;
-
-  const t0 = performance.now();
-
-  for (let i = 0; i < count; i++) {
-    const canvas = canvases[i];
-    if (!canvas) continue;
-
-    ensureCanvasSize(builder, canvas, TOROIDAL_SIZE, TOROIDAL_SIZE);
-
-    builder.renderTexture3DSliceToCanvas(volumeView, canvas, {
-      depth,
-      zNorm,
-      channel: 0,
-      chunk: 0,
-      preserveCanvasSize: true,
-      clear: true,
-    });
-  }
-
-  const t1 = performance.now();
-  return t1 - t0;
-}
 
 async function renderToroidalDemo(builder, mosaicCanvases, state, opts = {}) {
   const draw = opts.draw !== false;
@@ -824,6 +863,9 @@ async function renderToroidalDemo(builder, mosaicCanvases, state, opts = {}) {
 
   const globalParams = readGlobalParamsFromUI();
   builder.buildPermTable(globalParams.seed | 0);
+
+  const tileOffsets = readTileOffsetsFromUI();
+  const worldScale = TOROIDAL_SIZE | 0;
 
   const baseParams = {
     ...globalParams,
@@ -886,8 +928,10 @@ async function renderToroidalDemo(builder, mosaicCanvases, state, opts = {}) {
       ? modes.map((m) => makeNoiseLabelFromEntryPoint(m.entry)).join(" + ")
       : "None";
 
+    const offTag = _tileOffsetTag(tileOffsets);
+
     setPreviewHeader(
-      `Toroidal tiles · ${TOROIDAL_SIZE}³ · modes: ${modeTag} · Z slice: ${getZSliceIndexFromUI()}`,
+      `Toroidal tiles · ${TOROIDAL_SIZE}³ · modes: ${modeTag} · Z slice: ${getZSliceIndexFromUI()}${offTag}`,
     );
 
     const computeMs = state.lastToroidalComputeMs.toFixed(1);
@@ -900,6 +944,38 @@ async function renderToroidalDemo(builder, mosaicCanvases, state, opts = {}) {
   }
 
   return { computeMs: state.lastToroidalComputeMs, sliceBlitMs };
+}
+
+function renderToroidalSlice(builder, volumeView, mosaicCanvases, opts = {}) {
+  if (!volumeView) return 0;
+
+  const depth = TOROIDAL_SIZE;
+  const zIndex = getZSliceIndexFromUI();
+  const zNorm = (zIndex + 0.5) / depth;
+
+  const canvases = Array.isArray(mosaicCanvases) ? mosaicCanvases : [];
+  const count = canvases.length || 9;
+
+  const t0 = performance.now();
+
+  for (let i = 0; i < count; i++) {
+    const canvas = canvases[i];
+    if (!canvas) continue;
+
+    ensureCanvasSize(builder, canvas, TOROIDAL_SIZE, TOROIDAL_SIZE);
+
+    builder.renderTexture3DSliceToCanvas(volumeView, canvas, {
+      depth,
+      zNorm,
+      channel: 0,
+      chunk: 0,
+      preserveCanvasSize: true,
+      clear: true,
+    });
+  }
+
+  const t1 = performance.now();
+  return t1 - t0;
 }
 
 function getActiveView() {
@@ -956,6 +1032,7 @@ async function initNoiseDemo() {
   const state = {
     lastToroidalVolumeView: null,
     lastToroidalComputeMs: 0,
+    lastMainInfo: null,
   };
 
   const dirty = {
@@ -980,7 +1057,11 @@ async function initNoiseDemo() {
         if (view === "main") {
           if (dirty.main) {
             dirty.main = false;
-            await renderMainNoise(builder, mainCanvas, { updateUI: true });
+            state.lastMainInfo = await renderMainNoise(builder, mainCanvas, {
+              updateUI: true,
+            });
+          } else {
+            syncMainHeaderFromCache(state.lastMainInfo);
           }
         } else {
           if (dirty.tileset || !state.lastToroidalVolumeView) {
@@ -995,8 +1076,16 @@ async function initNoiseDemo() {
               state.lastToroidalVolumeView,
               mosaicCanvases,
             );
+
+            const modes = collectSelectedToroidalModesFromUI();
+            const modeTag = modes.length
+              ? modes
+                  .map((m) => makeNoiseLabelFromEntryPoint(m.entry))
+                  .join(" + ")
+              : "None";
+
             setPreviewHeader(
-              `Toroidal tiles · ${TOROIDAL_SIZE}³ · Z slice: ${getZSliceIndexFromUI()}`,
+              `Toroidal tiles · ${TOROIDAL_SIZE}³ · modes: ${modeTag} · Z slice: ${getZSliceIndexFromUI()}`,
             );
             setPreviewStats(
               `GPU volume compute ${state.lastToroidalComputeMs.toFixed(1)} ms · slice blit ${blitMs.toFixed(1)} ms`,
@@ -1094,9 +1183,24 @@ async function initNoiseDemo() {
   const applyResBtn = document.getElementById("apply-res");
   if (applyResBtn) {
     applyResBtn.addEventListener("click", () => {
-      markDirtyMain(true);
+      markDirtyBoth();
     });
   }
+
+  ["res-offsetX", "res-offsetY", "res-offsetZ"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("input", () => {
+      dirty.main = true;
+      dirty.tileset = true;
+      requestActiveRender();
+    });
+    el.addEventListener("change", () => {
+      dirty.main = true;
+      dirty.tileset = true;
+      requestActiveRender();
+    });
+  });
 
   const GLOBAL_PARAM_IDS = [
     "noise-seed",
@@ -1179,22 +1283,58 @@ async function initNoiseDemo() {
     );
   };
 
+  const setZSliceIndex = (idx, rerender = true) => {
+    let v = Number(idx);
+    if (!Number.isFinite(v)) v = 0;
+    v = Math.round(v);
+
+    const depth = TOROIDAL_SIZE | 0;
+    v = ((v % depth) + depth) % depth;
+
+    if (zSlider && String(zSlider.value) !== String(v))
+      zSlider.value = String(v);
+    if (zInput && String(zInput.value) !== String(v)) zInput.value = String(v);
+
+    if (rerender) rerenderSliceOnlyIfVisible();
+  };
+
   if (zSlider) {
     zSlider.addEventListener("input", () => {
-      const v = Number(zSlider.value);
-      if (zInput) zInput.value = String(v);
-      rerenderSliceOnlyIfVisible();
+      setZSliceIndex(Number(zSlider.value), true);
+    });
+
+    zSlider.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+
+      e.preventDefault();
+
+      const stepRaw = Number(zSlider.step);
+      const step =
+        Number.isFinite(stepRaw) && stepRaw > 0 ? Math.round(stepRaw) : 1;
+
+      const cur = Number(zSlider.value);
+      const curI = Number.isFinite(cur) ? Math.round(cur) : 0;
+
+      const next = e.key === "ArrowLeft" ? curI - step : curI + step;
+      setZSliceIndex(next, true);
     });
   }
 
   if (zInput) {
     zInput.addEventListener("change", () => {
-      let idx = Number(zInput.value);
-      if (!Number.isFinite(idx)) idx = 0;
-      idx = Math.min(Math.max(Math.round(idx), 0), TOROIDAL_SIZE - 1);
-      zInput.value = String(idx);
-      if (zSlider) zSlider.value = String(idx);
-      rerenderSliceOnlyIfVisible();
+      setZSliceIndex(Number(zInput.value), true);
+    });
+
+    zInput.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+
+      e.preventDefault();
+
+      const cur = Number(zInput.value);
+      const curI = Number.isFinite(cur) ? Math.round(cur) : 0;
+
+      const next = e.key === "ArrowDown" ? curI - 1 : curI + 1;
+      setZSliceIndex(next, true);
     });
   }
 

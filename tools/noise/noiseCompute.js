@@ -39,7 +39,13 @@ import blit2DWGSL from "./noiseBlit.wgsl";
 import blit3DWGSL from "./noiseBlit3D.wgsl";
 
 // Should be derived from device limits in real code
-const MAX_2D_TILE = 8192;
+const MAX_2D_TILE = 4096;
+
+//todo: separate compositing pipeline for higher res images with cheaper memory structures.
+const COMPOSITE_TILE_2D = 2048; // scratch tile size for large outputs
+const COMPOSITE_DIM_THRESHOLD = 4096; // if either side exceeds this, use composite path
+//theoretical limit on modern hardware is like 12K or 16K for a total composite, we just need to compute strips to composite a final compressed texture. It's doable
+
 const MAX_3D_TILE = 2048;
 const BYTES_PER_VOXEL = 8; // rgba16float = 4 * 16-bit
 
@@ -221,6 +227,7 @@ export class NoiseComputeBuilder {
     this._texPairs = new Map();
     this._tid = null;
     this._tag = new WeakMap();
+    this._default2DKey = "__default2d";
 
     // 3D volume chunks
     this._volumeCache = new Map();
@@ -335,8 +342,6 @@ export class NoiseComputeBuilder {
       });
     }
   }
-
-  // Paste these methods into the NoiseComputeBuilder class (near other helpers is fine).
 
   _getMaxBufferChunkBytes(requested) {
     const devMax = this.device?.limits?.maxBufferSize ?? 256 * 1024 * 1024;
@@ -572,39 +577,70 @@ export class NoiseComputeBuilder {
   }
 
   setNoiseParams(params = {}) {
-    const {
-      seed = Date.now() | 0,
-      zoom = 1.0,
-      freq = 1.0,
-      octaves = 8,
-      lacunarity = 2.0,
-      gain = 0.5,
-      xShift = 0.0,
-      yShift = 0.0,
-      zShift = 0.0,
-      turbulence = 0,
-      seedAngle = 0.0,
-      exp1 = 1.0,
-      exp2 = 0.0,
-      threshold = 0.1,
-      rippleFreq = 10.0,
-      time = 0.0,
-      warpAmp = 0.5,
-      gaborRadius = 4.0,
-      terraceStep = 8.0,
+    const p = params || {};
+    const prev = this._lastNoiseParams || {};
+    const has = Object.prototype.hasOwnProperty;
 
-      toroidal = 0,
-      voroMode = 0,
-      edgeK = 0.0,
-    } = params;
+    const pickNum = (k, fallback) => {
+      const v = has.call(p, k) ? p[k] : prev[k];
+      const n = Number(v);
+      if (Number.isFinite(n)) return n;
+      const fb = Number(fallback);
+      return Number.isFinite(fb) ? fb : 0;
+    };
 
-    const _zoom = Math.max(Number(zoom) || 0, 1e-6);
-    const _freq = Math.max(Number(freq) || 0, 1e-6);
+    const pickU32 = (k, fallback) => {
+      const v = has.call(p, k) ? p[k] : prev[k];
+      const n = Number(v);
+      if (Number.isFinite(n)) return n >>> 0;
+      const fb = Number(fallback);
+      return Number.isFinite(fb) ? fb >>> 0 : 0;
+    };
 
-    const _oct = Math.max(0, Math.floor(Number(octaves) || 0)) >>> 0;
-    const _turb = (turbulence ? 1 : 0) >>> 0;
+    const pickI32 = (k, fallback) => {
+      const v = has.call(p, k) ? p[k] : prev[k];
+      const n = Number(v);
+      if (Number.isFinite(n)) return n | 0;
+      const fb = Number(fallback);
+      return Number.isFinite(fb) ? fb | 0 : 0;
+    };
 
-    const toroFlag = (toroidal ? 1 : 0) >>> 0;
+    const pickBoolU32 = (k, fallback) => {
+      const v = has.call(p, k) ? p[k] : prev[k];
+      if (v === undefined) return (fallback ? 1 : 0) >>> 0;
+      return (v ? 1 : 0) >>> 0;
+    };
+
+    const seed = pickI32("seed", prev.seed ?? Date.now() | 0);
+
+    const zoomRaw = pickNum("zoom", prev.zoom ?? 1.0);
+    const freqRaw = pickNum("freq", prev.freq ?? 1.0);
+    const _zoom = Math.max(zoomRaw || 0, 1e-6);
+    const _freq = Math.max(freqRaw || 0, 1e-6);
+
+    const octaves = pickU32("octaves", prev.octaves ?? 8);
+    const turbulence = pickBoolU32("turbulence", prev.turbulence ?? 0);
+
+    const lacunarity = pickNum("lacunarity", prev.lacunarity ?? 2.0);
+    const gain = pickNum("gain", prev.gain ?? 0.5);
+
+    const xShift = pickNum("xShift", prev.xShift ?? 0.0);
+    const yShift = pickNum("yShift", prev.yShift ?? 0.0);
+    const zShift = pickNum("zShift", prev.zShift ?? 0.0);
+
+    const seedAngle = pickNum("seedAngle", prev.seedAngle ?? 0.0);
+    const exp1 = pickNum("exp1", prev.exp1 ?? 1.0);
+    const exp2 = pickNum("exp2", prev.exp2 ?? 0.0);
+    const threshold = pickNum("threshold", prev.threshold ?? 0.1);
+    const rippleFreq = pickNum("rippleFreq", prev.rippleFreq ?? 10.0);
+    const time = pickNum("time", prev.time ?? 0.0);
+    const warpAmp = pickNum("warpAmp", prev.warpAmp ?? 0.5);
+    const gaborRadius = pickNum("gaborRadius", prev.gaborRadius ?? 4.0);
+    const terraceStep = pickNum("terraceStep", prev.terraceStep ?? 8.0);
+
+    const toroidal = pickBoolU32("toroidal", prev.toroidal ?? 0);
+    const voroMode = pickU32("voroMode", prev.voroMode ?? 0);
+    const edgeK = pickNum("edgeK", prev.edgeK ?? 0.0);
 
     const buf = new ArrayBuffer(22 * 4);
     const dv = new DataView(buf);
@@ -613,13 +649,13 @@ export class NoiseComputeBuilder {
     dv.setUint32(base + 0, seed >>> 0, true);
     dv.setFloat32(base + 4, _zoom, true);
     dv.setFloat32(base + 8, _freq, true);
-    dv.setUint32(base + 12, _oct, true);
+    dv.setUint32(base + 12, octaves >>> 0, true);
     dv.setFloat32(base + 16, lacunarity, true);
     dv.setFloat32(base + 20, gain, true);
     dv.setFloat32(base + 24, xShift, true);
     dv.setFloat32(base + 28, yShift, true);
     dv.setFloat32(base + 32, zShift, true);
-    dv.setUint32(base + 36, _turb, true);
+    dv.setUint32(base + 36, turbulence >>> 0, true);
     dv.setFloat32(base + 40, seedAngle, true);
     dv.setFloat32(base + 44, exp1, true);
     dv.setFloat32(base + 48, exp2, true);
@@ -630,17 +666,246 @@ export class NoiseComputeBuilder {
     dv.setFloat32(base + 68, gaborRadius, true);
     dv.setFloat32(base + 72, terraceStep, true);
 
-    dv.setUint32(base + 76, toroFlag, true);
+    dv.setUint32(base + 76, toroidal >>> 0, true);
     dv.setUint32(base + 80, voroMode >>> 0, true);
     dv.setFloat32(base + 84, edgeK, true);
 
     this.queue.writeBuffer(this.paramsBuffer, 0, buf);
+
+    this._lastNoiseParams = {
+      seed,
+      zoom: _zoom,
+      freq: _freq,
+      octaves,
+      lacunarity,
+      gain,
+      xShift,
+      yShift,
+      zShift,
+      turbulence,
+      seedAngle,
+      exp1,
+      exp2,
+      threshold,
+      rippleFreq,
+      time,
+      warpAmp,
+      gaborRadius,
+      terraceStep,
+      toroidal,
+      voroMode,
+      edgeK,
+    };
 
     for (const pair of this._texPairs.values()) pair.bindGroupDirty = true;
 
     for (const [key, vol] of this._volumeCache) {
       if (!vol || !Array.isArray(vol.chunks)) continue;
       vol._bindGroupsDirty = true;
+    }
+  }
+
+  _numOr0(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  _resolveScroll2D(options, outW, outH, worldFullW, worldFullH, cropMode) {
+    const o = options || {};
+
+    const outw = Math.max(1, outW | 0);
+    const outh = Math.max(1, outH | 0);
+
+    const fullw = Math.max(1, (worldFullW ?? outw) | 0);
+    const fullh = Math.max(1, (worldFullH ?? outh) | 0);
+
+    const w = cropMode ? fullw : outw;
+    const h = cropMode ? fullh : outh;
+
+    const offX = this._numOr0(o.offsetX) * w;
+    const offY = this._numOr0(o.offsetY) * h;
+
+    const baseXf =
+      offX +
+      this._numOr0(o.offsetXf) +
+      this._numOr0(o.originXf) +
+      this._numOr0(o.originX);
+
+    const baseYf =
+      offY +
+      this._numOr0(o.offsetYf) +
+      this._numOr0(o.originYf) +
+      this._numOr0(o.originY);
+
+    return { baseXf, baseYf };
+  }
+
+  _resolveScroll3D(options, outW, outH, outD) {
+    const o = options || {};
+
+    const w = Math.max(1, outW | 0);
+    const h = Math.max(1, outH | 0);
+    const d = Math.max(1, outD | 0);
+
+    const offX = this._numOr0(o.offsetX) * w;
+    const offY = this._numOr0(o.offsetY) * h;
+    const offZ = this._numOr0(o.offsetZ) * d;
+
+    const baseXf =
+      offX +
+      this._numOr0(o.offsetXf) +
+      this._numOr0(o.originXf) +
+      this._numOr0(o.originX);
+
+    const baseYf =
+      offY +
+      this._numOr0(o.offsetYf) +
+      this._numOr0(o.originYf) +
+      this._numOr0(o.originY);
+
+    const baseZf =
+      offZ +
+      this._numOr0(o.offsetZf) +
+      this._numOr0(o.originZf) +
+      this._numOr0(o.originZ);
+
+    const baseZ = Math.floor(baseZf) | 0;
+
+    return { baseXf, baseYf, baseZ };
+  }
+
+  _update2DTileFrames(tid, options = {}) {
+    const pair = this._texPairs.get(tid);
+    if (!pair || !Array.isArray(pair.tiles) || pair.tiles.length === 0) return;
+
+    let worldFullW = Number.isFinite(options.frameFullWidth)
+      ? options.frameFullWidth >>> 0
+      : pair.fullWidth;
+
+    let worldFullH = Number.isFinite(options.frameFullHeight)
+      ? options.frameFullHeight >>> 0
+      : pair.fullHeight;
+
+    const cropMode =
+      options.squareWorld ||
+      String(options.worldMode || "").toLowerCase() === "crop";
+
+    if (options.squareWorld) {
+      const m =
+        Math.max(worldFullW, worldFullH, pair.fullWidth, pair.fullHeight) >>> 0;
+      worldFullW = m;
+      worldFullH = m;
+    }
+
+    const outW = pair.fullWidth >>> 0;
+    const outH = pair.fullHeight >>> 0;
+
+    const { baseXf, baseYf } = this._resolveScroll2D(
+      options,
+      outW,
+      outH,
+      worldFullW,
+      worldFullH,
+      cropMode,
+    );
+
+    const scaleX = cropMode ? 1.0 : worldFullW / Math.max(1, outW);
+    const scaleY = cropMode ? 1.0 : worldFullH / Math.max(1, outH);
+
+    for (const tile of pair.tiles) {
+      const fb = tile?.frames?.[0];
+      if (!fb) continue;
+
+      const ox = tile.originX | 0;
+      const oy = tile.originY | 0;
+
+      const worldX = (ox + baseXf) * scaleX;
+      const worldY = (oy + baseYf) * scaleY;
+
+      const originXf = worldFullW > 0 ? worldX / worldFullW : 0.0;
+      const originYf = worldFullH > 0 ? worldY / worldFullH : 0.0;
+
+      this._writeFrameUniform(fb, {
+        fullWidth: worldFullW,
+        fullHeight: worldFullH,
+        tileWidth: pair.tileWidth,
+        tileHeight: pair.tileHeight,
+        originX: ox,
+        originY: oy,
+        originZ: 0,
+        fullDepth: 1,
+        tileDepth: 1,
+        layerIndex: tile.layerIndex | 0,
+        layers: pair.layers >>> 0,
+        originXf,
+        originYf,
+      });
+    }
+  }
+
+  _update3DChunkFrames(vol, worldFull = null, options = {}) {
+    if (!vol || !Array.isArray(vol.chunks) || vol.chunks.length === 0) return;
+
+    const fw =
+      worldFull && Number.isFinite(worldFull?.w)
+        ? worldFull.w >>> 0
+        : vol.full.w;
+
+    const fh =
+      worldFull && Number.isFinite(worldFull?.h)
+        ? worldFull.h >>> 0
+        : vol.full.h;
+
+    const fd =
+      worldFull && Number.isFinite(worldFull?.d)
+        ? worldFull.d >>> 0
+        : vol.full.d;
+
+    const outW = vol.full.w >>> 0;
+    const outH = vol.full.h >>> 0;
+    const outD = vol.full.d >>> 0;
+
+    const { baseXf, baseYf, baseZ } = this._resolveScroll3D(
+      options,
+      outW,
+      outH,
+      outD,
+    );
+
+    const scaleX = fw / Math.max(1, outW);
+    const scaleY = fh / Math.max(1, outH);
+
+    for (const c of vol.chunks) {
+      if (!c.fb) {
+        c.fb = this.device.createBuffer({
+          size: 64,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+      }
+
+      const worldX = ((c.ox | 0) + baseXf) * scaleX;
+      const worldY = ((c.oy | 0) + baseYf) * scaleY;
+
+      const originXf = fw > 0 ? worldX / fw : 0.0;
+      const originYf = fh > 0 ? worldY / fh : 0.0;
+
+      const originZ = ((c.oz | 0) + baseZ) | 0;
+
+      this._writeFrameUniform(c.fb, {
+        fullWidth: fw,
+        fullHeight: fh,
+        tileWidth: c.w,
+        tileHeight: c.h,
+        originX: c.ox | 0,
+        originY: c.oy | 0,
+        originZ,
+        fullDepth: fd,
+        tileDepth: c.d,
+        layerIndex: 0,
+        layers: 1,
+        originXf,
+        originYf,
+      });
     }
   }
 
@@ -656,7 +921,7 @@ export class NoiseComputeBuilder {
     return { tileW, tileH, tilesX, tilesY, layers };
   }
 
-  _create2DPair(W, H) {
+  _create2DPair(W, H, tid = null) {
     const t = this._compute2DTiling(W, H);
     const usage =
       GPUTextureUsage.STORAGE_BINDING |
@@ -664,8 +929,9 @@ export class NoiseComputeBuilder {
       GPUTextureUsage.COPY_SRC |
       GPUTextureUsage.COPY_DST;
 
-    const makeTex = () =>
+    const makeTex = (label) =>
       this.device.createTexture({
+        label,
         size: [t.tileW, t.tileH, t.layers],
         format: "rgba16float",
         usage,
@@ -673,20 +939,22 @@ export class NoiseComputeBuilder {
 
     const desc = { dimension: "2d-array", arrayLayerCount: t.layers };
 
-    const texA = makeTex();
-    const texB = makeTex();
+    const id =
+      tid !== null && tid !== undefined
+        ? String(tid)
+        : String(this._texPairs.size);
+
+    const texA = makeTex(`2D texA ${W}x${H}x${t.layers} (${id})`);
+    const texB = makeTex(`2D texB ${W}x${H}x${t.layers} (${id})`);
     const viewA = texA.createView(desc);
     const viewB = texB.createView(desc);
 
-    texA.label = `2D texA ${W}x${H}x${t.layers}`;
-    texB.label = `2D texB ${W}x${H}x${t.layers}`;
-    viewA.label = "2D:viewA";
-    viewB.label = "2D:viewB";
-    this._tag.set(viewA, "2D:A");
-    this._tag.set(viewB, "2D:B");
+    viewA.label = `2D:viewA (${id})`;
+    viewB.label = `2D:viewB (${id})`;
+    this._tag.set(viewA, `2D:A (${id})`);
+    this._tag.set(viewB, `2D:B (${id})`);
 
-    const tid = this._texPairs.size;
-    this._texPairs.set(tid, {
+    this._texPairs.set(id, {
       texA,
       texB,
       viewA,
@@ -703,8 +971,8 @@ export class NoiseComputeBuilder {
       bindGroupDirty: true,
     });
 
-    if (this._tid === null) this.setActiveTexture(tid);
-    return tid;
+    if (this._tid === null) this.setActiveTexture(id);
+    return id;
   }
 
   createShaderTextures(width, height) {
@@ -717,8 +985,10 @@ export class NoiseComputeBuilder {
   }
 
   destroyTexturePair(tid) {
-    const pair = this._texPairs.get(tid);
+    const id = String(tid);
+    const pair = this._texPairs.get(id);
     if (!pair) return;
+
     try {
       pair.texA.destroy();
     } catch {}
@@ -728,12 +998,13 @@ export class NoiseComputeBuilder {
 
     if (Array.isArray(pair.tiles)) {
       for (const tile of pair.tiles) {
-        if (Array.isArray(tile.frames))
+        if (Array.isArray(tile.frames)) {
           for (const fb of tile.frames) {
             try {
               fb.destroy();
             } catch {}
           }
+        }
         if (tile.posBuf && tile.posBuf !== this.nullPosBuffer) {
           try {
             tile.posBuf.destroy();
@@ -741,9 +1012,10 @@ export class NoiseComputeBuilder {
         }
       }
     }
-    this._texPairs.delete(tid);
 
-    if (this._tid === tid) {
+    this._texPairs.delete(id);
+
+    if (this._tid === id) {
       this._tid = null;
       this.inputTextureView = null;
       this.outputTextureView = null;
@@ -754,19 +1026,23 @@ export class NoiseComputeBuilder {
 
   destroyAllTexturePairs() {
     const ids = Array.from(this._texPairs.keys());
-    for (const tid of ids) this.destroyTexturePair(tid);
+    for (const id of ids) this.destroyTexturePair(id);
   }
 
   setActiveTexture(tid) {
-    if (!this._texPairs.has(tid))
+    const id = String(tid);
+    if (!this._texPairs.has(id))
       throw new Error("setActiveTexture: invalid id");
-    this._tid = tid;
-    const pair = this._texPairs.get(tid);
+
+    this._tid = id;
+    const pair = this._texPairs.get(id);
+
     this.viewA = pair.viewA;
     this.viewB = pair.viewB;
     this.width = pair.tileWidth;
     this.height = pair.tileHeight;
     this.layers = pair.layers;
+
     this.inputTextureView = pair.isA ? pair.viewA : pair.viewB;
     this.outputTextureView = pair.isA ? pair.viewB : pair.viewA;
   }
@@ -1082,27 +1358,26 @@ export class NoiseComputeBuilder {
   //  options: customData, frameFullWidth, frameFullHeight
   // ---------------------------
   async computeToTexture(width, height, paramsObj = {}, options = {}) {
-    const W = width | 0,
-      H = height | 0;
+    const W = width | 0;
+    const H = height | 0;
     if (!(W > 0 && H > 0)) {
       throw new Error(`computeToTexture: invalid size ${width}x${height}`);
     }
 
-    if (this._tid != null) {
-      const cur = this._texPairs.get(this._tid);
-      if (!cur || cur.fullWidth !== W || cur.fullHeight !== H) {
-        this.destroyTexturePair(this._tid);
-      }
+    const key = this._get2DKey(options);
+    const existing = this._texPairs.get(key);
+
+    if (!existing) {
+      this._create2DPair(W, H, key);
+    } else if (existing.fullWidth !== W || existing.fullHeight !== H) {
+      this.destroyTexturePair(key);
+      this._create2DPair(W, H, key);
     }
 
-    if (this._tid == null) {
-      const tid = this._create2DPair(W, H);
-      this.setActiveTexture(tid);
-    }
+    this.setActiveTexture(key);
 
-    const pair = this._texPairs.get(this._tid);
-    if (!pair)
-      throw new Error("computeToTexture: failed to create 2D texture pair");
+    const pair = this._texPairs.get(key);
+    if (!pair) throw new Error("computeToTexture: missing pair after ensure");
 
     if (paramsObj && !Array.isArray(paramsObj)) this.setNoiseParams(paramsObj);
 
@@ -1129,8 +1404,10 @@ export class NoiseComputeBuilder {
     };
 
     if (!pair.tiles || pair.bindGroupDirty || !!customData) {
-      this._create2DTileBindGroups(this._tid, tileOpts);
+      this._create2DTileBindGroups(key, tileOpts);
     }
+
+    this._update2DTileFrames(key, tileOpts);
 
     const isAStart = pair.isA;
     let finalUsed = null;
@@ -1164,14 +1441,29 @@ export class NoiseComputeBuilder {
 
     const resultsInA = finalUsed === lastBGs.bgB;
     pair.isA = resultsInA;
-    this.isA = resultsInA;
-    this.setActiveTexture(this._tid);
 
-    return this.getCurrentView();
+    this.setActiveTexture(key);
+    return this.getCurrentView(key);
   }
 
-  getCurrentView() {
-    const p = this._texPairs.get(this._tid);
+  _get2DKey(options) {
+    const k =
+      options && options.textureKey !== undefined && options.textureKey !== null
+        ? String(options.textureKey)
+        : "";
+    return k && k.length ? k : this._default2DKey;
+  }
+
+  get2DView(key) {
+    const id = String(key);
+    const p = this._texPairs.get(id);
+    if (!p) return null;
+    return p.isA ? p.viewA : p.viewB;
+  }
+
+  getCurrentView(tid = null) {
+    const id = tid !== null && tid !== undefined ? String(tid) : this._tid;
+    const p = this._texPairs.get(id);
     if (!p) return null;
     return p.isA ? p.viewA : p.viewB;
   }
@@ -1529,7 +1821,6 @@ export class NoiseComputeBuilder {
 
     if (paramsObj && !Array.isArray(paramsObj)) this.setNoiseParams(paramsObj);
 
-    // 3D path: ioFlags = 3 (3D in/out)
     const origOpts = options || {};
     this.setOptions({
       ...origOpts,
@@ -1561,21 +1852,22 @@ export class NoiseComputeBuilder {
 
     const vol = this._getOrCreate3DVolume(W, H, D, options.id, worldFull);
 
-    // ensure valid bind-groups (recreate lazily when invalidated)
     if (!vol)
       throw new Error(
         "computeToTexture3D: failed to create or retrieve volume",
       );
+
     if (vol._bindGroupsDirty || !vol.chunks[0].bgA || !vol.chunks[0].bgB) {
       this._recreate3DBindGroups(vol, worldFull);
     }
+
+    this._update3DChunkFrames(vol, worldFull, options);
 
     let lastBG = null;
     for (const c of vol.chunks) {
       const start = c.isA ? c.bgA : c.bgB;
       const alt = c.isA ? c.bgB : c.bgA;
 
-      // defensive check: ensure we have valid bindgroups before dispatch
       if (!start || !alt) {
         throw new Error(
           "computeToTexture3D: missing bind groups (volume not initialized correctly)",
@@ -2520,70 +2812,6 @@ export class NoiseComputeBuilder {
 
     return blob;
   }
-
-  _installAllocDebug(thresholdBytes = 256 * 1024 * 1024) {
-  if (this._allocDebugInstalled) return;
-  this._allocDebugInstalled = true;
-
-  const dev = this.device;
-
-  const origCreateBuffer = dev.createBuffer.bind(dev);
-  dev.createBuffer = (desc) => {
-    const size = Number(desc?.size ?? 0);
-    if (Number.isFinite(size) && size >= thresholdBytes) {
-      console.warn(
-        "[alloc] createBuffer",
-        { size, usage: desc?.usage, mappedAtCreation: desc?.mappedAtCreation },
-        "\n",
-        new Error().stack,
-      );
-    }
-    return origCreateBuffer(desc);
-  };
-
-  const origCreateTexture = dev.createTexture.bind(dev);
-  dev.createTexture = (desc) => {
-    const t = origCreateTexture(desc);
-
-    try {
-      const fmt = desc?.format;
-      const bpp =
-        fmt === "rgba16float" ? 8 :
-        fmt === "rgba8unorm" ? 4 :
-        fmt === "bgra8unorm" ? 4 :
-        0;
-
-      const dim = desc?.dimension || "2d";
-      const s = desc?.size;
-
-      let w = 0, h = 0, d = 1;
-      if (Array.isArray(s)) {
-        w = s[0] | 0;
-        h = s[1] | 0;
-        d = (s[2] ?? 1) | 0;
-      } else if (s && typeof s === "object") {
-        w = s.width | 0;
-        h = s.height | 0;
-        d = (s.depthOrArrayLayers ?? 1) | 0;
-      }
-
-      if (bpp && w > 0 && h > 0 && d > 0) {
-        const approx = w * h * d * bpp;
-        if (approx >= thresholdBytes) {
-          console.warn(
-            "[alloc] createTexture",
-            { format: fmt, dimension: dim, size: desc?.size, approxBytes: approx, usage: desc?.usage },
-            "\n",
-            new Error().stack,
-          );
-        }
-      }
-    } catch {}
-
-    return t;
-  };
-}
-
 }
 
 // -----------------------------------------------------------------------------

@@ -630,11 +630,11 @@
       <a href="#voro-params" class="nav-pill">Voronoi</a>
       <a href="#adv-params" class="nav-pill">Advanced</a>
       <a href="#overrides-group" class="nav-pill">Overrides</a>
-      <a href="#toroidal-section" class="nav-pill">Z slice</a>
+      <a href="#toroidal-section" class="nav-pill">Tileset</a>
     </nav>
 
     <details id="res-section" class="param-group">
-      <summary>Resolution</summary>
+      <summary>Image Settings</summary>
       <div class="param-body">
         <label>
           Canvas width:
@@ -645,6 +645,20 @@
           <input type="number" id="res-height" value="800" min="1" />
         </label>
         <button id="apply-res" type="button">Apply resolution</button>
+       
+        <label>
+          World Offset X (pixels):
+          <input type="number" id="res-offsetX" value="0" step="1" />
+        </label>
+        <label>
+          World Offset Y (pixels):
+          <input type="number" id="res-offsetY" value="0" step="1" />
+        </label>
+        <label>
+          World Offset Z (pixels):
+          <input type="number" id="res-offsetZ" value="0" step="1" />
+        </label>
+
       </div>
     </details>
 
@@ -703,18 +717,20 @@
             min="0.0"
           />
         </label>
+       
         <label>
-          X shift:
+          X step shift:
           <input type="number" step="0.01" id="noise-xShift" value="0" />
         </label>
         <label>
-          Y shift:
+          Y step shift:
           <input type="number" step="0.01" id="noise-yShift" value="0" />
         </label>
         <label>
-          Z shift:
+          Z step shift:
           <input type="number" step="0.01" id="noise-zShift" value="0" />
         </label>
+        
       </div>
     </details>
 
@@ -806,46 +822,6 @@
         </label>
       </div>
     </details>
-
-    <button id="render-btn" type="button">Render</button>
-
-    <div id="export-bg">
-      <div class="export-bg-title">Export BG</div>
-      <label>
-        <input
-          type="radio"
-          name="export-bg"
-          id="export-bg-transparent"
-          value="transparent"
-          checked
-        />
-        Transparent
-      </label>
-
-      <label>
-        <input
-          type="radio"
-          name="export-bg"
-          id="export-bg-black"
-          value="black"
-        />
-        Black
-      </label>
-
-      <label>
-        <input
-          type="radio"
-          name="export-bg"
-          id="export-bg-white"
-          value="white"
-        />
-        White
-      </label>
-    </div>
-
-    <button id="download-main" type="button">Save image</button>
-    <button id="download-tile" type="button">Save tile</button>
-    <button id="download-tileset" type="button">Save tileset</button>
 
     <details id="overrides-group" class="param-group">
       <summary>Per entry overrides</summary>
@@ -965,11 +941,52 @@
         </button>
       </div>
     </details>
+    
+    <button id="render-btn" type="button">Render</button>
+
+    <div id="export-bg">
+      <div class="export-bg-title">Export BG</div>
+      <label>
+        <input
+          type="radio"
+          name="export-bg"
+          id="export-bg-transparent"
+          value="transparent"
+          checked
+        />
+        Transparent
+      </label>
+
+      <label>
+        <input
+          type="radio"
+          name="export-bg"
+          id="export-bg-black"
+          value="black"
+        />
+        Black
+      </label>
+
+      <label>
+        <input
+          type="radio"
+          name="export-bg"
+          id="export-bg-white"
+          value="white"
+        />
+        White
+      </label>
+    </div>
+
+    <button id="download-main" type="button">Save image</button>
+    <button id="download-tile" type="button">Save tile</button>
+    <button id="download-tileset" type="button">Save tileset</button>
+
 
     <hr />
 
     <details id="toroidal-section" class="param-group">
-      <summary>Toroidal slice</summary>
+      <summary>Tileset Controls</summary>
       <div class="param-body">
         <label class="grow">
           Volume 4D modes (additive):
