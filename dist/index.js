@@ -1,704 +1,1602 @@
-(()=>{var ve=(e=>typeof require<"u"?require:typeof Proxy<"u"?new Proxy(e,{get:(t,s)=>(typeof require<"u"?require:t)[s]}):e)(function(e){if(typeof require<"u")return require.apply(this,arguments);throw Error('Dynamic require of "'+e+'" is not supported')});var ae=`<!-- tools/clouds/clouds.html -->\r
+(()=>{var ue=(e=>typeof require<"u"?require:typeof Proxy<"u"?new Proxy(e,{get:(s,i)=>(typeof require<"u"?require:s)[i]}):e)(function(e){if(typeof require<"u")return require.apply(this,arguments);throw Error('Dynamic require of "'+e+'" is not supported')});var le=`<!-- tools/clouds/clouds.html -->\r
 <!doctype html>\r
 <html lang="en">\r
+  <head>\r
+    <meta charset="utf-8" />\r
+    <meta name="viewport" content="width=device-width,initial-scale=1" />\r
+    <title>Clouds - UI</title>\r
+    <style>\r
+      :root {\r
+        --side: 340px;\r
+        --fg: #dbe4ff;\r
+        --fg2: #9fb0d0;\r
+        --bg: #0e1117;\r
+        --panel: #0c111b;\r
+      }\r
 \r
-<head>\r
-  <meta charset="utf-8" />\r
-  <meta name="viewport" content="width=device-width,initial-scale=1" />\r
-  <title>Clouds - UI</title>\r
-  <style>\r
-    :root {\r
-      --side: 340px;\r
-      --fg: #dbe4ff;\r
-      --fg2: #9fb0d0;\r
-      --bg: #0e1117;\r
-      --panel: #0c111b;\r
-    }\r
+      * {\r
+        box-sizing: border-box;\r
+      }\r
 \r
-    * { box-sizing: border-box }\r
+      html,\r
+      body {\r
+        margin: 0;\r
+        height: 100%;\r
+        background: var(--bg);\r
+        color: var(--fg);\r
+        font:\r
+          14px/1.35 system-ui,\r
+          -apple-system,\r
+          "Segoe UI",\r
+          Roboto,\r
+          sans-serif;\r
+      }\r
 \r
-    html, body {\r
-      margin: 0;\r
-      height: 100%;\r
-      background: var(--bg);\r
-      color: var(--fg);\r
-      font: 14px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;\r
-    }\r
+      #sidebar {\r
+        position: fixed;\r
+        inset: 0 auto 0 0;\r
+        width: var(--side);\r
+        background: var(--panel);\r
+        overflow: auto;\r
+        padding: 16px 16px 80px;\r
+        border-right: 1px solid #151c2b;\r
+      }\r
 \r
-    #sidebar {\r
-      position: fixed;\r
-      inset: 0 auto 0 0;\r
-      width: var(--side);\r
-      background: var(--panel);\r
-      overflow: auto;\r
-      padding: 16px 16px 80px;\r
-      border-right: 1px solid #151c2b;\r
-    }\r
+      #gpuCanvas {\r
+        position: fixed;\r
+        left: var(--side);\r
+        top: 0;\r
+        right: 0;\r
+        bottom: 0;\r
+        width: calc(100vw - var(--side));\r
+        height: 100vh;\r
+        display: block;\r
+        background: #000;\r
+      }\r
 \r
-    #gpuCanvas {\r
-      position: fixed;\r
-      left: var(--side);\r
-      top: 0;\r
-      right: 0;\r
-      bottom: 0;\r
-      width: calc(100vw - var(--side));\r
-      height: 100vh;\r
-      display: block;\r
-      background: #000;\r
-    }\r
+      h1 {\r
+        margin: 0 0 8px;\r
+        font-size: 18px;\r
+      }\r
 \r
-    h1 {\r
-      margin: 0 0 8px;\r
-      font-size: 18px;\r
-    }\r
+      h2 {\r
+        margin: 16px 0 8px;\r
+        font-size: 13px;\r
+        color: var(--fg2);\r
+      }\r
 \r
-    h2 {\r
-      margin: 16px 0 8px;\r
-      font-size: 13px;\r
-      color: var(--fg2);\r
-    }\r
+      label {\r
+        display: block;\r
+        margin: 6px 0 2px;\r
+        color: var(--fg2);\r
+        font-size: 12px;\r
+      }\r
 \r
-    label {\r
-      display: block;\r
-      margin: 6px 0 2px;\r
-      color: var(--fg2);\r
-      font-size: 12px;\r
-    }\r
+      select {\r
+        width: 100%;\r
+        padding: 0px 8px;\r
+        border-radius: 8px;\r
+        border: 1px solid #26304a;\r
+        background: #0b0f19;\r
+        color: var(--fg);\r
+        height: 28px;\r
+      }\r
 \r
-    select {\r
-      width: 100%;\r
-      padding: 0px 8px;\r
-      border-radius: 8px;\r
-      border: 1px solid #26304a;\r
-      background: #0b0f19;\r
-      color: var(--fg);\r
-      height: 28px;\r
-    }\r
+      input,\r
+      button {\r
+        width: 100%;\r
+        padding: 6px 8px;\r
+        border-radius: 8px;\r
+        border: 1px solid #26304a;\r
+        background: #0b0f19;\r
+        color: var(--fg);\r
+      }\r
 \r
-    input, button {\r
-      width: 100%;\r
-      padding: 6px 8px;\r
-      border-radius: 8px;\r
-      border: 1px solid #26304a;\r
-      background: #0b0f19;\r
-      color: var(--fg);\r
-    }\r
+      input[type="number"] {\r
+        appearance: textfield;\r
+      }\r
 \r
-    input[type="number"] { appearance: textfield }\r
+      button {\r
+        margin-top: 10px;\r
+        cursor: pointer;\r
+      }\r
 \r
-    button {\r
-      margin-top: 10px;\r
-      cursor: pointer;\r
-    }\r
+      .row {\r
+        display: grid;\r
+        grid-template-columns: 1fr 1fr;\r
+        gap: 8px;\r
+      }\r
 \r
-    .row {\r
-      display: grid;\r
-      grid-template-columns: 1fr 1fr;\r
-      gap: 8px;\r
-    }\r
+      .panel {\r
+        margin: 10px 0;\r
+        padding: 10px;\r
+        border: 1px solid #1a2135;\r
+        border-radius: 10px;\r
+        background: #0b101a;\r
+      }\r
 \r
-    .panel {\r
-      margin: 10px 0;\r
-      padding: 10px;\r
-      border: 1px solid #1a2135;\r
-      border-radius: 10px;\r
-      background: #0b101a;\r
-    }\r
+      .dbg .slot {\r
+        margin-bottom: 14px;\r
+      }\r
+      .dbg .slot div {\r
+        margin: 0 0 6px;\r
+        font-weight: 600;\r
+        font-size: 12px;\r
+        color: #b8c7e6;\r
+      }\r
 \r
-    .dbg .slot { margin-bottom: 14px }\r
-    .dbg .slot div {\r
-      margin: 0 0 6px;\r
-      font-weight: 600;\r
-      font-size: 12px;\r
-      color: #b8c7e6;\r
-    }\r
+      .dbg canvas {\r
+        width: 100%;\r
+        height: auto;\r
+        display: block;\r
+        border-radius: 8px;\r
+        background: #000;\r
+        box-shadow: 0 0 0 1px #131b2b inset;\r
+      }\r
 \r
-    .dbg canvas {\r
-      width: 100%;\r
-      height: auto;\r
-      display: block;\r
-      border-radius: 8px;\r
-      background: #000;\r
-      box-shadow: 0 0 0 1px #131b2b inset;\r
-    }\r
+      small {\r
+        color: #7f8cb0;\r
+        font-size: 12px;\r
+      }\r
 \r
-    small { color: #7f8cb0; font-size: 12px }\r
+      #busyOverlay {\r
+        position: fixed;\r
+        left: var(--side);\r
+        top: 0;\r
+        right: 0;\r
+        bottom: 0;\r
+        display: none;\r
+        align-items: center;\r
+        justify-content: center;\r
+        background: rgba(2, 4, 8, 0.55);\r
+        z-index: 9999;\r
+      }\r
 \r
-    #busyOverlay {\r
-      position: fixed;\r
-      left: var(--side);\r
-      top: 0;\r
-      right: 0;\r
-      bottom: 0;\r
-      display: none;\r
-      align-items: center;\r
-      justify-content: center;\r
-      background: rgba(2, 4, 8, 0.55);\r
-      z-index: 9999;\r
-    }\r
+      #busyOverlay .box {\r
+        padding: 12px 16px;\r
+        border-radius: 8px;\r
+        background: #0b1220;\r
+        border: 1px solid #26304a;\r
+        color: var(--fg);\r
+        font-weight: 600;\r
+      }\r
 \r
-    #busyOverlay .box {\r
-      padding: 12px 16px;\r
-      border-radius: 8px;\r
-      background: #0b1220;\r
-      border: 1px solid #26304a;\r
-      color: var(--fg);\r
-      font-weight: 600;\r
-    }\r
+      .inline {\r
+        display: flex;\r
+        gap: 8px;\r
+        align-items: center;\r
+      }\r
 \r
-    .inline {\r
-      display: flex;\r
-      gap: 8px;\r
-      align-items: center;\r
-    }\r
+      .smallLabel {\r
+        font-size: 12px;\r
+        color: var(--fg2);\r
+        margin-right: 8px;\r
+      }\r
 \r
-    .smallLabel {\r
-      font-size: 12px;\r
-      color: var(--fg2);\r
-      margin-right: 8px;\r
-    }\r
+      .triple {\r
+        display: grid;\r
+        grid-template-columns: repeat(3, 1fr);\r
+        gap: 8px;\r
+      }\r
 \r
-    .triple {\r
-      display: grid;\r
-      grid-template-columns: repeat(3, 1fr);\r
-      gap: 8px;\r
-    }\r
+      .compact {\r
+        font-size: 12px;\r
+        padding: 6px;\r
+        border-radius: 6px;\r
+      }\r
 \r
-    .compact {\r
-      font-size: 12px;\r
-      padding: 6px;\r
-      border-radius: 6px;\r
-    }\r
+      .divider {\r
+        margin-top: 12px;\r
+        border-top: 1px dashed #142034;\r
+        padding-top: 10px;\r
+      }\r
 \r
-    .divider {\r
-      margin-top: 12px;\r
-      border-top: 1px dashed #142034;\r
-      padding-top: 10px;\r
-    }\r
+      .hint {\r
+        margin-top: 6px;\r
+        color: #93a6ce;\r
+        display: block;\r
+      }\r
+    </style>\r
+  </head>\r
 \r
-    .hint {\r
-      margin-top: 6px;\r
-      color: #93a6ce;\r
-      display: block;\r
-    }\r
-  </style>\r
-</head>\r
+  <body>\r
+    <aside id="sidebar">\r
+      <h1>Pipeline</h1>\r
 \r
-<body>\r
-\r
-  <aside id="sidebar">\r
-    <h1>Pipeline</h1>\r
-\r
-    <div class="panel">\r
-      <div style="display:flex;gap:8px">\r
-        <label for="pass">Controls:</label>\r
-        <select id="pass" style="flex:1">\r
-          <option value="weather">Weather 2D</option>\r
-          <option value="shape128">Shape128 RGBA</option>\r
-          <option value="detail32">Detail32 RGB</option>\r
-          <option value="blue">Blue Noise 2D</option>\r
-          <option value="clouds">Clouds</option>\r
-          <option value="preview" selected>Preview</option>\r
-        </select>\r
-      </div>\r
-\r
-      <button id="rebake-all">Re-Bake Textures</button>\r
-      <button id="render">Re-Render</button>\r
-\r
-      <div style="margin-top:10px" class="inline">\r
-        <div style="flex:1">\r
-          <label style="margin-bottom:6px">Reproject &amp; Animate</label>\r
-          <button id="reproj-anim-toggle">Start x4 Anim</button>\r
-          <small class="hint">Click to enable coarse x4 reprojection and start/stop the animation loop.</small>\r
-        </div>\r
-        <div style="width:110px">\r
-          <div style="margin-top:6px;font-size:12px;color:var(--fg2)">FPS: <span id="fpsDisplay">-</span></div>\r
-        </div>\r
-      </div>\r
-    </div>\r
-\r
-    <!-- Weather -->\r
-    <div class="panel" id="p-weather">\r
-      <h2>Weather 2D (R and G channels)</h2>\r
-\r
-      <div style="display:flex;gap:8px;margin-bottom:8px">\r
-        <button id="bake-weather">Bake Weather</button>\r
-        <button id="seed-weather">Seed Weather</button>\r
-      </div>\r
-\r
-      <h2 style="margin-top:8px;font-size:13px;color:var(--fg2)">Base (R channel)</h2>\r
-\r
-      <div class="row">\r
-        <div>\r
-          <label>Mode</label>\r
-          <select id="we-mode" class="compact">\r
-            <option value="">Loading...</option>\r
+      <div class="panel">\r
+        <div style="display: flex; gap: 8px">\r
+          <label for="pass">Controls:</label>\r
+          <select id="pass" style="flex: 1">\r
+            <option value="weather">Weather 2D</option>\r
+            <option value="shape128">Shape128 RGBA</option>\r
+            <option value="detail32">Detail32 RGB</option>\r
+            <option value="blue">Blue Noise 2D</option>\r
+            <option value="clouds">Clouds</option>\r
+            <option value="preview" selected>Preview</option>\r
           </select>\r
         </div>\r
-        <div>\r
-          <label>Seed (u32)</label>\r
-          <input id="we-seed" type="number" step="1" class="compact">\r
+\r
+        <button id="rebake-all">Re-Bake Textures</button>\r
+        <button id="render">Re-Render</button>\r
+\r
+        <div style="margin-top: 10px" class="inline">\r
+          <div style="flex: 1">\r
+            <label style="margin-bottom: 6px">Reproject &amp; Animate</label>\r
+            <button id="reproj-anim-toggle">Start x4 Anim</button>\r
+            <small class="hint"\r
+              >Click to enable coarse x4 reprojection and start/stop the\r
+              animation loop.</small\r
+            >\r
+          </div>\r
+          <div style="width: 110px">\r
+            <div style="margin-top: 6px; font-size: 12px; color: var(--fg2)">\r
+              FPS: <span id="fpsDisplay">-</span>\r
+            </div>\r
+          </div>\r
         </div>\r
       </div>\r
 \r
-      <div class="row">\r
-        <div><label>Zoom</label><input id="we-zoom" type="number" step="0.05" class="compact"></div>\r
-        <div><label>Frequency</label><input id="we-freq" type="number" step="0.05" class="compact"></div>\r
-      </div>\r
+      <!-- Weather -->\r
+      <div class="panel" id="p-weather">\r
+        <h2>Weather 2D (R, G, B channels)</h2>\r
 \r
-      <div class="row">\r
-        <div><label>Octaves</label><input id="we-oct" type="number" step="1" class="compact"></div>\r
-        <div><label>Lacunarity</label><input id="we-lac" type="number" step="0.1" class="compact"></div>\r
-      </div>\r
+        <div style="display: flex; gap: 8px; margin-bottom: 8px">\r
+          <button id="bake-weather">Bake Weather</button>\r
+          <button id="seed-weather">Seed Weather</button>\r
+        </div>\r
 \r
-      <div class="row">\r
-        <div><label>Gain</label><input id="we-gain" type="number" step="0.05" class="compact"></div>\r
-        <div><label>Threshold</label><input id="we-thr" type="number" step="0.01" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Seed Angle</label><input id="we-seedAngle" type="number" step="0.01" class="compact"></div>\r
-        <div><label>Time</label><input id="we-time" type="number" step="0.01" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Voro Mode (u32)</label><input id="we-voroMode" type="number" step="1" class="compact"></div>\r
-        <div><label>EdgeK</label><input id="we-edgeK" type="number" step="0.1" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Warp Amp</label><input id="we-warpAmp" type="number" step="0.05" class="compact"></div>\r
-        <div></div>\r
-      </div>\r
-\r
-      <div class="divider">\r
-        <h2 style="margin:6px 0 8px;font-size:13px;color:var(--fg2)">Secondary (G channel)</h2>\r
+        <h2 style="margin-top: 8px; font-size: 13px; color: var(--fg2)">\r
+          Base (R channel)\r
+        </h2>\r
 \r
         <div class="row">\r
-          <div class="inline" style="gap:10px">\r
-            <input id="we-billow-enable" type="checkbox" class="compact" style="width:auto">\r
-            <div class="smallLabel">Enable</div>\r
-          </div>\r
           <div>\r
             <label>Mode</label>\r
-            <select id="we-billow-mode" class="compact">\r
+            <select id="we-mode" class="compact">\r
+              <option value="">Loading...</option>\r
+            </select>\r
+          </div>\r
+          <div>\r
+            <label>Seed (u32)</label>\r
+            <input id="we-seed" type="number" step="1" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Zoom</label\r
+            ><input id="we-zoom" type="number" step="0.05" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Frequency</label\r
+            ><input id="we-freq" type="number" step="0.05" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Octaves</label\r
+            ><input id="we-oct" type="number" step="1" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Lacunarity</label\r
+            ><input id="we-lac" type="number" step="0.1" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Gain</label\r
+            ><input id="we-gain" type="number" step="0.05" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Threshold</label\r
+            ><input id="we-thr" type="number" step="0.01" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Seed Angle</label\r
+            ><input\r
+              id="we-seedAngle"\r
+              type="number"\r
+              step="0.01"\r
+              class="compact"\r
+            />\r
+          </div>\r
+          <div>\r
+            <label>Time</label\r
+            ><input id="we-time" type="number" step="0.01" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Voro Mode (u32)</label\r
+            ><input id="we-voroMode" type="number" step="1" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>EdgeK</label\r
+            ><input id="we-edgeK" type="number" step="0.1" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Warp Amp</label\r
+            ><input id="we-warpAmp" type="number" step="0.05" class="compact" />\r
+          </div>\r
+          <div></div>\r
+        </div>\r
+\r
+        <div class="divider">\r
+          <h2 style="margin: 6px 0 8px; font-size: 13px; color: var(--fg2)">\r
+            Secondary (G channel)\r
+          </h2>\r
+\r
+          <div class="row">\r
+            <div class="inline" style="gap: 10px">\r
+              <input\r
+                id="we-billow-enable"\r
+                type="checkbox"\r
+                class="compact"\r
+                style="width: auto"\r
+              />\r
+              <div class="smallLabel">Enable</div>\r
+            </div>\r
+            <div>\r
+              <label>Mode</label>\r
+              <select id="we-billow-mode" class="compact">\r
+                <option value="">Loading...</option>\r
+              </select>\r
+            </div>\r
+          </div>\r
+\r
+          <div class="row">\r
+            <div>\r
+              <label>Seed (u32)</label\r
+              ><input\r
+                id="we-billow-seed"\r
+                type="number"\r
+                step="1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Scale</label\r
+              ><input\r
+                id="we-billow-scale"\r
+                type="number"\r
+                step="0.01"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <div class="row">\r
+            <div>\r
+              <label>Zoom</label\r
+              ><input\r
+                id="we-billow-zoom"\r
+                type="number"\r
+                step="0.05"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Frequency</label\r
+              ><input\r
+                id="we-billow-freq"\r
+                type="number"\r
+                step="0.05"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <div class="row">\r
+            <div>\r
+              <label>Octaves</label\r
+              ><input\r
+                id="we-billow-oct"\r
+                type="number"\r
+                step="1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Lacunarity</label\r
+              ><input\r
+                id="we-billow-lac"\r
+                type="number"\r
+                step="0.1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <div class="row">\r
+            <div>\r
+              <label>Gain</label\r
+              ><input\r
+                id="we-billow-gain"\r
+                type="number"\r
+                step="0.05"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Threshold</label\r
+              ><input\r
+                id="we-billow-thr"\r
+                type="number"\r
+                step="0.01"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <div class="row">\r
+            <div>\r
+              <label>Seed Angle</label\r
+              ><input\r
+                id="we-billow-seedAngle"\r
+                type="number"\r
+                step="0.01"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Time</label\r
+              ><input\r
+                id="we-billow-time"\r
+                type="number"\r
+                step="0.01"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <div class="row">\r
+            <div>\r
+              <label>Voro Mode (u32)</label\r
+              ><input\r
+                id="we-billow-voroMode"\r
+                type="number"\r
+                step="1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>EdgeK</label\r
+              ><input\r
+                id="we-billow-edgeK"\r
+                type="number"\r
+                step="0.1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <div class="row">\r
+            <div>\r
+              <label>Warp Amp</label\r
+              ><input\r
+                id="we-billow-warpAmp"\r
+                type="number"\r
+                step="0.05"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div></div>\r
+          </div>\r
+\r
+          <small class="hint"\r
+            >Weather modes list is populated from NoiseComputeBuilder entry\r
+            points.</small\r
+          >\r
+        </div>\r
+\r
+        <div class="divider">\r
+          <h2 style="margin: 6px 0 8px; font-size: 13px; color: var(--fg2)">\r
+            Tertiary (B channel)\r
+          </h2>\r
+\r
+          <div class="row">\r
+            <div class="inline" style="gap: 10px">\r
+              <input\r
+                id="we-bandb-enable"\r
+                type="checkbox"\r
+                class="compact"\r
+                style="width: auto"\r
+              />\r
+              <div class="smallLabel">Enable</div>\r
+            </div>\r
+            <div>\r
+              <label>Mode</label>\r
+              <select id="we-bandb-mode" class="compact">\r
+                <option value="">Loading...</option>\r
+              </select>\r
+            </div>\r
+          </div>\r
+\r
+          <div class="row">\r
+            <div>\r
+              <label>Seed (u32)</label\r
+              ><input\r
+                id="we-bandb-seed"\r
+                type="number"\r
+                step="1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Scale</label\r
+              ><input\r
+                id="we-bandb-scale"\r
+                type="number"\r
+                step="0.01"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <div class="row">\r
+            <div>\r
+              <label>Zoom</label\r
+              ><input\r
+                id="we-bandb-zoom"\r
+                type="number"\r
+                step="0.05"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Frequency</label\r
+              ><input\r
+                id="we-bandb-freq"\r
+                type="number"\r
+                step="0.05"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <div class="row">\r
+            <div>\r
+              <label>Octaves</label\r
+              ><input\r
+                id="we-bandb-oct"\r
+                type="number"\r
+                step="1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Lacunarity</label\r
+              ><input\r
+                id="we-bandb-lac"\r
+                type="number"\r
+                step="0.1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <div class="row">\r
+            <div>\r
+              <label>Gain</label\r
+              ><input\r
+                id="we-bandb-gain"\r
+                type="number"\r
+                step="0.05"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Threshold</label\r
+              ><input\r
+                id="we-bandb-thr"\r
+                type="number"\r
+                step="0.01"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <div class="row">\r
+            <div>\r
+              <label>Seed Angle</label\r
+              ><input\r
+                id="we-bandb-seedAngle"\r
+                type="number"\r
+                step="0.01"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Time</label\r
+              ><input\r
+                id="we-bandb-time"\r
+                type="number"\r
+                step="0.01"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <div class="row">\r
+            <div>\r
+              <label>Voro Mode (u32)</label\r
+              ><input\r
+                id="we-bandb-voroMode"\r
+                type="number"\r
+                step="1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>EdgeK</label\r
+              ><input\r
+                id="we-bandb-edgeK"\r
+                type="number"\r
+                step="0.1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <div class="row">\r
+            <div>\r
+              <label>Warp Amp</label\r
+              ><input\r
+                id="we-bandb-warpAmp"\r
+                type="number"\r
+                step="0.05"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div></div>\r
+          </div>\r
+\r
+          <small class="hint"\r
+            >Default is disabled. Toggle Enable to include this channel in the\r
+            weather bake.</small\r
+          >\r
+        </div>\r
+        <div class="divider">\r
+          <h2 style="margin: 6px 0 8px; font-size: 13px; color: var(--fg2)">\r
+            Weather Scale, Pos &amp; Axis Scale (XYZ)\r
+          </h2>\r
+\r
+          <div class="row">\r
+            <div>\r
+              <label>Weather Scale</label\r
+              ><input\r
+                id="we-scale"\r
+                type="number"\r
+                step="0.0005"\r
+                value="1.0"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div></div>\r
+          </div>\r
+\r
+          <div class="triple" style="margin-top: 8px">\r
+            <div>\r
+              <label>Weather Pos X</label\r
+              ><input\r
+                id="we-pos-x"\r
+                type="number"\r
+                step="0.001"\r
+                value="0"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Weather Pos Y</label\r
+              ><input\r
+                id="we-pos-y"\r
+                type="number"\r
+                step="0.001"\r
+                value="0"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Weather Pos Z</label\r
+              ><input\r
+                id="we-pos-z"\r
+                type="number"\r
+                step="0.001"\r
+                value="0"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <div class="triple" style="margin-top: 8px">\r
+            <div>\r
+              <label>Weather Axis X</label\r
+              ><input\r
+                id="we-axis-x"\r
+                type="number"\r
+                step="0.001"\r
+                value="1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Weather Axis Y</label\r
+              ><input\r
+                id="we-axis-y"\r
+                type="number"\r
+                step="0.001"\r
+                value="1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Weather Axis Z</label\r
+              ><input\r
+                id="we-axis-z"\r
+                type="number"\r
+                step="0.001"\r
+                value="1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <small class="hint"\r
+            >Transforms apply immediately without rebaking. Modes and noise\r
+            params rebake.</small\r
+          >\r
+        </div>\r
+      </div>\r
+\r
+      <!-- Blue Noise -->\r
+      <div class="panel" id="p-blue">\r
+        <h2>Blue Noise 2D</h2>\r
+\r
+        <div style="display: flex; gap: 8px; margin-bottom: 8px">\r
+          <button id="bake-blue">Bake Blue Noise</button>\r
+          <button id="seed-blue">Seed Blue</button>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Seed (u32)</label\r
+            ><input id="bn-seed" type="number" step="1" class="compact" />\r
+          </div>\r
+          <div></div>\r
+        </div>\r
+      </div>\r
+\r
+      <!-- Shape128 -->\r
+      <div class="panel" id="p-shape128">\r
+        <h2>Shape128 RGBA</h2>\r
+\r
+        <div style="display: flex; gap: 8px; margin-bottom: 8px">\r
+          <button id="bake-shape128">Bake Shape128</button>\r
+          <button id="seed-shape">Seed Shape</button>\r
+        </div>\r
+\r
+        <h2 style="margin-top: 8px; font-size: 13px; color: var(--fg2)">\r
+          Modes (4D-only)\r
+        </h2>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Base A (R)</label>\r
+            <select id="sh-mode-a" class="compact">\r
+              <option value="">Loading...</option>\r
+            </select>\r
+          </div>\r
+          <div>\r
+            <label>Base B (R, optional)</label>\r
+            <select id="sh-mode-b" class="compact">\r
               <option value="">Loading...</option>\r
             </select>\r
           </div>\r
         </div>\r
 \r
         <div class="row">\r
-          <div><label>Seed (u32)</label><input id="we-billow-seed" type="number" step="1" class="compact"></div>\r
-          <div><label>Scale</label><input id="we-billow-scale" type="number" step="0.01" class="compact"></div>\r
+          <div>\r
+            <label>Channel 2 (G)</label>\r
+            <select id="sh-mode-2" class="compact">\r
+              <option value="">Loading...</option>\r
+            </select>\r
+          </div>\r
+          <div>\r
+            <label>Channel 3 (B)</label>\r
+            <select id="sh-mode-3" class="compact">\r
+              <option value="">Loading...</option>\r
+            </select>\r
+          </div>\r
         </div>\r
 \r
         <div class="row">\r
-          <div><label>Zoom</label><input id="we-billow-zoom" type="number" step="0.05" class="compact"></div>\r
-          <div><label>Frequency</label><input id="we-billow-freq" type="number" step="0.05" class="compact"></div>\r
+          <div>\r
+            <label>Channel 4 (A)</label>\r
+            <select id="sh-mode-4" class="compact">\r
+              <option value="">Loading...</option>\r
+            </select>\r
+          </div>\r
+          <div>\r
+            <label>Seed (u32)</label>\r
+            <input id="sh-seed" type="number" step="1" class="compact" />\r
+          </div>\r
         </div>\r
 \r
         <div class="row">\r
-          <div><label>Octaves</label><input id="we-billow-oct" type="number" step="1" class="compact"></div>\r
-          <div><label>Lacunarity</label><input id="we-billow-lac" type="number" step="0.1" class="compact"></div>\r
+          <div>\r
+            <label>Zoom</label\r
+            ><input id="sh-zoom" type="number" step="0.05" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Frequency</label\r
+            ><input id="sh-freq" type="number" step="0.05" class="compact" />\r
+          </div>\r
         </div>\r
 \r
         <div class="row">\r
-          <div><label>Gain</label><input id="we-billow-gain" type="number" step="0.05" class="compact"></div>\r
-          <div><label>Threshold</label><input id="we-billow-thr" type="number" step="0.01" class="compact"></div>\r
+          <div>\r
+            <label>Octaves</label\r
+            ><input id="sh-oct" type="number" step="1" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Lacunarity</label\r
+            ><input id="sh-lac" type="number" step="0.1" class="compact" />\r
+          </div>\r
         </div>\r
 \r
         <div class="row">\r
-          <div><label>Seed Angle</label><input id="we-billow-seedAngle" type="number" step="0.01" class="compact"></div>\r
-          <div><label>Time</label><input id="we-billow-time" type="number" step="0.01" class="compact"></div>\r
+          <div>\r
+            <label>Gain</label\r
+            ><input id="sh-gain" type="number" step="0.05" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Threshold</label\r
+            ><input id="sh-thr" type="number" step="0.05" class="compact" />\r
+          </div>\r
         </div>\r
 \r
         <div class="row">\r
-          <div><label>Voro Mode (u32)</label><input id="we-billow-voroMode" type="number" step="1" class="compact"></div>\r
-          <div><label>EdgeK</label><input id="we-billow-edgeK" type="number" step="0.1" class="compact"></div>\r
+          <div>\r
+            <label>Seed Angle</label\r
+            ><input\r
+              id="sh-seedAngle"\r
+              type="number"\r
+              step="0.01"\r
+              class="compact"\r
+            />\r
+          </div>\r
+          <div>\r
+            <label>Time</label\r
+            ><input id="sh-time" type="number" step="0.01" class="compact" />\r
+          </div>\r
         </div>\r
 \r
         <div class="row">\r
-          <div><label>Warp Amp</label><input id="we-billow-warpAmp" type="number" step="0.05" class="compact"></div>\r
+          <div>\r
+            <label>Voro Mode (u32)</label\r
+            ><input id="sh-voroMode" type="number" step="1" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>EdgeK</label\r
+            ><input id="sh-edgeK" type="number" step="0.1" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Warp Amp</label\r
+            ><input id="sh-warpAmp" type="number" step="0.05" class="compact" />\r
+          </div>\r
           <div></div>\r
         </div>\r
 \r
-        <small class="hint">Weather modes list is populated from NoiseComputeBuilder entry points.</small>\r
-      </div>\r
-    </div>\r
+        <div class="divider">\r
+          <h2 style="margin: 6px 0 8px; font-size: 13px; color: var(--fg2)">\r
+            Shape Scale, Pos &amp; Vel (XYZ)\r
+          </h2>\r
 \r
-    <!-- Blue Noise -->\r
-    <div class="panel" id="p-blue">\r
-      <h2>Blue Noise 2D</h2>\r
+          <div class="row">\r
+            <div>\r
+              <label>Shape Scale</label\r
+              ><input\r
+                id="sh-scale"\r
+                type="number"\r
+                step="0.0005"\r
+                value="0.1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div></div>\r
+          </div>\r
 \r
-      <div style="display:flex;gap:8px;margin-bottom:8px">\r
-        <button id="bake-blue">Bake Blue Noise</button>\r
-        <button id="seed-blue">Seed Blue</button>\r
-      </div>\r
+          <div class="triple" style="margin-top: 8px">\r
+            <div>\r
+              <label>Shape Pos X</label\r
+              ><input\r
+                id="sh-pos-x"\r
+                type="number"\r
+                step="0.001"\r
+                value="0"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Shape Pos Y</label\r
+              ><input\r
+                id="sh-pos-y"\r
+                type="number"\r
+                step="0.001"\r
+                value="0"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Shape Pos Z</label\r
+              ><input\r
+                id="sh-pos-z"\r
+                type="number"\r
+                step="0.001"\r
+                value="0"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
 \r
-      <div class="row">\r
-        <div><label>Seed (u32)</label><input id="bn-seed" type="number" step="1" class="compact"></div>\r
-        <div></div>\r
-      </div>\r
-    </div>\r
+          <div class="triple" style="margin-top: 8px">\r
+            <div>\r
+              <label>Shape Vel X</label\r
+              ><input\r
+                id="sh-vel-x"\r
+                type="number"\r
+                step="0.0001"\r
+                value="0.2"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Shape Vel Y</label\r
+              ><input\r
+                id="sh-vel-y"\r
+                type="number"\r
+                step="0.0001"\r
+                value="0"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Shape Vel Z</label\r
+              ><input\r
+                id="sh-vel-z"\r
+                type="number"\r
+                step="0.0001"\r
+                value="0"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
 \r
-    <!-- Shape128 -->\r
-    <div class="panel" id="p-shape128">\r
-      <h2>Shape128 RGBA</h2>\r
+          <div class="triple" style="margin-top: 8px">\r
+            <div>\r
+              <label>Shape Axis X</label\r
+              ><input\r
+                id="sh-axis-x"\r
+                type="number"\r
+                step="0.001"\r
+                value="1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Shape Axis Y</label\r
+              ><input\r
+                id="sh-axis-y"\r
+                type="number"\r
+                step="0.001"\r
+                value="1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Shape Axis Z</label\r
+              ><input\r
+                id="sh-axis-z"\r
+                type="number"\r
+                step="0.001"\r
+                value="1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
 \r
-      <div style="display:flex;gap:8px;margin-bottom:8px">\r
-        <button id="bake-shape128">Bake Shape128</button>\r
-        <button id="seed-shape">Seed Shape</button>\r
-      </div>\r
-\r
-      <h2 style="margin-top:8px;font-size:13px;color:var(--fg2)">Modes (4D-only)</h2>\r
-\r
-      <div class="row">\r
-        <div>\r
-          <label>Base A (R)</label>\r
-          <select id="sh-mode-a" class="compact">\r
-            <option value="">Loading...</option>\r
-          </select>\r
+          <small class="hint"\r
+            >Transforms apply immediately without rebaking. Modes and noise\r
+            params rebake.</small\r
+          >\r
         </div>\r
-        <div>\r
-          <label>Base B (R, optional)</label>\r
-          <select id="sh-mode-b" class="compact">\r
-            <option value="">Loading...</option>\r
-          </select>\r
+      </div>\r
+\r
+      <!-- Detail32 -->\r
+      <div class="panel" id="p-detail32">\r
+        <h2>Detail32 RGB</h2>\r
+\r
+        <div style="display: flex; gap: 8px; margin-bottom: 8px">\r
+          <button id="bake-detail32">Bake Detail32</button>\r
+          <button id="seed-detail">Seed Detail</button>\r
         </div>\r
-      </div>\r
 \r
-      <div class="row">\r
-        <div>\r
-          <label>Channel 2 (G)</label>\r
-          <select id="sh-mode-2" class="compact">\r
-            <option value="">Loading...</option>\r
-          </select>\r
-        </div>\r
-        <div>\r
-          <label>Channel 3 (B)</label>\r
-          <select id="sh-mode-3" class="compact">\r
-            <option value="">Loading...</option>\r
-          </select>\r
-        </div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div>\r
-          <label>Channel 4 (A)</label>\r
-          <select id="sh-mode-4" class="compact">\r
-            <option value="">Loading...</option>\r
-          </select>\r
-        </div>\r
-        <div>\r
-          <label>Seed (u32)</label>\r
-          <input id="sh-seed" type="number" step="1" class="compact">\r
-        </div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Zoom</label><input id="sh-zoom" type="number" step="0.05" class="compact"></div>\r
-        <div><label>Frequency</label><input id="sh-freq" type="number" step="0.05" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Octaves</label><input id="sh-oct" type="number" step="1" class="compact"></div>\r
-        <div><label>Lacunarity</label><input id="sh-lac" type="number" step="0.1" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Gain</label><input id="sh-gain" type="number" step="0.05" class="compact"></div>\r
-        <div><label>Threshold</label><input id="sh-thr" type="number" step="0.05" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Seed Angle</label><input id="sh-seedAngle" type="number" step="0.01" class="compact"></div>\r
-        <div><label>Time</label><input id="sh-time" type="number" step="0.01" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Voro Mode (u32)</label><input id="sh-voroMode" type="number" step="1" class="compact"></div>\r
-        <div><label>EdgeK</label><input id="sh-edgeK" type="number" step="0.1" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Warp Amp</label><input id="sh-warpAmp" type="number" step="0.05" class="compact"></div>\r
-        <div></div>\r
-      </div>\r
-\r
-      <div class="divider">\r
-        <h2 style="margin:6px 0 8px;font-size:13px;color:var(--fg2)">Shape Scale, Pos &amp; Vel (XYZ)</h2>\r
+        <h2 style="margin-top: 8px; font-size: 13px; color: var(--fg2)">\r
+          Modes (4D-only)\r
+        </h2>\r
 \r
         <div class="row">\r
-          <div><label>Shape Scale</label><input id="sh-scale" type="number" step="0.0005" value="0.1" class="compact"></div>\r
+          <div>\r
+            <label>Channel 1 (R)</label>\r
+            <select id="de-mode-1" class="compact">\r
+              <option value="">Loading...</option>\r
+            </select>\r
+          </div>\r
+          <div>\r
+            <label>Channel 2 (G)</label>\r
+            <select id="de-mode-2" class="compact">\r
+              <option value="">Loading...</option>\r
+            </select>\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Channel 3 (B)</label>\r
+            <select id="de-mode-3" class="compact">\r
+              <option value="">Loading...</option>\r
+            </select>\r
+          </div>\r
+          <div>\r
+            <label>Seed (u32)</label>\r
+            <input id="de-seed" type="number" step="1" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Zoom</label\r
+            ><input id="de-zoom" type="number" step="0.05" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Frequency</label\r
+            ><input id="de-freq" type="number" step="0.05" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Octaves</label\r
+            ><input id="de-oct" type="number" step="1" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Lacunarity</label\r
+            ><input id="de-lac" type="number" step="0.1" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Gain</label\r
+            ><input id="de-gain" type="number" step="0.05" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Threshold</label\r
+            ><input id="de-thr" type="number" step="0.05" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Seed Angle</label\r
+            ><input\r
+              id="de-seedAngle"\r
+              type="number"\r
+              step="0.01"\r
+              class="compact"\r
+            />\r
+          </div>\r
+          <div>\r
+            <label>Time</label\r
+            ><input id="de-time" type="number" step="0.01" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Voro Mode (u32)</label\r
+            ><input id="de-voroMode" type="number" step="1" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>EdgeK</label\r
+            ><input id="de-edgeK" type="number" step="0.1" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Warp Amp</label\r
+            ><input id="de-warpAmp" type="number" step="0.05" class="compact" />\r
+          </div>\r
           <div></div>\r
         </div>\r
 \r
-        <div class="triple" style="margin-top:8px">\r
-          <div><label>Shape Pos X</label><input id="sh-pos-x" type="number" step="0.001" value="0" class="compact"></div>\r
-          <div><label>Shape Pos Y</label><input id="sh-pos-y" type="number" step="0.001" value="0" class="compact"></div>\r
-          <div><label>Shape Pos Z</label><input id="sh-pos-z" type="number" step="0.001" value="0" class="compact"></div>\r
+        <div class="divider">\r
+          <h2 style="margin: 6px 0 8px; font-size: 13px; color: var(--fg2)">\r
+            Detail Scale, Pos &amp; Vel (XYZ)\r
+          </h2>\r
+\r
+          <div class="row">\r
+            <div>\r
+              <label>Detail Scale</label\r
+              ><input\r
+                id="de-scale"\r
+                type="number"\r
+                step="0.0005"\r
+                value="1.0"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div></div>\r
+          </div>\r
+\r
+          <div class="triple" style="margin-top: 8px">\r
+            <div>\r
+              <label>Detail Pos X</label\r
+              ><input\r
+                id="de-pos-x"\r
+                type="number"\r
+                step="0.001"\r
+                value="0"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Detail Pos Y</label\r
+              ><input\r
+                id="de-pos-y"\r
+                type="number"\r
+                step="0.001"\r
+                value="0"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Detail Pos Z</label\r
+              ><input\r
+                id="de-pos-z"\r
+                type="number"\r
+                step="0.001"\r
+                value="0"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <div class="triple" style="margin-top: 8px">\r
+            <div>\r
+              <label>Detail Vel X</label\r
+              ><input\r
+                id="de-vel-x"\r
+                type="number"\r
+                step="0.0001"\r
+                value="0.02"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Detail Vel Y</label\r
+              ><input\r
+                id="de-vel-y"\r
+                type="number"\r
+                step="0.0001"\r
+                value="0"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Detail Vel Z</label\r
+              ><input\r
+                id="de-vel-z"\r
+                type="number"\r
+                step="0.0001"\r
+                value="0"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <div class="triple" style="margin-top: 8px">\r
+            <div>\r
+              <label>Detail Axis X</label\r
+              ><input\r
+                id="de-axis-x"\r
+                type="number"\r
+                step="0.001"\r
+                value="1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Detail Axis Y</label\r
+              ><input\r
+                id="de-axis-y"\r
+                type="number"\r
+                step="0.001"\r
+                value="1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+            <div>\r
+              <label>Detail Axis Z</label\r
+              ><input\r
+                id="de-axis-z"\r
+                type="number"\r
+                step="0.001"\r
+                value="1"\r
+                class="compact"\r
+              />\r
+            </div>\r
+          </div>\r
+\r
+          <small class="hint"\r
+            >Transforms apply immediately without rebaking. Modes and noise\r
+            params rebake.</small\r
+          >\r
         </div>\r
-\r
-        <div class="triple" style="margin-top:8px">\r
-          <div><label>Shape Vel X</label><input id="sh-vel-x" type="number" step="0.0001" value="0.2" class="compact"></div>\r
-          <div><label>Shape Vel Y</label><input id="sh-vel-y" type="number" step="0.0001" value="0" class="compact"></div>\r
-          <div><label>Shape Vel Z</label><input id="sh-vel-z" type="number" step="0.0001" value="0" class="compact"></div>\r
-        </div>\r
-\r
-        <small class="hint">Transforms apply immediately without rebaking. Modes and noise params rebake.</small>\r
-      </div>\r
-    </div>\r
-\r
-    <!-- Detail32 -->\r
-    <div class="panel" id="p-detail32">\r
-      <h2>Detail32 RGB</h2>\r
-\r
-      <div style="display:flex;gap:8px;margin-bottom:8px">\r
-        <button id="bake-detail32">Bake Detail32</button>\r
-        <button id="seed-detail">Seed Detail</button>\r
       </div>\r
 \r
-      <h2 style="margin-top:8px;font-size:13px;color:var(--fg2)">Modes (4D-only)</h2>\r
-\r
-      <div class="row">\r
-        <div>\r
-          <label>Channel 1 (R)</label>\r
-          <select id="de-mode-1" class="compact">\r
-            <option value="">Loading...</option>\r
-          </select>\r
-        </div>\r
-        <div>\r
-          <label>Channel 2 (G)</label>\r
-          <select id="de-mode-2" class="compact">\r
-            <option value="">Loading...</option>\r
-          </select>\r
-        </div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div>\r
-          <label>Channel 3 (B)</label>\r
-          <select id="de-mode-3" class="compact">\r
-            <option value="">Loading...</option>\r
-          </select>\r
-        </div>\r
-        <div>\r
-          <label>Seed (u32)</label>\r
-          <input id="de-seed" type="number" step="1" class="compact">\r
-        </div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Zoom</label><input id="de-zoom" type="number" step="0.05" class="compact"></div>\r
-        <div><label>Frequency</label><input id="de-freq" type="number" step="0.05" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Octaves</label><input id="de-oct" type="number" step="1" class="compact"></div>\r
-        <div><label>Lacunarity</label><input id="de-lac" type="number" step="0.1" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Gain</label><input id="de-gain" type="number" step="0.05" class="compact"></div>\r
-        <div><label>Threshold</label><input id="de-thr" type="number" step="0.05" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Seed Angle</label><input id="de-seedAngle" type="number" step="0.01" class="compact"></div>\r
-        <div><label>Time</label><input id="de-time" type="number" step="0.01" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Voro Mode (u32)</label><input id="de-voroMode" type="number" step="1" class="compact"></div>\r
-        <div><label>EdgeK</label><input id="de-edgeK" type="number" step="0.1" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Warp Amp</label><input id="de-warpAmp" type="number" step="0.05" class="compact"></div>\r
-        <div></div>\r
-      </div>\r
-\r
-      <div class="divider">\r
-        <h2 style="margin:6px 0 8px;font-size:13px;color:var(--fg2)">Detail Scale, Pos &amp; Vel (XYZ)</h2>\r
+      <!-- Cloud Params + Tuning -->\r
+      <div class="panel" id="p-cloudParams">\r
+        <h2>Cloud Params</h2>\r
 \r
         <div class="row">\r
-          <div><label>Detail Scale</label><input id="de-scale" type="number" step="0.0005" value="1.0" class="compact"></div>\r
+          <div>\r
+            <label>Sun Az (deg)</label\r
+            ><input id="c-az" type="number" step="1" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Sun El (deg)</label\r
+            ><input id="c-el" type="number" step="1" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Sun Bloom</label\r
+            ><input id="c-bloom" type="number" step="0.05" class="compact" />\r
+          </div>\r
           <div></div>\r
         </div>\r
 \r
-        <div class="triple" style="margin-top:8px">\r
-          <div><label>Detail Pos X</label><input id="de-pos-x" type="number" step="0.001" value="0" class="compact"></div>\r
-          <div><label>Detail Pos Y</label><input id="de-pos-y" type="number" step="0.001" value="0" class="compact"></div>\r
-          <div><label>Detail Pos Z</label><input id="de-pos-z" type="number" step="0.001" value="0" class="compact"></div>\r
+        <div class="row">\r
+          <div>\r
+            <label>Coverage</label\r
+            ><input id="p-coverage" type="number" step="0.02" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Density</label\r
+            ><input id="p-density" type="number" step="0.05" class="compact" />\r
+          </div>\r
         </div>\r
 \r
-        <div class="triple" style="margin-top:8px">\r
-          <div><label>Detail Vel X</label><input id="de-vel-x" type="number" step="0.0001" value="0.02" class="compact"></div>\r
-          <div><label>Detail Vel Y</label><input id="de-vel-y" type="number" step="0.0001" value="0" class="compact"></div>\r
-          <div><label>Detail Vel Z</label><input id="de-vel-z" type="number" step="0.0001" value="0" class="compact"></div>\r
+        <div class="row">\r
+          <div>\r
+            <label>Beer \u03C3</label\r
+            ><input id="p-beer" type="number" step="0.05" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Clamp</label\r
+            ><input id="p-clamp" type="number" step="0.01" class="compact" />\r
+          </div>\r
         </div>\r
 \r
-        <small class="hint">Transforms apply immediately without rebaking. Modes and noise params rebake.</small>\r
+        <div class="row">\r
+          <div>\r
+            <label>In g</label\r
+            ><input id="p-ins" type="number" step="0.01" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Out g</label\r
+            ><input id="p-outs" type="number" step="0.01" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>In\u2194Out</label\r
+            ><input id="p-ivo" type="number" step="0.01" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Silver I</label\r
+            ><input id="p-sI" type="number" step="0.05" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Silver Exp</label\r
+            ><input id="p-sE" type="number" step="1" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Amb Out</label\r
+            ><input id="p-ambOut" type="number" step="0.05" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Amb Min</label\r
+            ><input id="p-ambMin" type="number" step="0.02" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Anvil</label\r
+            ><input id="p-anvil" type="number" step="0.02" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <h2 style="margin-top: 12px; font-size: 13px; color: var(--fg2)">\r
+          Tuning\r
+        </h2>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Max Steps</label\r
+            ><input id="t-maxSteps" type="number" step="1" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Min Step</label\r
+            ><input id="t-minStep" type="number" step="0.001" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Max Step</label\r
+            ><input id="t-maxStep" type="number" step="0.01" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Sun Steps</label\r
+            ><input id="t-sunSteps" type="number" step="1" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Phase Jitter</label\r
+            ><input\r
+              id="t-phaseJitter"\r
+              type="number"\r
+              step="0.01"\r
+              class="compact"\r
+            />\r
+          </div>\r
+          <div>\r
+            <label>Step Jitter</label\r
+            ><input\r
+              id="t-stepJitter"\r
+              type="number"\r
+              step="0.01"\r
+              class="compact"\r
+            />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Base Jitter Frac</label\r
+            ><input\r
+              id="t-baseJitter"\r
+              type="number"\r
+              step="0.01"\r
+              class="compact"\r
+            />\r
+          </div>\r
+          <div>\r
+            <label>Top Jitter Frac</label\r
+            ><input\r
+              id="t-topJitter"\r
+              type="number"\r
+              step="0.01"\r
+              class="compact"\r
+            />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>LOD Bias Weather</label\r
+            ><input\r
+              id="t-lodBiasWeather"\r
+              type="number"\r
+              step="0.1"\r
+              class="compact"\r
+            />\r
+          </div>\r
+          <div>\r
+            <label>Near Fluff Dist</label\r
+            ><input\r
+              id="t-nearFluffDist"\r
+              type="number"\r
+              step="1"\r
+              class="compact"\r
+            />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Near Density Mult</label\r
+            ><input\r
+              id="t-nearDensityMult"\r
+              type="number"\r
+              step="0.1"\r
+              class="compact"\r
+            />\r
+          </div>\r
+          <div>\r
+            <label>Far Start</label\r
+            ><input id="t-farStart" type="number" step="10" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Far Full</label\r
+            ><input id="t-farFull" type="number" step="10" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Ray Smooth Dens</label\r
+            ><input\r
+              id="t-raySmoothDens"\r
+              type="number"\r
+              step="0.01"\r
+              class="compact"\r
+            />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Ray Smooth Sun</label\r
+            ><input\r
+              id="t-raySmoothSun"\r
+              type="number"\r
+              step="0.01"\r
+              class="compact"\r
+            />\r
+          </div>\r
+          <div></div>\r
+        </div>\r
       </div>\r
+\r
+      <!-- Preview -->\r
+      <div class="panel" id="p-preview">\r
+        <h2>Preview (World camera)</h2>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Cam X</label\r
+            ><input id="v-cx" type="number" step="0.05" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Cam Y</label\r
+            ><input id="v-cy" type="number" step="0.05" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Cam Z</label\r
+            ><input id="v-cz" type="number" step="0.05" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>FOV Y (deg)</label\r
+            ><input id="v-fov" type="number" step="1" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Yaw (deg)</label\r
+            ><input id="v-yaw" type="number" step="1" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Pitch (deg)</label\r
+            ><input id="v-pitch" type="number" step="1" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Exposure</label\r
+            ><input id="v-exposure" type="number" step="0.05" class="compact" />\r
+          </div>\r
+          <div></div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Sky R</label\r
+            ><input id="v-sr" type="number" step="0.01" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Sky G</label\r
+            ><input id="v-sg" type="number" step="0.01" class="compact" />\r
+          </div>\r
+        </div>\r
+\r
+        <div class="row">\r
+          <div>\r
+            <label>Sky B</label\r
+            ><input id="v-sb" type="number" step="0.01" class="compact" />\r
+          </div>\r
+          <div>\r
+            <label>Sun Bloom</label\r
+            ><input\r
+              id="v-sbloom"\r
+              type="number"\r
+              step="0.05"\r
+              class="compact"\r
+              disabled\r
+            />\r
+          </div>\r
+        </div>\r
+      </div>\r
+\r
+      <!-- Slice -->\r
+      <div class="panel">\r
+        <h2>Slice</h2>\r
+        <input id="slice" type="range" min="0" max="127" value="0" />\r
+        <small>Slice: <span id="sliceLabel">0</span> / 127</small>\r
+      </div>\r
+\r
+      <!-- Debug canvases -->\r
+      <div class="panel dbg" id="dbgWrap">\r
+        <div class="slot">\r
+          <div>Weather 2D (R)</div>\r
+          <canvas id="dbg-weather"></canvas>\r
+        </div>\r
+        <div class="slot">\r
+          <div>Weather 2D (G)</div>\r
+          <canvas id="dbg-weather-g"></canvas>\r
+        </div>\r
+        <div class="slot">\r
+          <div>Weather 2D (B)</div>\r
+          <canvas id="dbg-weather-b"></canvas>\r
+        </div>\r
+        <div class="slot">\r
+          <div>Shape128 - R channel</div>\r
+          <canvas id="dbg-r"></canvas>\r
+        </div>\r
+        <div class="slot">\r
+          <div>Detail32 - R channel</div>\r
+          <canvas id="dbg-g"></canvas>\r
+        </div>\r
+        <div class="slot">\r
+          <div>Blue Noise 2D</div>\r
+          <canvas id="dbg-blue"></canvas>\r
+        </div>\r
+      </div>\r
+    </aside>\r
+\r
+    <canvas id="gpuCanvas"></canvas>\r
+\r
+    <div id="busyOverlay">\r
+      <div class="box" id="busyMsg">Working...</div>\r
     </div>\r
-\r
-    <!-- Cloud Params + Tuning -->\r
-    <div class="panel" id="p-cloudParams">\r
-      <h2>Cloud Params</h2>\r
-\r
-      <div class="row">\r
-        <div><label>Sun Az (deg)</label><input id="c-az" type="number" step="1" class="compact"></div>\r
-        <div><label>Sun El (deg)</label><input id="c-el" type="number" step="1" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Sun Bloom</label><input id="c-bloom" type="number" step="0.05" class="compact"></div>\r
-        <div></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Coverage</label><input id="p-coverage" type="number" step="0.02" class="compact"></div>\r
-        <div><label>Density</label><input id="p-density" type="number" step="0.05" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Beer \u03C3</label><input id="p-beer" type="number" step="0.05" class="compact"></div>\r
-        <div><label>Clamp</label><input id="p-clamp" type="number" step="0.01" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>In g</label><input id="p-ins" type="number" step="0.01" class="compact"></div>\r
-        <div><label>Out g</label><input id="p-outs" type="number" step="0.01" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>In\u2194Out</label><input id="p-ivo" type="number" step="0.01" class="compact"></div>\r
-        <div><label>Silver I</label><input id="p-sI" type="number" step="0.05" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Silver Exp</label><input id="p-sE" type="number" step="1" class="compact"></div>\r
-        <div><label>Amb Out</label><input id="p-ambOut" type="number" step="0.05" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Amb Min</label><input id="p-ambMin" type="number" step="0.02" class="compact"></div>\r
-        <div><label>Anvil</label><input id="p-anvil" type="number" step="0.02" class="compact"></div>\r
-      </div>\r
-\r
-      <h2 style="margin-top:12px;font-size:13px;color:var(--fg2)">Tuning</h2>\r
-\r
-      <div class="row">\r
-        <div><label>Max Steps</label><input id="t-maxSteps" type="number" step="1" class="compact"></div>\r
-        <div><label>Min Step</label><input id="t-minStep" type="number" step="0.001" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Max Step</label><input id="t-maxStep" type="number" step="0.01" class="compact"></div>\r
-        <div><label>Sun Steps</label><input id="t-sunSteps" type="number" step="1" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Phase Jitter</label><input id="t-phaseJitter" type="number" step="0.01" class="compact"></div>\r
-        <div><label>Step Jitter</label><input id="t-stepJitter" type="number" step="0.01" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Base Jitter Frac</label><input id="t-baseJitter" type="number" step="0.01" class="compact"></div>\r
-        <div><label>Top Jitter Frac</label><input id="t-topJitter" type="number" step="0.01" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>LOD Bias Weather</label><input id="t-lodBiasWeather" type="number" step="0.1" class="compact"></div>\r
-        <div><label>Near Fluff Dist</label><input id="t-nearFluffDist" type="number" step="1" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Near Density Mult</label><input id="t-nearDensityMult" type="number" step="0.1" class="compact"></div>\r
-        <div><label>Far Start</label><input id="t-farStart" type="number" step="10" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Far Full</label><input id="t-farFull" type="number" step="10" class="compact"></div>\r
-        <div><label>Ray Smooth Dens</label><input id="t-raySmoothDens" type="number" step="0.01" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Ray Smooth Sun</label><input id="t-raySmoothSun" type="number" step="0.01" class="compact"></div>\r
-        <div></div>\r
-      </div>\r
-    </div>\r
-\r
-    <!-- Preview -->\r
-    <div class="panel" id="p-preview">\r
-      <h2>Preview (World camera)</h2>\r
-\r
-      <div class="row">\r
-        <div><label>Cam X</label><input id="v-cx" type="number" step="0.05" class="compact"></div>\r
-        <div><label>Cam Y</label><input id="v-cy" type="number" step="0.05" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Cam Z</label><input id="v-cz" type="number" step="0.05" class="compact"></div>\r
-        <div><label>FOV Y (deg)</label><input id="v-fov" type="number" step="1" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Yaw (deg)</label><input id="v-yaw" type="number" step="1" class="compact"></div>\r
-        <div><label>Pitch (deg)</label><input id="v-pitch" type="number" step="1" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Exposure</label><input id="v-exposure" type="number" step="0.05" class="compact"></div>\r
-        <div></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Sky R</label><input id="v-sr" type="number" step="0.01" class="compact"></div>\r
-        <div><label>Sky G</label><input id="v-sg" type="number" step="0.01" class="compact"></div>\r
-      </div>\r
-\r
-      <div class="row">\r
-        <div><label>Sky B</label><input id="v-sb" type="number" step="0.01" class="compact"></div>\r
-        <div><label>Sun Bloom</label><input id="v-sbloom" type="number" step="0.05" class="compact" disabled></div>\r
-      </div>\r
-    </div>\r
-\r
-    <!-- Slice -->\r
-    <div class="panel">\r
-      <h2>Slice</h2>\r
-      <input id="slice" type="range" min="0" max="127" value="0">\r
-      <small>Slice: <span id="sliceLabel">0</span> / 127</small>\r
-    </div>\r
-\r
-    <!-- Debug canvases -->\r
-    <div class="panel dbg" id="dbgWrap">\r
-      <div class="slot">\r
-        <div>Weather 2D (R)</div><canvas id="dbg-weather"></canvas>\r
-      </div>\r
-      <div class="slot">\r
-        <div>Weather 2D (G)</div><canvas id="dbg-weather-g"></canvas>\r
-      </div>\r
-      <div class="slot">\r
-        <div>Shape128 - R channel</div><canvas id="dbg-r"></canvas>\r
-      </div>\r
-      <div class="slot">\r
-        <div>Detail32 - R channel</div><canvas id="dbg-g"></canvas>\r
-      </div>\r
-      <div class="slot">\r
-        <div>Blue Noise 2D</div><canvas id="dbg-blue"></canvas>\r
-      </div>\r
-    </div>\r
-\r
-  </aside>\r
-\r
-  <canvas id="gpuCanvas"></canvas>\r
-\r
-  <div id="busyOverlay">\r
-    <div class="box" id="busyMsg">Working...</div>\r
-  </div>\r
-\r
-</body>\r
-\r
+  </body>\r
 </html>\r
-`;var H={},U;if(typeof process<"u")try{typeof H<"u"&&(globalThis.__filename=fileURLToPath(H.url),globalThis.__dirname=fileURLToPath(new URL(".",H.url))),U=ve("path").join(process.cwd(),__dirname,"dist","cloudTest.worker.js")}catch{}else{let t=globalThis.location.href.split("/");t.pop(),t=t.join("/"),U=t+"/dist/cloudTest.worker.js"}var te=U;var X,be=128,he=32,we=512,fe=512,ge=256,ye=256,xe=224,Se=()=>Math.max(1,Math.floor(window.devicePixelRatio||1)),Q=[],v={cam:{x:-1,y:0,z:-1,yawDeg:35,pitchDeg:1,fovYDeg:60},exposure:1.35,sky:[.55,.7,.95],layer:0,sun:{azDeg:45,elDeg:22,bloom:0}},r={mode:"computeFBM",seed:123456789e3,zoom:2,freq:1,octaves:5,lacunarity:2,seedAngle:Math.PI/2,gain:.5,threshold:0,time:0,voroMode:0,edgeK:0,warpAmp:0},n={enabled:!0,mode:"computeBillow",seed:123456789e3,scale:1,zoom:2,freq:1.5,octaves:4,lacunarity:2,seedAngle:Math.PI/2,gain:.5,threshold:0,time:0,voroMode:0,edgeK:0,warpAmp:0},i={seed:Date.now()>>>0,zoom:4,freq:1,octaves:2,lacunarity:2,seedAngle:Math.PI/2,gain:.5,threshold:0,time:0,voroMode:7,edgeK:0,warpAmp:0,baseModeA:"computePerlin4D",baseModeB:"computeAntiWorley4D",bandMode2:"computeWorley4D",bandMode3:"computeWorley4D",bandMode4:"computeWorley4D"},d={seed:Date.now()>>>0,zoom:4,freq:1,octaves:4,lacunarity:2,seedAngle:Math.PI/2,gain:.5,threshold:0,time:0,voroMode:7,edgeK:0,warpAmp:0,mode1:"computeAntiWorley4D",mode2:"computeAntiWorley4D",mode3:"computeAntiWorley4D"},T={seed:(Date.now()&4294967295)>>>0},o={shapeOffset:[0,0,0],detailOffset:[0,0,0],shapeScale:.1,detailScale:1,shapeVel:[.2,0,0],detailVel:[-.02,0,0]},y=!1,N=1/4,O=!1,c=e=>document.getElementById(e),l=(e,t)=>{let s=c(e);if(!s)return t;let p=+s.value;return Number.isFinite(p)?p:t},E=(e,t)=>{let s=l(e,t);return(Number.isFinite(s)?Math.max(0,Math.floor(s)):t)>>>0},a=e=>{try{return JSON.parse(JSON.stringify(e))}catch{return Object.assign({},e)}};function j(...e){try{console.log("[UI]",...e)}catch{}}var Me=1,V=new Map;function h(e,t={},s=[]){return new Promise((p,m)=>{let b=Me++;V.set(b,{resolve:p,reject:m});try{X.postMessage({id:b,type:e,payload:t},s)}catch(u){V.delete(b),m(u)}})}async function $(e){return h("setTileTransforms",{tileTransforms:a(e)})}function Ae(e){return typeof e=="string"&&/4D/.test(e)}function ie(e){return typeof e!="string"||!e||e==="clearTexture"||e==="computeGauss5x5"||e==="computeNormal"||e==="computeNormal8"||e==="computeSphereNormal"||e==="computeNormalVolume"}function Pe(e){let t=String(e||"");return t?t.startsWith("compute")&&t.slice(7)||t:"Unknown"}function ke(){return Q.filter(e=>!ie(e))}function De(){return Q.filter(e=>!ie(e)&&Ae(e))}function A(e,t,s,p={}){let m=c(e);if(!m)return;let b=!!p.allowNone;if(m.innerHTML="",b){let w=document.createElement("option");w.value="",w.textContent="None",m.appendChild(w)}let u=Array.isArray(t)?t:[];for(let w of u){let M=document.createElement("option");M.value=w,M.textContent=Pe(w),m.appendChild(M)}let g=u.includes(s);m.value=g?s:b?"":u[0]||""}function P(e,t){let s=c(e);return s&&String(s.value||"")||t}var R=null;function oe(e,t){if(!t)return!0;let s=Object.keys(e),p=Object.keys(t);if(s.length!==p.length)return!0;for(let m of s)if(e[m]!==t[m])return!0;return!1}function de(e){return Object.assign({},e)}function ne(){return{maxSteps:+(c("t-maxSteps")?.value||256)|0,minStep:+(c("t-minStep")?.value||.003),maxStep:+(c("t-maxStep")?.value||.1),sunSteps:+(c("t-sunSteps")?.value||4)|0,phaseJitter:+(c("t-phaseJitter")?.value||1),stepJitter:+(c("t-stepJitter")?.value||.08),baseJitterFrac:+(c("t-baseJitter")?.value||.15),topJitterFrac:+(c("t-topJitter")?.value||.1),lodBiasWeather:+(c("t-lodBiasWeather")?.value||1.5),nearFluffDist:+(c("t-nearFluffDist")?.value||60),nearDensityMult:+(c("t-nearDensityMult")?.value||2.5),farStart:+(c("t-farStart")?.value||800),farFull:+(c("t-farFull")?.value||2500),raySmoothDens:+(c("t-raySmoothDens")?.value||.5),raySmoothSun:+(c("t-raySmoothSun")?.value||.5)}}async function re(e){return h("setTuning",{tuning:e})}function le(){try{let e=ne();if(!oe(e,R))return;re(e).then(t=>{R=de(e),t&&t.tuning&&j("worker ack tuning",t.tuning)}).catch(t=>{console.warn("sendTuningIfChanged: setTuningRPC failed",t)})}catch(e){console.warn("sendTuningIfChanged error",e)}}async function k(e=!1){let t=ne();if(!e&&!oe(t,R))return R;let s=await re(t);return R=de(t),s&&s.tuning&&j("worker ack tuning (now)",s.tuning),R}function D(){let e=l("c-az",v.sun.azDeg),t=l("c-el",v.sun.elDeg),s=l("c-bloom",v.sun.bloom);return v.sun.azDeg=e,v.sun.elDeg=t,v.sun.bloom=s,{globalCoverage:l("p-coverage",1),globalDensity:l("p-density",100),cloudAnvilAmount:l("p-anvil",.1),cloudBeer:l("p-beer",6),attenuationClamp:l("p-clamp",.15),inScatterG:l("p-ins",.7),silverIntensity:l("p-sI",.25),silverExponent:l("p-sE",16),outScatterG:l("p-outs",.2),inVsOut:l("p-ivo",.3),outScatterAmbientAmt:l("p-ambOut",1),ambientMinimum:l("p-ambMin",.25),sunColor:[1,.8,.5],sunAzDeg:e,sunElDeg:t,sunBloom:s}}function K(){r.mode=P("we-mode",r.mode),r.seed=E("we-seed",r.seed),r.zoom=l("we-zoom",r.zoom),r.freq=l("we-freq",r.freq),r.octaves=Math.max(1,l("we-oct",r.octaves)|0),r.lacunarity=l("we-lac",r.lacunarity),r.gain=l("we-gain",r.gain),r.threshold=l("we-thr",r.threshold),r.seedAngle=l("we-seedAngle",r.seedAngle),r.time=l("we-time",r.time),r.voroMode=E("we-voroMode",r.voroMode),r.edgeK=l("we-edgeK",r.edgeK),r.warpAmp=l("we-warpAmp",r.warpAmp)}function I(){n.enabled=!!c("we-billow-enable")?.checked,n.mode=P("we-billow-mode",n.mode),n.seed=E("we-billow-seed",n.seed),n.scale=l("we-billow-scale",n.scale),n.zoom=l("we-billow-zoom",n.zoom),n.freq=l("we-billow-freq",n.freq),n.octaves=Math.max(1,l("we-billow-oct",n.octaves)|0),n.lacunarity=l("we-billow-lac",n.lacunarity),n.gain=l("we-billow-gain",n.gain),n.threshold=l("we-billow-thr",n.threshold),n.seedAngle=l("we-billow-seedAngle",n.seedAngle),n.time=l("we-billow-time",n.time),n.voroMode=E("we-billow-voroMode",n.voroMode),n.edgeK=l("we-billow-edgeK",n.edgeK),n.warpAmp=l("we-billow-warpAmp",n.warpAmp)}function J(){T.seed=E("bn-seed",T.seed)}function G(){i.baseModeA=P("sh-mode-a",i.baseModeA),i.baseModeB=P("sh-mode-b",i.baseModeB),i.bandMode2=P("sh-mode-2",i.bandMode2),i.bandMode3=P("sh-mode-3",i.bandMode3),i.bandMode4=P("sh-mode-4",i.bandMode4),i.seed=E("sh-seed",i.seed),i.zoom=l("sh-zoom",i.zoom),i.freq=l("sh-freq",i.freq),i.octaves=Math.max(1,l("sh-oct",i.octaves)|0),i.lacunarity=l("sh-lac",i.lacunarity),i.gain=l("sh-gain",i.gain),i.threshold=l("sh-thr",i.threshold),i.seedAngle=l("sh-seedAngle",i.seedAngle),i.time=l("sh-time",i.time),i.voroMode=E("sh-voroMode",i.voroMode),i.edgeK=l("sh-edgeK",i.edgeK),i.warpAmp=l("sh-warpAmp",i.warpAmp)}function W(){o.shapeScale=l("sh-scale",o.shapeScale),o.shapeOffset[0]=l("sh-pos-x",o.shapeOffset[0]),o.shapeOffset[1]=l("sh-pos-y",o.shapeOffset[1]),o.shapeOffset[2]=l("sh-pos-z",o.shapeOffset[2]),o.shapeVel=o.shapeVel||[0,0,0],o.shapeVel[0]=l("sh-vel-x",o.shapeVel[0]),o.shapeVel[1]=l("sh-vel-y",o.shapeVel[1]),o.shapeVel[2]=l("sh-vel-z",o.shapeVel[2])}function _(){d.mode1=P("de-mode-1",d.mode1),d.mode2=P("de-mode-2",d.mode2),d.mode3=P("de-mode-3",d.mode3),d.seed=E("de-seed",d.seed),d.zoom=l("de-zoom",d.zoom),d.freq=l("de-freq",d.freq),d.octaves=Math.max(1,l("de-oct",d.octaves)|0),d.lacunarity=l("de-lac",d.lacunarity),d.gain=l("de-gain",d.gain),d.threshold=l("de-thr",d.threshold),d.seedAngle=l("de-seedAngle",d.seedAngle),d.time=l("de-time",d.time),d.voroMode=E("de-voroMode",d.voroMode),d.edgeK=l("de-edgeK",d.edgeK),d.warpAmp=l("de-warpAmp",d.warpAmp)}function q(){o.detailScale=l("de-scale",o.detailScale),o.detailOffset[0]=l("de-pos-x",o.detailOffset[0]),o.detailOffset[1]=l("de-pos-y",o.detailOffset[1]),o.detailOffset[2]=l("de-pos-z",o.detailOffset[2]),o.detailVel=o.detailVel||[0,0,0],o.detailVel[0]=l("de-vel-x",o.detailVel[0]),o.detailVel[1]=l("de-vel-y",o.detailVel[1]),o.detailVel[2]=l("de-vel-z",o.detailVel[2])}function F(){v.cam.x=l("v-cx",v.cam.x),v.cam.y=l("v-cy",v.cam.y),v.cam.z=l("v-cz",v.cam.z),v.cam.yawDeg=l("v-yaw",v.cam.yawDeg),v.cam.pitchDeg=l("v-pitch",v.cam.pitchDeg),v.cam.fovYDeg=l("v-fov",v.cam.fovYDeg),v.exposure=l("v-exposure",v.exposure),v.sky[0]=l("v-sr",v.sky[0]),v.sky[1]=l("v-sg",v.sky[1]),v.sky[2]=l("v-sb",v.sky[2])}function ze(e){return!e||e<=0?1:Math.max(1,Math.round(1/Math.sqrt(e)))}function S(){let e=!!y,t=N;return{enabled:e,scale:t,coarseFactor:ze(t)}}function z(e){if(!e)return e;if(e.reproj&&typeof e.reproj.coarseFactor=="number")e.coarseFactor=e.reproj.coarseFactor;else if(y){let t=S();e.reproj=e.reproj||t,e.coarseFactor=t.coarseFactor}else e.coarseFactor=e.coarseFactor||4;return e}function L(e,t){for(let s of e){let p=c(s);p&&(p.addEventListener("input",t),p.addEventListener("change",t))}}function Te(){let e=Array.from(document.querySelectorAll('input[id^="t-"], select[id^="t-"], textarea[id^="t-"]'));e.length&&e.forEach(t=>{t.addEventListener("input",()=>{le()}),t.addEventListener("change",()=>{le()})})}async function x(e,t={},s={}){f(!0,"Baking...");try{await h(e,a(t)),await k(),F();let p=D(),m=Object.assign({weatherParams:a(r),billowParams:a(n),shapeParams:a(i),detailParams:a(d),tileTransforms:a(o),preview:a(v),cloudParams:p},s||{});y&&(m.reproj=S()),z(m),await h("runFrame",m)}finally{f(!1)}}function f(e,t="Working..."){let s=c("busyOverlay"),p=c("busyMsg");s&&(p&&(p.textContent=t),s.style.display=e?"flex":"none",["bake-weather","bake-blue","bake-shape128","bake-detail32","rebake-all","render"].forEach(m=>{let b=c(m);b&&(b.disabled=e)}))}function Y(e,t){let s=Math.floor(Math.random()*1e4)>>>0,m=((Date.now()*Math.floor(Math.random()*1e4)^s)>>>0||1)>>>0;e.seed=m;let b=c(t);return b&&(b.value=String(m)),e.seed}function Ee(){return(+c("slice")?.value|0)>>>0}function ce(){let e=c("sliceLabel");e&&(e.textContent=String(Ee()))}function se(e){let t=(s,p)=>{let m=c(s);m&&(m.style.display=p?"":"none")};t("p-weather",e==="weather"),t("p-shape128",e==="shape128"),t("p-detail32",e==="detail32"),t("p-blue",e==="blue"),t("p-cloudParams",e==="clouds"),t("p-preview",e==="preview")}function pe(){let e=Se(),t=c("gpuCanvas"),s=Math.max(1,Math.round(t.clientWidth)),p=Math.max(1,Math.round(t.clientHeight)),m=Math.max(1,Math.floor(s*e)),b=Math.max(1,Math.floor(p*e)),u=Math.round(xe*e);h("resize",{main:{width:m,height:b},dbg:{width:u,height:u}}).catch(g=>console.warn("resize rpc failed",g))}function Ce(){let e=ke(),t=De();A("we-mode",e,r.mode,{allowNone:!1}),A("we-billow-mode",e,n.mode,{allowNone:!1}),A("sh-mode-a",t,i.baseModeA,{allowNone:!1}),A("sh-mode-b",t,i.baseModeB,{allowNone:!0}),A("sh-mode-2",t,i.bandMode2,{allowNone:!1}),A("sh-mode-3",t,i.bandMode3,{allowNone:!1}),A("sh-mode-4",t,i.bandMode4,{allowNone:!1}),A("de-mode-1",t,d.mode1,{allowNone:!1}),A("de-mode-2",t,d.mode2,{allowNone:!1}),A("de-mode-3",t,d.mode3,{allowNone:!1})}async function Fe(){c("pass")?.addEventListener("change",()=>se(c("pass").value)),se(c("pass")?.value||"preview");let e=c("reproj-anim-toggle"),t=c("fpsDisplay");y=!1,O=!1,e&&(e.textContent="Start x4 Anim"),t&&(t.textContent="-"),e?.addEventListener("click",async()=>{if(O){try{await h("stopLoop",{})}catch(p){console.warn("stopLoop failed",p)}O=!1,y=!1;try{await h("setReproj",{reproj:{enabled:!1,scale:N,coarseFactor:Math.round(1/N)},perf:null})}catch(p){console.warn("Failed unset reproj",p)}e&&(e.textContent="Start x4 Anim");let s=c("fpsDisplay");s&&(s.textContent="-")}else{y=!0;let s=S();try{await h("setReproj",{reproj:s,perf:null})}catch(m){console.warn("Failed setReproj",m)}F();let p=D();f(!0,"Seeding animation...");try{await k();let m={weatherParams:a(r),billowParams:a(n),shapeParams:a(i),detailParams:a(d),tileTransforms:a(o),preview:a(v),cloudParams:p,reproj:s};z(m),await h("runFrame",m),await h("startLoop",{}),O=!0,e&&(e.textContent="Stop Anim")}catch(m){console.warn("start animation failed",m),y=!1,O=!1;try{await h("setReproj",{reproj:{enabled:!1,scale:N,coarseFactor:Math.round(1/N)},perf:null})}catch{}e&&(e.textContent="Start x4 Anim")}finally{f(!1)}}}),c("render")?.addEventListener("click",async()=>{f(!0,"Rendering...");try{F();let s=D();await k();let p={weatherParams:a(r),billowParams:a(n),shapeParams:a(i),detailParams:a(d),tileTransforms:a(o),preview:a(v),cloudParams:s};y&&(p.reproj=S()),z(p);let{timings:m}=await h("runFrame",p);console.log("[BENCH] compute(ms):",m.computeMs.toFixed(2),"render(ms):",m.renderMs.toFixed(2),"total(ms):",m.totalMs.toFixed(2))}finally{f(!1)}}),L(["we-mode","we-seed","we-zoom","we-freq","we-oct","we-lac","we-gain","we-thr","we-seedAngle","we-time","we-voroMode","we-edgeK","we-warpAmp","we-billow-enable","we-billow-mode","we-billow-seed","we-billow-scale","we-billow-zoom","we-billow-freq","we-billow-oct","we-billow-lac","we-billow-gain","we-billow-thr","we-billow-seedAngle","we-billow-time","we-billow-voroMode","we-billow-edgeK","we-billow-warpAmp"],async()=>{K(),I(),await x("bakeWeather",{weatherParams:a(r),billowParams:a(n)})}),L(["bn-seed"],async()=>{J(),await x("bakeBlue",{blueParams:a(T)})}),L(["sh-mode-a","sh-mode-b","sh-mode-2","sh-mode-3","sh-mode-4","sh-seed","sh-zoom","sh-freq","sh-oct","sh-lac","sh-gain","sh-thr","sh-seedAngle","sh-time","sh-voroMode","sh-edgeK","sh-warpAmp"],async()=>{G(),W(),await x("bakeShape",{shapeParams:a(i),tileTransforms:a(o)})}),L(["sh-scale","sh-pos-x","sh-pos-y","sh-pos-z","sh-vel-x","sh-vel-y","sh-vel-z"],async()=>{try{W(),await $(o),await k(),F();let s=D(),p={weatherParams:a(r),billowParams:a(n),shapeParams:a(i),detailParams:a(d),tileTransforms:a(o),preview:a(v),cloudParams:s};y&&(p.reproj=S()),z(p),await h("runFrame",p)}catch(s){console.warn("shape transform update failed",s)}}),L(["de-mode-1","de-mode-2","de-mode-3","de-seed","de-zoom","de-freq","de-oct","de-lac","de-gain","de-thr","de-seedAngle","de-time","de-voroMode","de-edgeK","de-warpAmp"],async()=>{_(),q(),await x("bakeDetail",{detailParams:a(d),tileTransforms:a(o)})}),L(["de-scale","de-pos-x","de-pos-y","de-pos-z","de-vel-x","de-vel-y","de-vel-z"],async()=>{try{q(),await $(o),await k(),F();let s=D(),p={weatherParams:a(r),billowParams:a(n),shapeParams:a(i),detailParams:a(d),tileTransforms:a(o),preview:a(v),cloudParams:s};y&&(p.reproj=S()),z(p),await h("runFrame",p)}catch(s){console.warn("detail transform update failed",s)}});{let s=c("p-cloudParams");s&&s.querySelectorAll("input,select,textarea").forEach(p=>{p.addEventListener("input",async()=>{F();let m=D();await k();let b={weatherParams:a(r),billowParams:a(n),shapeParams:a(i),detailParams:a(d),tileTransforms:a(o),preview:a(v),cloudParams:m};y&&(b.reproj=S()),z(b);try{await h("runFrame",b)}catch(u){console.warn("runFrame failed (cloudParams)",u)}})})}{let s=c("p-preview");s&&s.querySelectorAll("input,select,textarea").forEach(p=>{p.addEventListener("input",async()=>{F();let m=D();await k();let b={weatherParams:a(r),billowParams:a(n),shapeParams:a(i),detailParams:a(d),tileTransforms:a(o),preview:a(v),cloudParams:m};y&&(b.reproj=S()),z(b);try{await h("runFrame",b)}catch(u){console.warn("runFrame failed (preview)",u)}})})}Te(),c("bake-weather")?.addEventListener("click",async()=>{K(),I(),await x("bakeWeather",{weatherParams:a(r),billowParams:a(n)})}),c("bake-blue")?.addEventListener("click",async()=>{J(),await x("bakeBlue",{blueParams:a(T)})}),c("bake-shape128")?.addEventListener("click",async()=>{G(),W(),await x("bakeShape",{shapeParams:a(i),tileTransforms:a(o)})}),c("bake-detail32")?.addEventListener("click",async()=>{_(),q(),await x("bakeDetail",{detailParams:a(d),tileTransforms:a(o)})}),c("rebake-all")?.addEventListener("click",async()=>{f(!0,"Rebaking all...");try{K(),I(),J(),G(),W(),_(),q(),await h("bakeAll",{weatherParams:a(r),billowParams:a(n),blueParams:a(T),shapeParams:a(i),detailParams:a(d),tileTransforms:a(o)}),await k();let s=D(),p={weatherParams:a(r),billowParams:a(n),shapeParams:a(i),detailParams:a(d),tileTransforms:a(o),preview:a(v),cloudParams:s};y&&(p.reproj=S()),z(p),await h("runFrame",p)}finally{f(!1)}}),c("slice")?.addEventListener("input",()=>{ce(),h("setSlice",{slice:(+c("slice").value|0)>>>0}).catch(s=>console.warn("setSlice failed",s))}),c("seed-weather")?.addEventListener("click",async()=>{let s=Y(r,"we-seed");j("new weather seed",s),f(!0,"Seeding weather...");try{K(),I(),await x("bakeWeather",{weatherParams:a(r),billowParams:a(n)})}finally{f(!1)}}),c("seed-blue")?.addEventListener("click",async()=>{let s=Y(T,"bn-seed");j("new blue seed",s),f(!0,"Seeding blue...");try{J(),await x("bakeBlue",{blueParams:a(T)})}finally{f(!1)}}),c("seed-shape")?.addEventListener("click",async()=>{let s=Y(i,"sh-seed");j("new shape seed",s),f(!0,"Seeding shape...");try{G(),W(),await x("bakeShape",{shapeParams:a(i),tileTransforms:a(o)})}finally{f(!1)}}),c("seed-detail")?.addEventListener("click",async()=>{let s=Y(d,"de-seed");j("new detail seed",s),f(!0,"Seeding detail...");try{_(),q(),await x("bakeDetail",{detailParams:a(d),tileTransforms:a(o)})}finally{f(!1)}}),window.addEventListener("resize",()=>pe())}async function Be(){document.body.insertAdjacentHTML("beforeend",ae);let e=(u,g)=>{let w=c(u);w&&(w.type==="checkbox"?w.checked=!!g:w.value=String(g))};e("we-seed",r.seed),e("we-zoom",r.zoom),e("we-freq",r.freq),e("we-oct",r.octaves),e("we-lac",r.lacunarity),e("we-gain",r.gain),e("we-thr",r.threshold),e("we-seedAngle",r.seedAngle),e("we-time",r.time),e("we-voroMode",r.voroMode),e("we-edgeK",r.edgeK),e("we-warpAmp",r.warpAmp),e("we-billow-enable",n.enabled),e("we-billow-seed",n.seed),e("we-billow-scale",n.scale),e("we-billow-zoom",n.zoom),e("we-billow-freq",n.freq),e("we-billow-oct",n.octaves),e("we-billow-lac",n.lacunarity),e("we-billow-gain",n.gain),e("we-billow-thr",n.threshold),e("we-billow-seedAngle",n.seedAngle),e("we-billow-time",n.time),e("we-billow-voroMode",n.voroMode),e("we-billow-edgeK",n.edgeK),e("we-billow-warpAmp",n.warpAmp),e("bn-seed",T.seed),e("sh-seed",i.seed),e("sh-zoom",i.zoom),e("sh-freq",i.freq),e("sh-oct",i.octaves),e("sh-lac",i.lacunarity),e("sh-gain",i.gain),e("sh-thr",i.threshold),e("sh-seedAngle",i.seedAngle),e("sh-time",i.time),e("sh-voroMode",i.voroMode),e("sh-edgeK",i.edgeK),e("sh-warpAmp",i.warpAmp),e("sh-scale",o.shapeScale),e("sh-pos-x",o.shapeOffset[0]),e("sh-pos-y",o.shapeOffset[1]),e("sh-pos-z",o.shapeOffset[2]),e("sh-vel-x",o.shapeVel[0]),e("sh-vel-y",o.shapeVel[1]),e("sh-vel-z",o.shapeVel[2]),e("de-seed",d.seed),e("de-zoom",d.zoom),e("de-freq",d.freq),e("de-oct",d.octaves),e("de-lac",d.lacunarity),e("de-gain",d.gain),e("de-thr",d.threshold),e("de-seedAngle",d.seedAngle),e("de-time",d.time),e("de-voroMode",d.voroMode),e("de-edgeK",d.edgeK),e("de-warpAmp",d.warpAmp),e("de-scale",o.detailScale),e("de-pos-x",o.detailOffset[0]),e("de-pos-y",o.detailOffset[1]),e("de-pos-z",o.detailOffset[2]),e("de-vel-x",o.detailVel[0]),e("de-vel-y",o.detailVel[1]),e("de-vel-z",o.detailVel[2]),e("c-az",v.sun.azDeg),e("c-el",v.sun.elDeg),e("c-bloom",v.sun.bloom),e("p-coverage",1),e("p-density",100),e("p-beer",6),e("p-clamp",.15),e("p-ins",.7),e("p-outs",.2),e("p-ivo",.3),e("p-sI",.25),e("p-sE",16),e("p-ambOut",1),e("p-ambMin",.25),e("p-anvil",.1),e("t-maxSteps",256),e("t-minStep",.003),e("t-maxStep",.1),e("t-sunSteps",4),e("t-phaseJitter",1),e("t-stepJitter",.08),e("t-baseJitter",.15),e("t-topJitter",.1),e("t-lodBiasWeather",1.5),e("t-nearFluffDist",60),e("t-nearDensityMult",2.5),e("t-farStart",800),e("t-farFull",2500),e("t-raySmoothDens",.5),e("t-raySmoothSun",.5),e("v-cx",v.cam.x),e("v-cy",v.cam.y),e("v-cz",v.cam.z),e("v-fov",v.cam.fovYDeg),e("v-yaw",v.cam.yawDeg),e("v-pitch",v.cam.pitchDeg),e("v-exposure",v.exposure),e("v-sr",v.sky[0]),e("v-sg",v.sky[1]),e("v-sb",v.sky[2]),X=new Worker(te,{type:"module"}),X.onmessage=u=>{let{id:g,type:w,ok:M,data:Z,error:me}=u.data||{};if(g&&V.has(g)){let{resolve:C,reject:B}=V.get(g);return V.delete(g),M?C(Z):B(me||new Error("Worker error"))}if(w==="log"&&console.log(...Z||[]),w==="frame"){let C=Z||{},B=C.fps?Math.round(C.fps*100)/100:"-",ee=c("fpsDisplay");ee&&(ee.textContent=String(B))}if(w==="loop-stopped"){O=!1;let C=c("reproj-anim-toggle");C&&(C.textContent="Start x4 Anim");let B=c("fpsDisplay");B&&(B.textContent="-")}};let t=c("gpuCanvas"),s=["dbg-weather","dbg-weather-g","dbg-r","dbg-g","dbg-blue"],p=t.transferControlToOffscreen(),m=Object.fromEntries(s.map(u=>[u,c(u).transferControlToOffscreen()])),b=await h("init",{canvases:{main:p,dbg:{weather:m["dbg-weather"],weatherG:m["dbg-weather-g"],shapeR:m["dbg-r"],detailR:m["dbg-g"],blue:m["dbg-blue"]}},constants:{SHAPE_SIZE:be,DETAIL_SIZE:he,WEATHER_W:we,WEATHER_H:fe,BN_W:ge,BN_H:ye}},[p,m["dbg-weather"],m["dbg-weather-g"],m["dbg-r"],m["dbg-g"],m["dbg-blue"]]);Q=Array.isArray(b?.entryPoints)?b.entryPoints.slice():[],Ce();{let u=(g,w)=>{let M=c(g);M&&(M.value=String(w||""))};u("we-mode",r.mode),u("we-billow-mode",n.mode),u("sh-mode-a",i.baseModeA),u("sh-mode-b",i.baseModeB),u("sh-mode-2",i.bandMode2),u("sh-mode-3",i.bandMode3),u("sh-mode-4",i.bandMode4),u("de-mode-1",d.mode1),u("de-mode-2",d.mode2),u("de-mode-3",d.mode3)}pe();try{await $(o)}catch{}f(!0,"Initializing...");try{ce(),await h("bakeAll",{weatherParams:a(r),billowParams:a(n),blueParams:a(T),shapeParams:a(i),detailParams:a(d),tileTransforms:a(o)}),await h("setReproj",{reproj:S(),perf:null});try{await k(!0)}catch(M){console.warn("initial sendTuningNow failed",M)}let u=D(),g={weatherParams:a(r),billowParams:a(n),shapeParams:a(i),detailParams:a(d),tileTransforms:a(o),preview:a(v),cloudParams:u};y&&(g.reproj=S()),z(g);let{timings:w}=await h("runFrame",g);console.log("[BENCH] init frame timings:",w)}finally{f(!1)}await Fe()}Be().catch(e=>{console.error(e);let t=document.createElement("pre");t.textContent=e&&e.stack?e.stack:String(e),document.body.appendChild(t)});})();
+`;var $={},Q;if(typeof process<"u")try{typeof $<"u"&&(globalThis.__filename=fileURLToPath($.url),globalThis.__dirname=fileURLToPath(new URL(".",$.url))),Q=ue("path").join(process.cwd(),__dirname,"dist","cloudTest.worker.js")}catch{}else{let s=globalThis.location.href.split("/");s.pop(),s=s.join("/"),Q=s+"/dist/cloudTest.worker.js"}var se=Q;var ee,he=128,fe=32,ge=512,ye=512,xe=256,Se=256,Ae=224,Pe=()=>Math.max(1,Math.floor(window.devicePixelRatio||1)),ae=[],v={cam:{x:-1,y:0,z:-1,yawDeg:35,pitchDeg:1,fovYDeg:60},exposure:1.35,sky:[.55,.7,.95],layer:0,sun:{azDeg:45,elDeg:22,bloom:0}},p={mode:"computeFBM",seed:123456789e3,zoom:2,freq:1,octaves:5,lacunarity:2,seedAngle:Math.PI/2,gain:.5,threshold:0,time:0,voroMode:0,edgeK:0,warpAmp:0},n={enabled:!0,mode:"computeBillow",seed:123456789e3,scale:1,zoom:2,freq:1.5,octaves:4,lacunarity:2,seedAngle:Math.PI/2,gain:.5,threshold:0,time:0,voroMode:0,edgeK:0,warpAmp:0},r={enabled:!1,mode:"computeBillow",seed:123456789e3,scale:1,zoom:2,freq:1.5,octaves:4,lacunarity:2,seedAngle:Math.PI/2,gain:.5,threshold:0,time:0,voroMode:0,edgeK:0,warpAmp:0},d={seed:Date.now()>>>0,zoom:4,freq:1,octaves:2,lacunarity:2,seedAngle:Math.PI/2,gain:.5,threshold:0,time:0,voroMode:7,edgeK:0,warpAmp:0,baseModeA:"computePerlin4D",baseModeB:"computeAntiWorley4D",bandMode2:"computeWorley4D",bandMode3:"computeWorley4D",bandMode4:"computeWorley4D"},o={seed:Date.now()>>>0,zoom:4,freq:1,octaves:4,lacunarity:2,seedAngle:Math.PI/2,gain:.5,threshold:0,time:0,voroMode:7,edgeK:0,warpAmp:0,mode1:"computeAntiWorley4D",mode2:"computeAntiWorley4D",mode3:"computeAntiWorley4D"},E={seed:(Date.now()&4294967295)>>>0},a={shapeOffset:[0,0,0],detailOffset:[0,0,0],weatherOffset:[0,0,0],shapeScale:.1,detailScale:1,weatherScale:1,shapeAxisScale:[1,1,1],detailAxisScale:[1,1,1],weatherAxisScale:[1,1,1],shapeVel:[.2,0,0],detailVel:[-.02,0,0]},x=!1,N=1/4,L=!1,b=e=>document.getElementById(e),l=(e,s)=>{let i=b(e);if(!i)return s;let c=+i.value;return Number.isFinite(c)?c:s},z=(e,s)=>{let i=l(e,s);return(Number.isFinite(i)?Math.max(0,Math.floor(i)):s)>>>0},t=e=>{try{return JSON.parse(JSON.stringify(e))}catch{return Object.assign({},e)}};function q(...e){try{console.log("[UI]",...e)}catch{}}var Me=1,V=new Map;function h(e,s={},i=[]){return new Promise((c,m)=>{let w=Me++;V.set(w,{resolve:c,reject:m});try{ee.postMessage({id:w,type:e,payload:s},i)}catch(u){V.delete(w),m(u)}})}async function X(e){return h("setTileTransforms",{tileTransforms:t(e)})}function ze(e){return typeof e=="string"&&/4D/.test(e)}function oe(e){return typeof e!="string"||!e||e==="clearTexture"||e==="computeGauss5x5"||e==="computeNormal"||e==="computeNormal8"||e==="computeSphereNormal"||e==="computeNormalVolume"}function ke(e){let s=String(e||"");return s?s.startsWith("compute")&&s.slice(7)||s:"Unknown"}function De(){return ae.filter(e=>!oe(e))}function Be(){return ae.filter(e=>!oe(e)&&ze(e))}function P(e,s,i,c={}){let m=b(e);if(!m)return;let w=!!c.allowNone;if(m.innerHTML="",w){let f=document.createElement("option");f.value="",f.textContent="None",m.appendChild(f)}let u=Array.isArray(s)?s:[];for(let f of u){let k=document.createElement("option");k.value=f,k.textContent=ke(f),m.appendChild(k)}let y=u.includes(i);m.value=y?i:w?"":u[0]||""}function M(e,s){let i=b(e);return i&&String(i.value||"")||s}var j=null;function ne(e,s){if(!s)return!0;let i=Object.keys(e),c=Object.keys(s);if(i.length!==c.length)return!0;for(let m of i)if(e[m]!==s[m])return!0;return!1}function re(e){return Object.assign({},e)}function ce(){return{maxSteps:+(b("t-maxSteps")?.value||256)|0,minStep:+(b("t-minStep")?.value||.003),maxStep:+(b("t-maxStep")?.value||.1),sunSteps:+(b("t-sunSteps")?.value||4)|0,phaseJitter:+(b("t-phaseJitter")?.value||1),stepJitter:+(b("t-stepJitter")?.value||.08),baseJitterFrac:+(b("t-baseJitter")?.value||.15),topJitterFrac:+(b("t-topJitter")?.value||.1),lodBiasWeather:+(b("t-lodBiasWeather")?.value||1.5),nearFluffDist:+(b("t-nearFluffDist")?.value||60),nearDensityMult:+(b("t-nearDensityMult")?.value||2.5),farStart:+(b("t-farStart")?.value||800),farFull:+(b("t-farFull")?.value||2500),raySmoothDens:+(b("t-raySmoothDens")?.value||.5),raySmoothSun:+(b("t-raySmoothSun")?.value||.5)}}async function pe(e){return h("setTuning",{tuning:e})}function ie(){try{let e=ce();if(!ne(e,j))return;pe(e).then(s=>{j=re(e),s&&s.tuning&&q("worker ack tuning",s.tuning)}).catch(s=>{console.warn("sendTuningIfChanged: setTuningRPC failed",s)})}catch(e){console.warn("sendTuningIfChanged error",e)}}async function D(e=!1){let s=ce();if(!e&&!ne(s,j))return j;let i=await pe(s);return j=re(s),i&&i.tuning&&q("worker ack tuning (now)",i.tuning),j}function B(){let e=l("c-az",v.sun.azDeg),s=l("c-el",v.sun.elDeg),i=l("c-bloom",v.sun.bloom);return v.sun.azDeg=e,v.sun.elDeg=s,v.sun.bloom=i,{globalCoverage:l("p-coverage",1),globalDensity:l("p-density",100),cloudAnvilAmount:l("p-anvil",.1),cloudBeer:l("p-beer",6),attenuationClamp:l("p-clamp",.15),inScatterG:l("p-ins",.7),silverIntensity:l("p-sI",.25),silverExponent:l("p-sE",16),outScatterG:l("p-outs",.2),inVsOut:l("p-ivo",.3),outScatterAmbientAmt:l("p-ambOut",1),ambientMinimum:l("p-ambMin",.25),sunColor:[1,1,1],sunAzDeg:e,sunElDeg:s,sunBloom:i}}function I(){p.mode=M("we-mode",p.mode),p.seed=z("we-seed",p.seed),p.zoom=l("we-zoom",p.zoom),p.freq=l("we-freq",p.freq),p.octaves=Math.max(1,l("we-oct",p.octaves)|0),p.lacunarity=l("we-lac",p.lacunarity),p.gain=l("we-gain",p.gain),p.threshold=l("we-thr",p.threshold),p.seedAngle=l("we-seedAngle",p.seedAngle),p.time=l("we-time",p.time),p.voroMode=z("we-voroMode",p.voroMode),p.edgeK=l("we-edgeK",p.edgeK),p.warpAmp=l("we-warpAmp",p.warpAmp)}function J(){n.enabled=!!b("we-billow-enable")?.checked,n.mode=M("we-billow-mode",n.mode),n.seed=z("we-billow-seed",n.seed),n.scale=l("we-billow-scale",n.scale),n.zoom=l("we-billow-zoom",n.zoom),n.freq=l("we-billow-freq",n.freq),n.octaves=Math.max(1,l("we-billow-oct",n.octaves)|0),n.lacunarity=l("we-billow-lac",n.lacunarity),n.gain=l("we-billow-gain",n.gain),n.threshold=l("we-billow-thr",n.threshold),n.seedAngle=l("we-billow-seedAngle",n.seedAngle),n.time=l("we-billow-time",n.time),n.voroMode=z("we-billow-voroMode",n.voroMode),n.edgeK=l("we-billow-edgeK",n.edgeK),n.warpAmp=l("we-billow-warpAmp",n.warpAmp)}function G(){r.enabled=!!b("we-bandb-enable")?.checked,r.mode=M("we-bandb-mode",r.mode),r.seed=z("we-bandb-seed",r.seed),r.scale=l("we-bandb-scale",r.scale),r.zoom=l("we-bandb-zoom",r.zoom),r.freq=l("we-bandb-freq",r.freq),r.octaves=Math.max(1,l("we-bandb-oct",r.octaves)|0),r.lacunarity=l("we-bandb-lac",r.lacunarity),r.gain=l("we-bandb-gain",r.gain),r.threshold=l("we-bandb-thr",r.threshold),r.seedAngle=l("we-bandb-seedAngle",r.seedAngle),r.time=l("we-bandb-time",r.time),r.voroMode=z("we-bandb-voroMode",r.voroMode),r.edgeK=l("we-bandb-edgeK",r.edgeK),r.warpAmp=l("we-bandb-warpAmp",r.warpAmp)}function Te(){a.weatherScale=l("we-scale",a.weatherScale),a.weatherOffset[0]=l("we-pos-x",a.weatherOffset[0]),a.weatherOffset[1]=l("we-pos-y",a.weatherOffset[1]),a.weatherOffset[2]=l("we-pos-z",a.weatherOffset[2]),a.weatherAxisScale=a.weatherAxisScale||[1,1,1],a.weatherAxisScale[0]=l("we-axis-x",a.weatherAxisScale[0]),a.weatherAxisScale[1]=l("we-axis-y",a.weatherAxisScale[1]),a.weatherAxisScale[2]=l("we-axis-z",a.weatherAxisScale[2])}function Z(){E.seed=z("bn-seed",E.seed)}function Y(){d.baseModeA=M("sh-mode-a",d.baseModeA),d.baseModeB=M("sh-mode-b",d.baseModeB),d.bandMode2=M("sh-mode-2",d.bandMode2),d.bandMode3=M("sh-mode-3",d.bandMode3),d.bandMode4=M("sh-mode-4",d.bandMode4),d.seed=z("sh-seed",d.seed),d.zoom=l("sh-zoom",d.zoom),d.freq=l("sh-freq",d.freq),d.octaves=Math.max(1,l("sh-oct",d.octaves)|0),d.lacunarity=l("sh-lac",d.lacunarity),d.gain=l("sh-gain",d.gain),d.threshold=l("sh-thr",d.threshold),d.seedAngle=l("sh-seedAngle",d.seedAngle),d.time=l("sh-time",d.time),d.voroMode=z("sh-voroMode",d.voroMode),d.edgeK=l("sh-edgeK",d.edgeK),d.warpAmp=l("sh-warpAmp",d.warpAmp)}function K(){a.shapeScale=l("sh-scale",a.shapeScale),a.shapeOffset[0]=l("sh-pos-x",a.shapeOffset[0]),a.shapeOffset[1]=l("sh-pos-y",a.shapeOffset[1]),a.shapeOffset[2]=l("sh-pos-z",a.shapeOffset[2]),a.shapeVel=a.shapeVel||[0,0,0],a.shapeVel[0]=l("sh-vel-x",a.shapeVel[0]),a.shapeVel[1]=l("sh-vel-y",a.shapeVel[1]),a.shapeVel[2]=l("sh-vel-z",a.shapeVel[2]),a.shapeAxisScale=a.shapeAxisScale||[1,1,1],a.shapeAxisScale[0]=l("sh-axis-x",a.shapeAxisScale[0]),a.shapeAxisScale[1]=l("sh-axis-y",a.shapeAxisScale[1]),a.shapeAxisScale[2]=l("sh-axis-z",a.shapeAxisScale[2])}function _(){o.mode1=M("de-mode-1",o.mode1),o.mode2=M("de-mode-2",o.mode2),o.mode3=M("de-mode-3",o.mode3),o.seed=z("de-seed",o.seed),o.zoom=l("de-zoom",o.zoom),o.freq=l("de-freq",o.freq),o.octaves=Math.max(1,l("de-oct",o.octaves)|0),o.lacunarity=l("de-lac",o.lacunarity),o.gain=l("de-gain",o.gain),o.threshold=l("de-thr",o.threshold),o.seedAngle=l("de-seedAngle",o.seedAngle),o.time=l("de-time",o.time),o.voroMode=z("de-voroMode",o.voroMode),o.edgeK=l("de-edgeK",o.edgeK),o.warpAmp=l("de-warpAmp",o.warpAmp)}function R(){a.detailScale=l("de-scale",a.detailScale),a.detailOffset[0]=l("de-pos-x",a.detailOffset[0]),a.detailOffset[1]=l("de-pos-y",a.detailOffset[1]),a.detailOffset[2]=l("de-pos-z",a.detailOffset[2]),a.detailVel=a.detailVel||[0,0,0],a.detailVel[0]=l("de-vel-x",a.detailVel[0]),a.detailVel[1]=l("de-vel-y",a.detailVel[1]),a.detailVel[2]=l("de-vel-z",a.detailVel[2]),a.detailAxisScale=a.detailAxisScale||[1,1,1],a.detailAxisScale[0]=l("de-axis-x",a.detailAxisScale[0]),a.detailAxisScale[1]=l("de-axis-y",a.detailAxisScale[1]),a.detailAxisScale[2]=l("de-axis-z",a.detailAxisScale[2])}function C(){v.cam.x=l("v-cx",v.cam.x),v.cam.y=l("v-cy",v.cam.y),v.cam.z=l("v-cz",v.cam.z),v.cam.yawDeg=l("v-yaw",v.cam.yawDeg),v.cam.pitchDeg=l("v-pitch",v.cam.pitchDeg),v.cam.fovYDeg=l("v-fov",v.cam.fovYDeg),v.exposure=l("v-exposure",v.exposure),v.sky[0]=l("v-sr",v.sky[0]),v.sky[1]=l("v-sg",v.sky[1]),v.sky[2]=l("v-sb",v.sky[2])}function Ee(e){return!e||e<=0?1:Math.max(1,Math.round(1/Math.sqrt(e)))}function A(){let e=!!x,s=N;return{enabled:e,scale:s,coarseFactor:Ee(s)}}function T(e){if(!e)return e;if(e.reproj&&typeof e.reproj.coarseFactor=="number")e.coarseFactor=e.reproj.coarseFactor;else if(x){let s=A();e.reproj=e.reproj||s,e.coarseFactor=s.coarseFactor}else e.coarseFactor=e.coarseFactor||4;return e}function O(e,s){for(let i of e){let c=b(i);c&&(c.addEventListener("input",s),c.addEventListener("change",s))}}function Ce(){let e=Array.from(document.querySelectorAll('input[id^="t-"], select[id^="t-"], textarea[id^="t-"]'));e.length&&e.forEach(s=>{s.addEventListener("input",()=>{ie()}),s.addEventListener("change",()=>{ie()})})}async function S(e,s={},i={}){g(!0,"Baking...");try{await h(e,t(s)),await D(),C();let c=B(),m=Object.assign({weatherParams:t(p),billowParams:t(n),weatherBParams:t(r),shapeParams:t(d),detailParams:t(o),tileTransforms:t(a),preview:t(v),cloudParams:c},i||{});x&&(m.reproj=A()),T(m),await h("runFrame",m)}finally{g(!1)}}function g(e,s="Working..."){let i=b("busyOverlay"),c=b("busyMsg");i&&(c&&(c.textContent=s),i.style.display=e?"flex":"none",["bake-weather","bake-blue","bake-shape128","bake-detail32","rebake-all","render"].forEach(m=>{let w=b(m);w&&(w.disabled=e)}))}function H(e,s){let i=Math.floor(Math.random()*1e4)>>>0,m=((Date.now()*Math.floor(Math.random()*1e4)^i)>>>0||1)>>>0;e.seed=m;let w=b(s);return w&&(w.value=String(m)),e.seed}function Fe(){return(+b("slice")?.value|0)>>>0}function be(){let e=b("sliceLabel");e&&(e.textContent=String(Fe()))}function de(e){let s=(i,c)=>{let m=b(i);m&&(m.style.display=c?"":"none")};s("p-weather",e==="weather"),s("p-shape128",e==="shape128"),s("p-detail32",e==="detail32"),s("p-blue",e==="blue"),s("p-cloudParams",e==="clouds"),s("p-preview",e==="preview")}function me(){let e=Pe(),s=b("gpuCanvas"),i=Math.max(1,Math.round(s.clientWidth)),c=Math.max(1,Math.round(s.clientHeight)),m=Math.max(1,Math.floor(i*e)),w=Math.max(1,Math.floor(c*e)),u=Math.round(Ae*e);h("resize",{main:{width:m,height:w},dbg:{width:u,height:u}}).catch(y=>console.warn("resize rpc failed",y))}function Oe(){let e=De(),s=Be();P("we-mode",e,p.mode,{allowNone:!1}),P("we-billow-mode",e,n.mode,{allowNone:!1}),P("we-bandb-mode",e,r.mode,{allowNone:!1}),P("sh-mode-a",s,d.baseModeA,{allowNone:!1}),P("sh-mode-b",s,d.baseModeB,{allowNone:!0}),P("sh-mode-2",s,d.bandMode2,{allowNone:!1}),P("sh-mode-3",s,d.bandMode3,{allowNone:!1}),P("sh-mode-4",s,d.bandMode4,{allowNone:!1}),P("de-mode-1",s,o.mode1,{allowNone:!1}),P("de-mode-2",s,o.mode2,{allowNone:!1}),P("de-mode-3",s,o.mode3,{allowNone:!1})}async function We(){b("pass")?.addEventListener("change",()=>de(b("pass").value)),de(b("pass")?.value||"preview");let e=b("reproj-anim-toggle"),s=b("fpsDisplay");x=!1,L=!1,e&&(e.textContent="Start x4 Anim"),s&&(s.textContent="-"),e?.addEventListener("click",async()=>{if(L){try{await h("stopLoop",{})}catch(c){console.warn("stopLoop failed",c)}L=!1,x=!1;try{await h("setReproj",{reproj:{enabled:!1,scale:N,coarseFactor:Math.round(1/N)},perf:null})}catch(c){console.warn("Failed unset reproj",c)}e&&(e.textContent="Start x4 Anim");let i=b("fpsDisplay");i&&(i.textContent="-")}else{x=!0;let i=A();try{await h("setReproj",{reproj:i,perf:null})}catch(m){console.warn("Failed setReproj",m)}C();let c=B();g(!0,"Seeding animation...");try{await D();let m={weatherParams:t(p),billowParams:t(n),weatherBParams:t(r),shapeParams:t(d),detailParams:t(o),tileTransforms:t(a),preview:t(v),cloudParams:c,reproj:i};T(m),await h("runFrame",m),await h("startLoop",{}),L=!0,e&&(e.textContent="Stop Anim")}catch(m){console.warn("start animation failed",m),x=!1,L=!1;try{await h("setReproj",{reproj:{enabled:!1,scale:N,coarseFactor:Math.round(1/N)},perf:null})}catch{}e&&(e.textContent="Start x4 Anim")}finally{g(!1)}}}),b("render")?.addEventListener("click",async()=>{g(!0,"Rendering...");try{C();let i=B();await D();let c={weatherParams:t(p),billowParams:t(n),weatherBParams:t(r),shapeParams:t(d),detailParams:t(o),tileTransforms:t(a),preview:t(v),cloudParams:i};x&&(c.reproj=A()),T(c);let{timings:m}=await h("runFrame",c);console.log("[BENCH] compute(ms):",m.computeMs.toFixed(2),"render(ms):",m.renderMs.toFixed(2),"total(ms):",m.totalMs.toFixed(2))}finally{g(!1)}}),O(["we-mode","we-seed","we-zoom","we-freq","we-oct","we-lac","we-gain","we-thr","we-seedAngle","we-time","we-voroMode","we-edgeK","we-warpAmp","we-billow-enable","we-billow-mode","we-billow-seed","we-billow-scale","we-billow-zoom","we-billow-freq","we-billow-oct","we-billow-lac","we-billow-gain","we-billow-thr","we-billow-seedAngle","we-billow-time","we-billow-voroMode","we-billow-edgeK","we-billow-warpAmp","we-bandb-enable","we-bandb-mode","we-bandb-seed","we-bandb-scale","we-bandb-zoom","we-bandb-freq","we-bandb-oct","we-bandb-lac","we-bandb-gain","we-bandb-thr","we-bandb-seedAngle","we-bandb-time","we-bandb-voroMode","we-bandb-edgeK","we-bandb-warpAmp"],async()=>{I(),J(),G(),await S("bakeWeather",{weatherParams:t(p),billowParams:t(n),weatherBParams:t(r)})}),O(["we-scale","we-pos-x","we-pos-y","we-pos-z","we-axis-x","we-axis-y","we-axis-z"],async()=>{try{Te(),await X(a),await D(),C();let i=B(),c={weatherParams:t(p),billowParams:t(n),weatherBParams:t(r),shapeParams:t(d),detailParams:t(o),tileTransforms:t(a),preview:t(v),cloudParams:i};x&&(c.reproj=A()),T(c),await h("runFrame",c)}catch(i){console.warn("weather transform update failed",i)}}),O(["bn-seed"],async()=>{Z(),await S("bakeBlue",{blueParams:t(E)})}),O(["sh-mode-a","sh-mode-b","sh-mode-2","sh-mode-3","sh-mode-4","sh-seed","sh-zoom","sh-freq","sh-oct","sh-lac","sh-gain","sh-thr","sh-seedAngle","sh-time","sh-voroMode","sh-edgeK","sh-warpAmp"],async()=>{Y(),K(),await S("bakeShape",{shapeParams:t(d),tileTransforms:t(a)})}),O(["de-mode-1","de-mode-2","de-mode-3","de-seed","de-zoom","de-freq","de-oct","de-lac","de-gain","de-thr","de-seedAngle","de-time","de-voroMode","de-edgeK","de-warpAmp"],async()=>{_(),R(),await S("bakeDetail",{detailParams:t(o),tileTransforms:t(a)})}),O(["sh-scale","sh-pos-x","sh-pos-y","sh-pos-z","sh-vel-x","sh-vel-y","sh-vel-z","sh-axis-x","sh-axis-y","sh-axis-z"],async()=>{try{K(),await X(a),await D(),C();let i=B(),c={weatherParams:t(p),billowParams:t(n),weatherBParams:t(r),shapeParams:t(d),detailParams:t(o),tileTransforms:t(a),preview:t(v),cloudParams:i};x&&(c.reproj=A()),T(c),await h("runFrame",c)}catch(i){console.warn("shape transform update failed",i)}}),O(["de-scale","de-pos-x","de-pos-y","de-pos-z","de-vel-x","de-vel-y","de-vel-z","de-axis-x","de-axis-y","de-axis-z"],async()=>{try{R(),await X(a),await D(),C();let i=B(),c={weatherParams:t(p),billowParams:t(n),weatherBParams:t(r),shapeParams:t(d),detailParams:t(o),tileTransforms:t(a),preview:t(v),cloudParams:i};x&&(c.reproj=A()),T(c),await h("runFrame",c)}catch(i){console.warn("detail transform update failed",i)}});{let i=b("p-cloudParams");i&&i.querySelectorAll("input,select,textarea").forEach(c=>{c.addEventListener("input",async()=>{C();let m=B();await D();let w={weatherParams:t(p),billowParams:t(n),weatherBParams:t(r),shapeParams:t(d),detailParams:t(o),tileTransforms:t(a),preview:t(v),cloudParams:m};x&&(w.reproj=A()),T(w);try{await h("runFrame",w)}catch(u){console.warn("runFrame failed (cloudParams)",u)}})})}{let i=b("p-preview");i&&i.querySelectorAll("input,select,textarea").forEach(c=>{c.addEventListener("input",async()=>{C();let m=B();await D();let w={weatherParams:t(p),billowParams:t(n),weatherBParams:t(r),shapeParams:t(d),detailParams:t(o),tileTransforms:t(a),preview:t(v),cloudParams:m};x&&(w.reproj=A()),T(w);try{await h("runFrame",w)}catch(u){console.warn("runFrame failed (preview)",u)}})})}Ce(),b("bake-weather")?.addEventListener("click",async()=>{I(),J(),G(),await S("bakeWeather",{weatherParams:t(p),billowParams:t(n),weatherBParams:t(r)})}),b("bake-blue")?.addEventListener("click",async()=>{Z(),await S("bakeBlue",{blueParams:t(E)})}),b("bake-shape128")?.addEventListener("click",async()=>{Y(),K(),await S("bakeShape",{shapeParams:t(d),tileTransforms:t(a)})}),b("bake-detail32")?.addEventListener("click",async()=>{_(),R(),await S("bakeDetail",{detailParams:t(o),tileTransforms:t(a)})}),b("rebake-all")?.addEventListener("click",async()=>{g(!0,"Rebaking all...");try{I(),J(),G(),Z(),Y(),K(),_(),R(),await h("bakeAll",{weatherParams:t(p),billowParams:t(n),weatherBParams:t(r),blueParams:t(E),shapeParams:t(d),detailParams:t(o),tileTransforms:t(a)}),await D();let i=B(),c={weatherParams:t(p),billowParams:t(n),weatherBParams:t(r),shapeParams:t(d),detailParams:t(o),tileTransforms:t(a),preview:t(v),cloudParams:i};x&&(c.reproj=A()),T(c),await h("runFrame",c)}finally{g(!1)}}),b("slice")?.addEventListener("input",()=>{be(),h("setSlice",{slice:(+b("slice").value|0)>>>0}).catch(i=>console.warn("setSlice failed",i))}),b("seed-weather")?.addEventListener("click",async()=>{let i=H(p,"we-seed");q("new weather seed",i),g(!0,"Seeding weather...");try{I(),J(),G(),await S("bakeWeather",{weatherParams:t(p),billowParams:t(n),weatherBParams:t(r)})}finally{g(!1)}}),b("seed-blue")?.addEventListener("click",async()=>{let i=H(E,"bn-seed");q("new blue seed",i),g(!0,"Seeding blue...");try{Z(),await S("bakeBlue",{blueParams:t(E)})}finally{g(!1)}}),b("seed-shape")?.addEventListener("click",async()=>{let i=H(d,"sh-seed");q("new shape seed",i),g(!0,"Seeding shape...");try{Y(),K(),await S("bakeShape",{shapeParams:t(d),tileTransforms:t(a)})}finally{g(!1)}}),b("seed-detail")?.addEventListener("click",async()=>{let i=H(o,"de-seed");q("new detail seed",i),g(!0,"Seeding detail...");try{_(),R(),await S("bakeDetail",{detailParams:t(o),tileTransforms:t(a)})}finally{g(!1)}}),window.addEventListener("resize",()=>me())}async function Le(){document.body.insertAdjacentHTML("beforeend",le);let e=(u,y)=>{let f=b(u);f&&(f.type==="checkbox"?f.checked=!!y:f.value=String(y))};e("we-seed",p.seed),e("we-zoom",p.zoom),e("we-freq",p.freq),e("we-oct",p.octaves),e("we-lac",p.lacunarity),e("we-gain",p.gain),e("we-thr",p.threshold),e("we-seedAngle",p.seedAngle),e("we-time",p.time),e("we-voroMode",p.voroMode),e("we-edgeK",p.edgeK),e("we-warpAmp",p.warpAmp),e("we-billow-enable",n.enabled),e("we-billow-seed",n.seed),e("we-billow-scale",n.scale),e("we-billow-zoom",n.zoom),e("we-billow-freq",n.freq),e("we-billow-oct",n.octaves),e("we-billow-lac",n.lacunarity),e("we-billow-gain",n.gain),e("we-billow-thr",n.threshold),e("we-billow-seedAngle",n.seedAngle),e("we-billow-time",n.time),e("we-billow-voroMode",n.voroMode),e("we-billow-edgeK",n.edgeK),e("we-billow-warpAmp",n.warpAmp),e("we-scale",a.weatherScale),e("we-pos-x",a.weatherOffset[0]),e("we-pos-y",a.weatherOffset[1]),e("we-pos-z",a.weatherOffset[2]),e("we-axis-x",a.weatherAxisScale[0]),e("we-axis-y",a.weatherAxisScale[1]),e("we-axis-z",a.weatherAxisScale[2]),e("sh-axis-x",a.shapeAxisScale[0]),e("sh-axis-y",a.shapeAxisScale[1]),e("sh-axis-z",a.shapeAxisScale[2]),e("de-axis-x",a.detailAxisScale[0]),e("de-axis-y",a.detailAxisScale[1]),e("de-axis-z",a.detailAxisScale[2]),e("we-bandb-enable",r.enabled),e("we-bandb-seed",r.seed),e("we-bandb-scale",r.scale),e("we-bandb-zoom",r.zoom),e("we-bandb-freq",r.freq),e("we-bandb-oct",r.octaves),e("we-bandb-lac",r.lacunarity),e("we-bandb-gain",r.gain),e("we-bandb-thr",r.threshold),e("we-bandb-seedAngle",r.seedAngle),e("we-bandb-time",r.time),e("we-bandb-voroMode",r.voroMode),e("we-bandb-edgeK",r.edgeK),e("we-bandb-warpAmp",r.warpAmp),e("bn-seed",E.seed),e("sh-seed",d.seed),e("sh-zoom",d.zoom),e("sh-freq",d.freq),e("sh-oct",d.octaves),e("sh-lac",d.lacunarity),e("sh-gain",d.gain),e("sh-thr",d.threshold),e("sh-seedAngle",d.seedAngle),e("sh-time",d.time),e("sh-voroMode",d.voroMode),e("sh-edgeK",d.edgeK),e("sh-warpAmp",d.warpAmp),e("sh-scale",a.shapeScale),e("sh-pos-x",a.shapeOffset[0]),e("sh-pos-y",a.shapeOffset[1]),e("sh-pos-z",a.shapeOffset[2]),e("sh-vel-x",a.shapeVel[0]),e("sh-vel-y",a.shapeVel[1]),e("sh-vel-z",a.shapeVel[2]),e("de-seed",o.seed),e("de-zoom",o.zoom),e("de-freq",o.freq),e("de-oct",o.octaves),e("de-lac",o.lacunarity),e("de-gain",o.gain),e("de-thr",o.threshold),e("de-seedAngle",o.seedAngle),e("de-time",o.time),e("de-voroMode",o.voroMode),e("de-edgeK",o.edgeK),e("de-warpAmp",o.warpAmp),e("de-scale",a.detailScale),e("de-pos-x",a.detailOffset[0]),e("de-pos-y",a.detailOffset[1]),e("de-pos-z",a.detailOffset[2]),e("de-vel-x",a.detailVel[0]),e("de-vel-y",a.detailVel[1]),e("de-vel-z",a.detailVel[2]),e("c-az",v.sun.azDeg),e("c-el",v.sun.elDeg),e("c-bloom",v.sun.bloom),e("p-coverage",1),e("p-density",100),e("p-beer",6),e("p-clamp",.15),e("p-ins",.7),e("p-outs",.2),e("p-ivo",.3),e("p-sI",.25),e("p-sE",16),e("p-ambOut",1),e("p-ambMin",.25),e("p-anvil",.1),e("t-maxSteps",256),e("t-minStep",.003),e("t-maxStep",.1),e("t-sunSteps",4),e("t-phaseJitter",1),e("t-stepJitter",.08),e("t-baseJitter",.15),e("t-topJitter",.1),e("t-lodBiasWeather",1.5),e("t-nearFluffDist",60),e("t-nearDensityMult",2.5),e("t-farStart",800),e("t-farFull",2500),e("t-raySmoothDens",.5),e("t-raySmoothSun",.5),e("v-cx",v.cam.x),e("v-cy",v.cam.y),e("v-cz",v.cam.z),e("v-fov",v.cam.fovYDeg),e("v-yaw",v.cam.yawDeg),e("v-pitch",v.cam.pitchDeg),e("v-exposure",v.exposure),e("v-sr",v.sky[0]),e("v-sg",v.sky[1]),e("v-sb",v.sky[2]),ee=new Worker(se,{type:"module"}),ee.onmessage=u=>{let{id:y,type:f,ok:k,data:U,error:ve}=u.data||{};if(y&&V.has(y)){let{resolve:F,reject:W}=V.get(y);return V.delete(y),k?F(U):W(ve||new Error("Worker error"))}if(f==="log"&&console.log(...U||[]),f==="frame"){let F=U||{},W=F.fps?Math.round(F.fps*100)/100:"-",te=b("fpsDisplay");te&&(te.textContent=String(W))}if(f==="loop-stopped"){L=!1;let F=b("reproj-anim-toggle");F&&(F.textContent="Start x4 Anim");let W=b("fpsDisplay");W&&(W.textContent="-")}};let s=b("gpuCanvas"),i=["dbg-weather","dbg-weather-g","dbg-weather-b","dbg-r","dbg-g","dbg-blue"],c=s.transferControlToOffscreen(),m=Object.fromEntries(i.map(u=>[u,b(u).transferControlToOffscreen()])),w=await h("init",{canvases:{main:c,dbg:{weather:m["dbg-weather"],weatherG:m["dbg-weather-g"],weatherB:m["dbg-weather-b"],shapeR:m["dbg-r"],detailR:m["dbg-g"],blue:m["dbg-blue"]}},constants:{SHAPE_SIZE:he,DETAIL_SIZE:fe,WEATHER_W:ge,WEATHER_H:ye,BN_W:xe,BN_H:Se}},[c,m["dbg-weather"],m["dbg-weather-g"],m["dbg-weather-b"],m["dbg-r"],m["dbg-g"],m["dbg-blue"]]);ae=Array.isArray(w?.entryPoints)?w.entryPoints.slice():[],Oe();{let u=(y,f)=>{let k=b(y);k&&(k.value=String(f||""))};u("we-mode",p.mode),u("we-billow-mode",n.mode),u("we-bandb-mode",r.mode),u("sh-mode-a",d.baseModeA),u("sh-mode-b",d.baseModeB),u("sh-mode-2",d.bandMode2),u("sh-mode-3",d.bandMode3),u("sh-mode-4",d.bandMode4),u("de-mode-1",o.mode1),u("de-mode-2",o.mode2),u("de-mode-3",o.mode3)}me();try{await X(a)}catch{}g(!0,"Initializing...");try{be(),await h("bakeAll",{weatherParams:t(p),billowParams:t(n),weatherBParams:t(r),blueParams:t(E),shapeParams:t(d),detailParams:t(o),tileTransforms:t(a)}),await h("setReproj",{reproj:A(),perf:null});try{await D(!0)}catch(k){console.warn("initial sendTuningNow failed",k)}let u=B(),y={weatherParams:t(p),billowParams:t(n),weatherBParams:t(r),shapeParams:t(d),detailParams:t(o),tileTransforms:t(a),preview:t(v),cloudParams:u};x&&(y.reproj=A()),T(y);let{timings:f}=await h("runFrame",y);console.log("[BENCH] init frame timings:",f)}finally{g(!1)}await We()}Le().catch(e=>{console.error(e);let s=document.createElement("pre");s.textContent=e&&e.stack?e.stack:String(e),document.body.appendChild(s)});})();
