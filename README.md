@@ -24,7 +24,7 @@ It includes 4D noise and detail textures for smooth blending of randomized cloud
 
 The main pieces are:
 
-* `clouds.js` (shown here as `cloudComputeBuilder.rewrite.withTUNE.js`)  
+* `clouds.js` (shown here as `cloudComputeBuilder.js`)  
   A self contained `CloudComputeBuilder` utility that wraps a WebGPU compute pipeline for volumetric clouds.
 * `cloudTest.worker.js`  
   A Web Worker that owns the WebGPU device, bakes noise volumes, drives `CloudComputeBuilder`, and renders to canvases.
@@ -636,6 +636,7 @@ This layout is subject to change. Additional parameters and WGSL structs may con
 
 * `CloudComputeBuilder` is the core utility that owns the cloud compute pipeline and all UBO plumbing, with an explicit `dispose()` for cleanup.
 * The worker and UI form a thin interactive layer on top for tuning, baking, and previewing presets that you can later reuse in your own renderer.
+
 
 
 
