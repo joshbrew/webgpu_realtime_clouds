@@ -480,7 +480,6 @@
                 class="compact"\r
               />\r
             </div>\r
-            <div></div>\r
           </div>\r
 \r
           <small class="hint"\r
@@ -522,7 +521,6 @@
                 class="compact"\r
               />\r
             </div>\r
-            <div>\r
           </div>\r
 \r
           <div class="row">\r
@@ -879,7 +877,6 @@
             <label>Warp Amp</label\r
             ><input id="sh-warpAmp" type="number" step="0.05" class="compact" />\r
           </div>\r
-          <div></div>\r
         </div>\r
 \r
         <div class="divider">\r
