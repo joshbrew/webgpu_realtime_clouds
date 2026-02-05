@@ -9,8 +9,8 @@ To run the demo, run `npm install` then `tinybuild` within this repository. `npm
 
 #### See also: [https://github.com/joshbrew/webgpu_noise_compute_textures](https://github.com/joshbrew/webgpu_noise_compute_textures)
 
+Newer Recording: https://www.youtube.com/watch?v=V-c-WTC2T1c
 See: https://www.youtube.com/watch?v=auawNwzHjFo for a live recording.
-
 
 <img width="3591" height="1879" alt="Screenshot 2025-11-18 231303" src="https://github.com/user-attachments/assets/f9c57bee-4d9b-45a0-ad27-c125af9d57ac" />
 
@@ -636,6 +636,7 @@ This layout is subject to change. Additional parameters and WGSL structs may con
 
 * `CloudComputeBuilder` is the core utility that owns the cloud compute pipeline and all UBO plumbing, with an explicit `dispose()` for cleanup.
 * The worker and UI form a thin interactive layer on top for tuning, baking, and previewing presets that you can later reuse in your own renderer.
+
 
 
 
