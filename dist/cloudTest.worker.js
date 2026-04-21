@@ -107,6 +107,17 @@ fn storeRGBA(fx:i32, fy:i32, fz:i32, col:vec4<f32>) {\r
   else { textureStore(outputTex, vec2<i32>(fx, fy), frame.layerIndex, col); }\r
 }\r
 \r
+fn rotateXY3(p: vec3<f32>, angle: f32) -> vec3<f32> {\r
+  let c = cos(angle);\r
+  let s = sin(angle);\r
+  return vec3<f32>(\r
+    p.x * c - p.y * s,\r
+    p.x * s + p.y * c,\r
+    p.z\r
+  );\r
+}\r
+\r
+\r
 const STEREO_SCALE : f32 = 1.8;          // fixed packing scale for Clifford torus\r
 const INV_SQRT2    : f32 = 0.7071067811865476; // 1/\u221A2\r
 \r
@@ -139,6 +150,18 @@ fn thetaFromDepth(fz: i32) -> f32 {\r
   return layerToZ(frame.layerIndex, frame.layers);\r
 }\r
 \r
+fn seedOffset3(seed: u32) -> vec3<f32> {\r
+  let a = f32((seed * 1664525u + 1013904223u) & 65535u) / 65536.0;\r
+  let b = f32((seed * 22695477u + 1u) & 65535u) / 65536.0;\r
+  let c = f32((seed * 1103515245u + 12345u) & 65535u) / 65536.0;\r
+\r
+  return vec3<f32>(\r
+    17.173 + a * 131.0,\r
+    31.947 + b * 137.0,\r
+    47.521 + c * 149.0\r
+  );\r
+}\r
+\r
 fn fetchPos(fx: i32, fy: i32, fz: i32) -> vec3<f32> {\r
   if (options.useCustomPos == 1u) {\r
     let use3D = writeTo3D() || readFrom3D();\r
@@ -157,9 +180,9 @@ fn fetchPos(fx: i32, fy: i32, fz: i32) -> vec3<f32> {\r
     let invW = 1.0 / max(f32(frame.fullWidth), 1.0);\r
     let invH = 1.0 / max(f32(frame.fullHeight), 1.0);\r
 \r
-    let U = (f32(cx) + 0.5) * invW;   // [0,1)\r
-    let V = (f32(cy) + 0.5) * invH;   // [0,1)\r
-    let theta = thetaFromDepth(fz);   // [0,1)\r
+    let U = (f32(cx) + 0.5) * invW;\r
+    let V = (f32(cy) + 0.5) * invH;\r
+    let theta = thetaFromDepth(fz);\r
 \r
     return vec3<f32>(U, V, theta);\r
   }\r
@@ -174,21 +197,23 @@ fn fetchPos(fx: i32, fy: i32, fz: i32) -> vec3<f32> {\r
     oy = f32(frame.originY);\r
   }\r
 \r
-  let x = (ox + f32(fx)) * invW;\r
-  let y = (oy + f32(fy)) * invH;\r
+  let x = (ox + f32(fx) + 0.5) * invW;\r
+  let y = (oy + f32(fy) + 0.5) * invH;\r
 \r
   var z: f32;\r
   let uses3D = writeTo3D() || readFrom3D();\r
   if (uses3D) {\r
-    if (frame.fullDepth <= 1u) { z = 0.0; }\r
-    else { z = f32(clampZ(fz)) / f32(frame.fullDepth - 1u); }\r
+    if (frame.fullDepth <= 1u) {\r
+      z = 0.0;\r
+    } else {\r
+      z = (f32(clampZ(fz)) + 0.5) / f32(frame.fullDepth);\r
+    }\r
   } else {\r
     z = layerToZ(frame.layerIndex, frame.layers);\r
   }\r
 \r
   return vec3<f32>(x, y, z);\r
 }\r
-\r
 \r
 \r
 \r
@@ -319,6 +344,7 @@ fn rand4u(ix : i32, iy : i32, iz : i32, iw : i32) -> f32 {\r
   let idx = hash4(ix, iy, iz, iw);\r
   return f32(perm(idx)) * INV_255;\r
 }\r
+\r
 \r
 /* ---------- classic 2D Perlin ---------- */\r
 fn noise2D(p : vec2<f32>) -> f32 {\r
@@ -1268,27 +1294,31 @@ fn gradSimplex2(q: vec2<f32>, eps: f32) -> vec2<f32> {\r
 \r
 /* single-octave curl = grad rotated 90\xB0 (\u2202N/\u2202y, -\u2202N/\u2202x) */\r
 fn curl2_simplex2D(pos: vec2<f32>, p: NoiseParams) -> vec2<f32> {\r
-  let q = (pos / p.zoom) * p.freq + vec2<f32>(p.xShift, p.yShift);\r
+  let zoom = max(p.zoom, 1e-6);\r
+  let freq = max(p.freq, 1e-6);\r
+  let base = pos / zoom + vec2<f32>(p.xShift, p.yShift);\r
+  let q = base * freq;\r
 \r
   // choose \u03B5 ~ half a cycle of current scale to avoid lattice aliasing\r
-  let cycles_per_world = max(p.freq / max(p.zoom, 1e-6), 1e-6);\r
+  let cycles_per_world = max(freq / zoom, 1e-6);\r
   let eps = 0.5 / cycles_per_world;\r
 \r
-  let g = gradSimplex2(q, eps);\r
+  let g = gradSimplex2(q, eps * freq);\r
   return vec2<f32>(g.y, -g.x);\r
 }\r
 \r
 /* multi-octave curl: sum derivatives per octave (no sharp creases) */\r
 fn curl2_simplexFBM(pos: vec2<f32>, p: NoiseParams) -> vec2<f32> {\r
-  var q      = (pos / p.zoom) * p.freq + vec2<f32>(p.xShift, p.yShift);\r
-  var freq   : f32 = p.freq;\r
+  let zoom = max(p.zoom, 1e-6);\r
+  var q      = pos / zoom + vec2<f32>(p.xShift, p.yShift);\r
+  var freq   : f32 = max(p.freq, 1e-6);\r
   var amp    : f32 = 1.0;\r
   var angle  : f32 = p.seedAngle;\r
   var curl   : vec2<f32> = vec2<f32>(0.0);\r
 \r
   for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {\r
     // \u03B5 scales with octave so the finite difference stays well-conditioned\r
-    let cycles_per_world = max(freq / max(p.zoom, 1e-6), 1e-6);\r
+    let cycles_per_world = max(freq / zoom, 1e-6);\r
     let eps = 0.5 / cycles_per_world;\r
 \r
     let g = gradSimplex2(q * freq, eps * freq);\r
@@ -1461,7 +1491,7 @@ fn gaborNoise3D(p: vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
   var sum     : f32 = 0.0;\r
   var amp     : f32 = 1.0;\r
-  var freqLoc : f32 = params.freq;\r
+  var freqLoc : f32 = max(params.freq, 1e-6);\r
   var angle   : f32 = params.seedAngle;\r
 \r
   let waveFreq = max(0.001, params.rippleFreq);\r
@@ -1752,64 +1782,74 @@ fn computeGaborFlow(@builtin(global_invocation_id) gid: vec3<u32>) {\r
 \r
 /*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Terrace & Foam filters  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
 fn terrace(v:f32, steps:f32)  -> f32 { return floor(v*steps)/steps; }\r
-fn foamify(v:f32)             -> f32 { return pow(abs(v), 3.0)*sign(v); }\r
+fn foamify(v: f32) -> f32 {\r
+    let x = clamp(v, 0.0, 1.0);\r
+\r
+    let lo = smoothstep(0.18, 0.48, x);\r
+    let hi = 1.0 - smoothstep(0.58, 0.92, x);\r
+\r
+    let band = clamp(lo * hi, 0.0, 1.0);\r
+    return pow(band, 0.6);\r
+}\r
 fn turbulence(v:f32)          -> f32 { return abs(v); }\r
 \r
 /*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Simplex (multi-octave) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
 fn generateSimplex(pos: vec3<f32>, p: NoiseParams) -> f32 {\r
-    // start coords (zoom/freq/shift)\r
-    var x = pos.x / p.zoom * p.freq + p.xShift;\r
-    var y = pos.y / p.zoom * p.freq + p.yShift;\r
-    var z = pos.z / p.zoom * p.freq + p.zShift;\r
+    let invZoom = 1.0 / max(p.zoom, 1e-6);\r
+    let domainOffset = seedOffset3(p.seed);\r
+\r
+    let base = vec3<f32>(\r
+      pos.x * invZoom + p.xShift,\r
+      pos.y * invZoom + p.yShift,\r
+      pos.z * invZoom + p.zShift\r
+    ) + domainOffset;\r
 \r
     var sum     : f32 = 0.0;\r
     var amp     : f32 = 1.0;\r
-    var freqLoc : f32 = p.freq;\r
+    var ampSum  : f32 = 0.0;\r
+    var freqLoc : f32 = max(p.freq, 1e-6);\r
     var angle   : f32 = p.seedAngle;\r
 \r
     for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {\r
-        var n = simplex3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
+        let samplePos = rotateXY3(base, angle) * freqLoc;\r
+        var n = simplex3D(samplePos);\r
         if (p.turbulence == 1u) { n = abs(n); }\r
         sum += n * amp;\r
+        ampSum += amp;\r
 \r
-        // advance octave\r
         freqLoc *= p.lacunarity;\r
         amp     *= p.gain;\r
-\r
-        // rotate in XY and bleed into Z \u2014 matches your Perlin cadence\r
-        let c  = cos(angle);\r
-        let s  = sin(angle);\r
-        let nx = x * c - y * s;\r
-        let ny = x * s + y * c;\r
-        let nz = y * s + z * c;\r
-\r
-        x = nx + p.xShift;\r
-        y = ny + p.yShift;\r
-        z = nz + p.zShift;\r
-\r
-        angle += ANGLE_INCREMENT;\r
+        angle   += ANGLE_INCREMENT;\r
     }\r
 \r
-    if (p.turbulence == 1u) { sum -= 1.0; }\r
+    if (ampSum > 0.0) {\r
+        sum = sum / ampSum;\r
+    }\r
+    if (p.turbulence == 1u) { sum = sum * 2.0 - 1.0; }\r
     return sum;\r
 }\r
 \r
 /*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Simplex-based fBm helper (normalized)  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
 fn sfbm3D(pos : vec3<f32>, params: NoiseParams) -> f32 {\r
-    var x = (pos.x + params.xShift) / params.zoom;\r
-    var y = (pos.y + params.yShift) / params.zoom;\r
-    var z = (pos.z + params.zShift) / params.zoom;\r
+    let invZoom = 1.0 / max(params.zoom, 1e-6);\r
+    let domainOffset = seedOffset3(params.seed);\r
+\r
+    let base = vec3<f32>(\r
+      pos.x * invZoom + params.xShift,\r
+      pos.y * invZoom + params.yShift,\r
+      pos.z * invZoom + params.zShift\r
+    ) + domainOffset;\r
 \r
     var sum       : f32 = 0.0;\r
     var amplitude : f32 = 1.0;\r
     var maxValue  : f32 = 0.0;\r
-    var freqLoc   : f32 = params.freq;\r
-\r
+    var freqLoc   : f32 = max(params.freq, 1e-6);\r
     var angle     : f32 = params.seedAngle;\r
     let angleInc  : f32 = 2.0 * PI / max(f32(params.octaves), 1.0);\r
 \r
     for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        var n = simplex3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
+        let samplePos = rotateXY3(base, angle) * freqLoc;\r
+        var n = simplex3D(samplePos);\r
         if (params.turbulence == 1u) { n = abs(n); }\r
 \r
         sum      += amplitude * n;\r
@@ -1817,21 +1857,15 @@ fn sfbm3D(pos : vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
         freqLoc   *= params.lacunarity;\r
         amplitude *= params.gain;\r
-\r
-        // rotate & shift per octave (keeps look consistent with Perlin FBM)\r
-        angle += angleInc;\r
-        let c = cos(angle);\r
-        let s = sin(angle);\r
-        let nx = x * c - y * s;\r
-        let ny = x * s + y * c;\r
-        let nz = y * s + z * c;\r
-        x = nx + params.xShift;\r
-        y = ny + params.yShift;\r
-        z = nz + params.zShift;\r
+        angle     += angleInc;\r
     }\r
 \r
     if (maxValue > 0.0) {\r
-        return sum / maxValue;\r
+        var out = sum / maxValue;\r
+        if (params.turbulence == 1u) {\r
+            out = out * 2.0 - 1.0;\r
+        }\r
+        return out;\r
     }\r
     return 0.0;\r
 }\r
@@ -1863,73 +1897,43 @@ fn generateGaborMagic(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
   return gaborMagicNoise3D(pos, par);\r
 }\r
 \r
-fn generateTerraceNoise(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
-    let base = generatePerlin(pos, par);\r
-    let v = terrace(base, par.terraceStep);\r
-    return v;\r
-}\r
-\r
-fn generateFoamNoise(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
-    let base = generateBillow(pos, par);\r
-    let v = foamify(base);\r
-    return v;\r
-}\r
-\r
-fn generateTurbulence(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
-    let base = generatePerlin(pos, par);\r
-    let v = turbulence(base);\r
-    return v;\r
-}\r
-\r
-\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Perlin Noise Generator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
-fn generatePerlin(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    // initial coords scaled by zoom\r
-    var x = pos.x / params.zoom * params.freq + params.xShift;\r
-    var y = pos.y / params.zoom * params.freq + params.yShift;\r
-    var z = pos.z / params.zoom * params.freq + params.zShift;\r
+fn generatePerlin(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let invZoom = 1.0 / max(params.zoom, 1e-6);\r
+  let domainOffset = seedOffset3(params.seed);\r
 \r
-    var sum : f32 = 0.0;\r
-    var amp : f32 = 1.0;\r
-    var freqLoc : f32 = params.freq;\r
-    var angle : f32 = params.seedAngle;\r
+  let base = vec3<f32>(\r
+    pos.x * invZoom + params.xShift,\r
+    pos.y * invZoom + params.yShift,\r
+    pos.z * invZoom + params.zShift\r
+  ) + domainOffset;\r
 \r
-    // accumulate octaves\r
-    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        // sample base noise\r
-        var n : f32 = noise3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)) * amp;\r
-        // optional billow / turbulence\r
-        if (params.turbulence == 1u) {\r
-            n = abs(n);\r
-        }\r
-        sum = sum + n;\r
+  var sum: f32 = 0.0;\r
+  var amp: f32 = 1.0;\r
+  var freqLoc: f32 = max(params.freq, 1e-6);\r
+  var angle: f32 = params.seedAngle;\r
 \r
-        // update frequency & amplitude\r
-        freqLoc = freqLoc * params.lacunarity;\r
-        amp     = amp     * params.gain;\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    let samplePos = rotateXY3(base, angle) * freqLoc;\r
 \r
-        // rotate coords in XY plane + push into Z\r
-        let c = cos(angle);\r
-        let s = sin(angle);\r
-        let nx = x * c - y * s;\r
-        let ny = x * s + y * c;\r
-        let nz = y * s + z * c;\r
-\r
-        // apply shifts\r
-        x = nx + params.xShift;\r
-        y = ny + params.yShift;\r
-        z = nz + params.zShift;\r
-\r
-        // increment angle\r
-        angle = angle + ANGLE_INCREMENT;\r
-    }\r
-\r
-    // final tweak for turbulence mode\r
+    var n: f32 = noise3D(samplePos);\r
     if (params.turbulence == 1u) {\r
-        sum = sum - 1.0;\r
+      n = abs(n);\r
     }\r
-    return sum;\r
+\r
+    sum += n * amp;\r
+\r
+    freqLoc *= params.lacunarity;\r
+    amp *= params.gain;\r
+    angle += ANGLE_INCREMENT;\r
+  }\r
+\r
+  if (params.turbulence == 1u) {\r
+    sum = sum - 1.0;\r
+  }\r
+\r
+  return sum;\r
 }\r
 \r
 \r
@@ -1937,30 +1941,23 @@ fn generatePerlin(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 fn generatePerlin4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
   let zoom = max(params.zoom, 1e-6);\r
 \r
-  // Prepare base coords + starting frequency\r
-  var base    : vec4<f32>;\r
-  var freqLoc : f32;\r
-\r
+  var base: vec4<f32>;\r
   if (params.toroidal == 1u) {\r
-    // pos = (U,V,\u03B8); HTML-style: apply zoom outside the octave loop\r
-    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
-    freqLoc = params.freq;                 // (freq/zoom) == (base/zoom * freq)\r
+    base = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
   } else {\r
-    // original non-toroidal semantics (note: freq is baked in before the loop)\r
     base = vec4<f32>(\r
-      pos.x / zoom * params.freq + params.xShift,\r
-      pos.y / zoom * params.freq + params.yShift,\r
-      pos.z / zoom * params.freq + params.zShift,\r
+      pos.x / zoom + params.xShift,\r
+      pos.y / zoom + params.yShift,\r
+      pos.z / zoom + params.zShift,\r
       params.time\r
     );\r
-    freqLoc = params.freq;\r
   }\r
 \r
-  var sum   : f32 = 0.0;\r
-  var amp   : f32 = 1.0;\r
-  var angle : f32 = params.seedAngle;\r
+  var sum     : f32 = 0.0;\r
+  var amp     : f32 = 1.0;\r
+  var freqLoc : f32 = max(params.freq, 1e-6);\r
+  var angle   : f32 = params.seedAngle;\r
 \r
-  // Shared octave loop\r
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
     var n = noise4D(base * freqLoc) * amp;\r
     if (params.turbulence == 1u) { n = abs(n); }\r
@@ -1969,7 +1966,6 @@ fn generatePerlin4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
     freqLoc *= params.lacunarity;\r
     amp     *= params.gain;\r
 \r
-    // Only the non-toroidal path uses octave rotation/offset churn\r
     if (params.toroidal != 1u) {\r
       let c = cos(angle);\r
       let s = sin(angle);\r
@@ -1990,47 +1986,59 @@ fn generatePerlin4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 }\r
 \r
 \r
+fn generateTerraceNoise(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+    let base = generatePerlin(pos, par);\r
+    let v = terrace(base, par.terraceStep);\r
+    return v;\r
+}\r
+\r
+fn generateFoamNoise(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+    let base = generateBillow(pos, par);\r
+    let v = foamify(base);\r
+    return v;\r
+}\r
+\r
+fn generateTurbulence(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+    let base = generatePerlin(pos, par);\r
+    let v = turbulence(base);\r
+    return v;\r
+}\r
+\r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Billow Noise Generator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateBillow(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    // Base domain mapping\r
-    var p = (pos / params.zoom) * params.freq\r
-          + vec3<f32>(params.xShift, params.yShift, params.zShift);\r
+    let zoom = max(params.zoom, 1e-6);\r
+\r
+    var p = pos / zoom + vec3<f32>(params.xShift, params.yShift, params.zShift);\r
 \r
     var sum: f32     = 0.0;\r
     var amp: f32     = 1.0;\r
-    var freqLoc: f32 = 1.0;          // start at base; multiply by lacunarity each octave\r
+    var freqLoc: f32 = max(params.freq, 1e-6);\r
     var ampSum: f32  = 0.0;\r
     var angle: f32   = params.seedAngle;\r
 \r
-    // Octave stack\r
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        // Billow core: absolute value of gradient noise\r
         let n  = noise3D(p * freqLoc);\r
-        let b  = pow(abs(n), 0.75);   // gentle gamma (<1) puffs the domes\r
+        let b  = pow(abs(n), 0.75);\r
         sum    = sum + b * amp;\r
         ampSum = ampSum + amp;\r
 \r
-        // Advance octave\r
         freqLoc = freqLoc * params.lacunarity;\r
         amp     = amp     * params.gain;\r
 \r
-        // Cheap domain rotation (XY) + tiny Z drift to break symmetry\r
         let c  = cos(angle);\r
         let s  = sin(angle);\r
         let xy = vec2<f32>(p.x, p.y);\r
         let r  = vec2<f32>(xy.x * c - xy.y * s, xy.x * s + xy.y * c);\r
-        p = vec3<f32>(r.x, r.y, p.z + 0.03125);   // small constant drift\r
+        p = vec3<f32>(r.x, r.y, p.z + 0.03125);\r
 \r
         angle = angle + ANGLE_INCREMENT;\r
     }\r
 \r
-    // Normalize to [0,1]\r
     if (ampSum > 0.0) {\r
         sum = sum / ampSum;\r
     }\r
 \r
-    // Mild contrast curve around 0.5 so domes pop without creating ridge-like creases\r
-    let k: f32 = 1.2;                // 1.0 = linear; >1 increases local contrast\r
+    let k: f32 = 1.2;\r
     let cMid   = sum - 0.5;\r
     let shaped = 0.5 + cMid * k / (1.0 + abs(cMid) * (k - 1.0));\r
 \r
@@ -2054,12 +2062,14 @@ fn ridgeNoise(pos : vec3<f32>) -> f32 {\r
 // octave\u2010sum generator using ridge noise\r
 // sample like: let r = generateRidge(vec3<f32>(x,y,z));\r
 fn generateRidge(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    var x = pos.x / params.zoom * params.freq + params.xShift;\r
-    var y = pos.y / params.zoom * params.freq + params.yShift;\r
-    var z = pos.z / params.zoom * params.freq + params.zShift;\r
+    let zoom = max(params.zoom, 1e-6);\r
+\r
+    var x = pos.x / zoom + params.xShift;\r
+    var y = pos.y / zoom + params.yShift;\r
+    var z = pos.z / zoom + params.zShift;\r
     var sum     : f32 = 0.0;\r
     var amp     : f32 = 1.0;\r
-    var freqLoc : f32 = params.freq;\r
+    var freqLoc : f32 = max(params.freq, 1e-6);\r
 \r
     for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
         sum = sum + ridgeNoise(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)) * amp;\r
@@ -2070,7 +2080,6 @@ fn generateRidge(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
         z = z + params.zShift;\r
     }\r
 \r
-    // JS did: sum -= 1; return -sum;\r
     sum = sum - 1.0;\r
     return -sum;\r
 }\r
@@ -2084,23 +2093,21 @@ fn generateAntiRidge(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Ridged Multifractal Noise (Fast Lanczos) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateRidgedMultifractal(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    // initial coords: zoom + freq\r
-    var x = pos.x / params.zoom * params.freq + params.xShift;\r
-    var y = pos.y / params.zoom * params.freq + params.yShift;\r
-    var z = pos.z / params.zoom * params.freq + params.zShift;\r
+    let zoom = max(params.zoom, 1e-6);\r
 \r
-    // first octave\r
-    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x, y, z)));\r
+    var x = pos.x / zoom + params.xShift;\r
+    var y = pos.y / zoom + params.yShift;\r
+    var z = pos.z / zoom + params.zShift;\r
+    var freqLoc : f32 = max(params.freq, 1e-6);\r
+\r
+    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)));\r
     var amp : f32 = 1.0;\r
 \r
-    // subsequent octaves\r
     for (var i:u32 = 1u; i < params.octaves; i = i + 1u) {\r
-        x = x * params.lacunarity;\r
-        y = y * params.lacunarity;\r
-        z = z * params.lacunarity;\r
+        freqLoc = freqLoc * params.lacunarity;\r
         amp = amp * params.gain;\r
 \r
-        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
+        var n : f32 = abs(lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)));\r
         if (params.exp2 != 0.0) {\r
             n = 1.0 - pow(n, params.exp2);\r
         }\r
@@ -2120,22 +2127,22 @@ fn generateRidgedMultifractal(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Ridged Multifractal Noise 2 (Fast Lanczos + Rotation) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateRidgedMultifractal2(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    // zoom + freq\r
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
+    let zoom = max(params.zoom, 1e-6);\r
 \r
-    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x, y, z)));\r
+    var x = (pos.x + params.xShift) / zoom;\r
+    var y = (pos.y + params.yShift) / zoom;\r
+    var z = (pos.z + params.zShift) / zoom;\r
+\r
+    var freqLoc : f32 = max(params.freq, 1e-6);\r
+    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)));\r
     var amp : f32 = 1.0;\r
     var angle : f32 = params.seedAngle;\r
 \r
     for (var i:u32 = 1u; i < params.octaves; i = i + 1u) {\r
-        x = x * params.lacunarity;\r
-        y = y * params.lacunarity;\r
-        z = z * params.lacunarity;\r
+        freqLoc = freqLoc * params.lacunarity;\r
         amp = amp * params.gain;\r
 \r
-        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
+        var n : f32 = abs(lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)));\r
         if (params.exp2 != 0.0) {\r
             n = 1.0 - pow(n, params.exp2);\r
         }\r
@@ -2145,7 +2152,6 @@ fn generateRidgedMultifractal2(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
         sum = sum - n * amp;\r
 \r
-        // proper 2D rotation around Z:\r
         let c = cos(angle);\r
         let s = sin(angle);\r
         let nx = x * c - y * s;\r
@@ -2164,17 +2170,19 @@ fn generateRidgedMultifractal2(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Ridged Multifractal Noise 3 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateRidgedMultifractal3(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    // zoom + freq\r
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
+    let zoom = max(params.zoom, 1e-6);\r
+\r
+    var x = (pos.x + params.xShift) / zoom;\r
+    var y = (pos.y + params.yShift) / zoom;\r
+    var z = (pos.z + params.zShift) / zoom;\r
     var sum : f32 = 0.0;\r
     var amp : f32 = 1.0;\r
+    var freqLoc : f32 = max(params.freq, 1e-6);\r
 \r
     for (var i:u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        var n : f32 = lanczos3D(vec3<f32>(x, y, z));\r
+        var n : f32 = lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
         n = max(1e-7, n + 1.0);\r
-        n = 2.0 * pow(n * 0.5, params.exp2+1.5) - 1.0;\r
+        n = 2.0 * pow(n * 0.5, params.exp2 + 1.5) - 1.0;\r
         n = 1.0 - abs(n);\r
         if (params.exp1 - 1.0 != 0.0) {\r
             n = 1.0 - pow(n, params.exp1 - 1.0);\r
@@ -2182,9 +2190,10 @@ fn generateRidgedMultifractal3(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
         sum = sum + n * amp;\r
 \r
-        x = x * params.lacunarity + params.xShift;\r
-        y = y * params.lacunarity + params.yShift;\r
-        z = z * params.lacunarity + params.zShift;\r
+        freqLoc = freqLoc * params.lacunarity;\r
+        x = x + params.xShift;\r
+        y = y + params.yShift;\r
+        z = z + params.zShift;\r
         amp = amp * params.gain;\r
     }\r
 \r
@@ -2193,14 +2202,17 @@ fn generateRidgedMultifractal3(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Ridged Multifractal Noise 4 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateRidgedMultifractal4(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
+    let zoom = max(params.zoom, 1e-6);\r
+\r
+    var x = (pos.x + params.xShift) / zoom;\r
+    var y = (pos.y + params.yShift) / zoom;\r
+    var z = (pos.z + params.zShift) / zoom;\r
     var sum : f32 = 0.0;\r
     var amp : f32 = 1.0;\r
+    var freqLoc : f32 = max(params.freq, 1e-6);\r
 \r
     for (var i:u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
+        var n : f32 = abs(lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)));\r
         if (params.exp2 != 0.0) {\r
             n = 1.0 - pow(n, params.exp2);\r
         }\r
@@ -2210,13 +2222,14 @@ fn generateRidgedMultifractal4(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
         sum = sum + n * amp;\r
 \r
-        x = x * params.lacunarity + params.xShift;\r
-        y = y * params.lacunarity + params.yShift;\r
-        z = z * params.lacunarity + params.zShift;\r
+        freqLoc = freqLoc * params.lacunarity;\r
+        x = x + params.xShift;\r
+        y = y + params.yShift;\r
+        z = z + params.zShift;\r
         amp = amp * params.gain;\r
     }\r
 \r
-    return sum - 1.0;\r
+    return 1.0 - sum;\r
 }\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Anti\u2010Ridged Multifractal Noise \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
@@ -2250,7 +2263,7 @@ fn fbm3D(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
     var sum       : f32 = 0.0;\r
     var amplitude : f32 = 1.0;\r
     var maxValue  : f32 = 0.0;\r
-    var freqLoc   : f32 = params.freq;\r
+    var freqLoc   : f32 = max(params.freq, 1e-6);\r
     // start angle from uniform seedAngle\r
     var angle     : f32 = params.seedAngle;\r
     let angleInc  : f32 = 2.0 * PI / f32(params.octaves);\r
@@ -2330,7 +2343,7 @@ fn fbmCellular3D(pos : vec3<f32>, params : NoiseParams) -> f32 {\r
 \r
     var sum     : f32 = 0.0;\r
     var amp     : f32 = 1.0;\r
-    var freqLoc : f32 = params.freq;\r
+    var freqLoc : f32 = max(params.freq, 1e-6);\r
 \r
     var angle   : f32 = params.seedAngle;\r
     let angleInc: f32 = 2.0 * PI / f32(params.octaves);\r
@@ -2384,7 +2397,7 @@ fn generateVoronoi4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
   var sum: f32 = 0.0;\r
   var amp: f32 = 1.0;\r
-  var freqLoc: f32 = params.freq / zoom;\r
+  var freqLoc: f32 = max(params.freq, 1e-6);\r
 \r
   let mode: u32 = params.voroMode;\r
   let edgeK: f32 = max(params.edgeK, 0.0);\r
@@ -2435,45 +2448,33 @@ fn generateVoronoi4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Voronoi Tile Noise (Edge-Aware) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateVoronoiTileNoise(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-  // match generateVoronoi zoom handling\r
   let zoom = max(params.zoom, 1e-6);\r
   var sum   : f32 = 0.0;\r
   var amp   : f32 = 1.0;\r
-  var freqLoc : f32 = params.freq / zoom;\r
+  var freqLoc : f32 = max(params.freq, 1e-6);\r
 \r
-  // always use the edge-threshold mode for this tile-noise helper\r
   let mode : u32 = params.voroMode;\r
-  let edgeK : f32 = max(params.edgeK, 0.0);      // kept if you want to tune\r
+  let edgeK : f32 = max(params.edgeK, 0.0);\r
   let thresh : f32 = max(params.threshold, 0.0);\r
 \r
-  // initial sample point (match non-toroidal branch of generateVoronoi)\r
   var x = (pos.x + params.xShift) / zoom;\r
   var y = (pos.y + params.yShift) / zoom;\r
   var z = (pos.z + params.zShift) / zoom;\r
 \r
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-    // build octave sample pos (same convention as generateVoronoi)\r
     let P = vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc);\r
-\r
-    // get metrics and evaluate using VORO_EDGE_THRESH (voro_eval implements F2-F1 gating)\r
     let m = voro3D_metrics(P);\r
     let v = voro_eval(m.f1Sq, m.f2Sq, m.cellVal, mode, edgeK, thresh, freqLoc);\r
 \r
     sum = sum + v * amp;\r
 \r
-    // octave updates\r
     freqLoc = freqLoc * params.lacunarity;\r
     amp     = amp * params.gain;\r
 \r
-    // apply simple per-octave drift (matches previous tile-style)\r
     x = x + params.xShift;\r
     y = y + params.yShift;\r
     z = z + params.zShift;\r
   }\r
-\r
-  // NOTE: generateVoronoi returns the raw sum (not remapped).\r
-  // If you need legacy behaviour that remapped to [-1,1], uncomment the next line:\r
-  // return 2.0 * sum - 1.0;\r
 \r
   return sum;\r
 }\r
@@ -2672,7 +2673,7 @@ fn generateCellular(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
   var sum     : f32 = 0.0;\r
   var amp     : f32 = 1.0;\r
-  var freqLoc : f32 = params.freq;\r
+  var freqLoc : f32 = max(params.freq, 1e-6);\r
   var angle   : f32 = params.seedAngle;\r
 \r
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
@@ -2714,7 +2715,7 @@ fn generateWorley(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
   var sum     : f32 = 0.0;\r
   var amp     : f32 = 1.0;\r
-  var freqLoc : f32 = params.freq;\r
+  var freqLoc : f32 = max(params.freq, 1e-6);\r
   var angle   : f32 = params.seedAngle;\r
 \r
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
@@ -2752,25 +2753,22 @@ fn generateAntiWorley(pos: vec3<f32>, params: NoiseParams) -> f32 { \r
 fn generateCellular4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
   let zoom = max(params.zoom, 1e-6);\r
 \r
-  var base    : vec4<f32>;\r
-  var freqLoc : f32;\r
-\r
+  var base: vec4<f32>;\r
   if (params.toroidal == 1u) {\r
-    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
-    freqLoc = params.freq;\r
+    base = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
   } else {\r
     base = vec4<f32>(\r
-      pos.x / zoom * params.freq + params.xShift,\r
-      pos.y / zoom * params.freq + params.yShift,\r
-      pos.z / zoom * params.freq + params.zShift,\r
+      pos.x / zoom + params.xShift,\r
+      pos.y / zoom + params.yShift,\r
+      pos.z / zoom + params.zShift,\r
       params.time\r
     );\r
-    freqLoc = params.freq;\r
   }\r
 \r
-  var sum   : f32 = 0.0;\r
-  var amp   : f32 = 1.0;\r
-  var angle : f32 = params.seedAngle;\r
+  var sum     : f32 = 0.0;\r
+  var amp     : f32 = 1.0;\r
+  var freqLoc : f32 = max(params.freq, 1e-6);\r
+  var angle   : f32 = params.seedAngle;\r
 \r
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
     let s = voro_sample4D(base * freqLoc);\r
@@ -2810,25 +2808,22 @@ fn generateAntiCellular4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 fn generateWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
   let zoom = max(params.zoom, 1e-6);\r
 \r
-  var base    : vec4<f32>;\r
-  var freqLoc : f32;\r
-\r
+  var base: vec4<f32>;\r
   if (params.toroidal == 1u) {\r
-    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
-    freqLoc = params.freq;\r
+    base = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
   } else {\r
     base = vec4<f32>(\r
-      pos.x / zoom * params.freq + params.xShift,\r
-      pos.y / zoom * params.freq + params.yShift,\r
-      pos.z / zoom * params.freq + params.zShift,\r
+      pos.x / zoom + params.xShift,\r
+      pos.y / zoom + params.yShift,\r
+      pos.z / zoom + params.zShift,\r
       params.time\r
     );\r
-    freqLoc = params.freq;\r
   }\r
 \r
   var sum    : f32 = 0.0;\r
   var amp    : f32 = 1.0;\r
   var ampSum : f32 = 0.0;\r
+  var freqLoc : f32 = max(params.freq, 1e-6);\r
   var angle  : f32 = params.seedAngle;\r
 \r
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
@@ -2983,16 +2978,16 @@ fn generateBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
     base = packPeriodicUV(pos.x, pos.y, pos.z + params.time) / zoom;\r
   } else {\r
     base = vec4<f32>(\r
-      (pos.x / zoom) * params.freq + params.xShift,\r
-      (pos.y / zoom) * params.freq + params.yShift,\r
-      (pos.z / zoom) * params.freq + params.zShift,\r
+      pos.x / zoom + params.xShift,\r
+      pos.y / zoom + params.yShift,\r
+      pos.z / zoom + params.zShift,\r
       params.time\r
     );\r
   }\r
 \r
   var sum: f32 = 0.0;\r
   var amp: f32 = 1.0;\r
-  var freqLoc: f32 = params.freq;\r
+  var freqLoc: f32 = max(params.freq, 1e-6);\r
   var ampSum: f32 = 0.0;\r
   var angle: f32 = params.seedAngle;\r
 \r
@@ -3069,23 +3064,24 @@ fn generateLanczosBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
     base = packPeriodicUV(pos.x, pos.y, pos.z + params.time) / zoom;\r
   } else {\r
     base = vec4<f32>(\r
-      (pos.x / zoom) * params.freq + params.xShift,\r
-      (pos.y / zoom) * params.freq + params.yShift,\r
-      (pos.z / zoom) * params.freq + params.zShift,\r
+      pos.x / zoom + params.xShift,\r
+      pos.y / zoom + params.yShift,\r
+      pos.z / zoom + params.zShift,\r
       params.time\r
     );\r
   }\r
 \r
   var sum: f32 = 0.0;\r
   var amp: f32 = 1.0;\r
-  var maxAmp: f32 = 0.0;\r
-  var freqLoc: f32 = params.freq;\r
+  var ampSum: f32 = 0.0;\r
+  var freqLoc: f32 = max(params.freq, 1e-6);\r
   var angle: f32 = params.seedAngle;\r
 \r
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
     let n = lowpass4D(base * freqLoc);\r
-    sum += (2.0 * abs(n) - 1.0) * amp;\r
-    maxAmp += amp;\r
+    let b = pow(abs(n), 0.75);\r
+    sum += b * amp;\r
+    ampSum += amp;\r
 \r
     freqLoc *= params.lacunarity;\r
     amp *= params.gain;\r
@@ -3105,11 +3101,17 @@ fn generateLanczosBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
     }\r
   }\r
 \r
-  return select(0.0, sum / maxAmp, maxAmp > 0.0);\r
+  if (ampSum > 0.0) { sum /= ampSum; }\r
+\r
+  let k: f32 = 1.2;\r
+  let cMid = sum - 0.5;\r
+  let shaped = 0.5 + cMid * k / (1.0 + abs(cMid) * (k - 1.0));\r
+\r
+  return clamp(shaped, 0.0, 1.0);\r
 }\r
 \r
 fn generateLanczosAntiBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-  return -generateLanczosBillow4D(pos, params);\r
+  return 1.0 - generateLanczosBillow4D(pos, params);\r
 }\r
 \r
 \r
@@ -3121,7 +3123,7 @@ fn fbm4D_core(base: vec4<f32>, params: NoiseParams) -> f32 {\r
   var sum: f32 = 0.0;\r
   var amp: f32 = 1.0;\r
   var maxAmp: f32 = 0.0;\r
-  var freqLoc: f32 = params.freq;\r
+  var freqLoc: f32 = max(params.freq, 1e-6);\r
 \r
   var angle: f32 = params.seedAngle;\r
   let angleInc: f32 = 2.0 * PI / max(f32(params.octaves), 1.0);\r
@@ -3227,7 +3229,7 @@ fn generateLanczosBillow(pos : vec3<f32>, p : NoiseParams) -> f32 {\r
     var sum     : f32 = 0.0;\r
     var maxAmp  : f32 = 0.0;\r
     var amp     : f32 = 1.0;\r
-    var freqLoc : f32 = p.freq;\r
+    var freqLoc : f32 = max(p.freq, 1e-6);\r
     var angle   : f32 = p.seedAngle;\r
 \r
     for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {\r
@@ -3326,13 +3328,13 @@ fn voronoiCircleGradient(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
 // Octaved generator matching your JS .generateNoise()\r
 fn generateVoronoiCircleNoise(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    // zoom in/out\r
-    var x       = (pos.x + params.xShift) / params.zoom;\r
-    var y       = (pos.y + params.yShift) / params.zoom;\r
-    var z       = (pos.z + params.zShift) / params.zoom;\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var x       = pos.x / zoom + params.xShift;\r
+    var y       = pos.y / zoom + params.yShift;\r
+    var z       = pos.z / zoom + params.zShift;\r
     var total : f32 = 0.0;\r
     var amp   : f32 = 1.0;\r
-    var freq  : f32 = params.freq;\r
+    var freq  : f32 = max(params.freq, 1e-6);\r
 \r
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
         let samplePos = vec3<f32>(x * freq, y * freq, z * freq);\r
@@ -3414,19 +3416,18 @@ fn voronoiCircleGradient2Raw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 }\r
 \r
 fn generateVoronoiCircle2(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    var x = pos.x + params.xShift;\r
-    var y = pos.y + params.yShift;\r
-    var z = pos.z + params.zShift;\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var x = pos.x / zoom + params.xShift;\r
+    var y = pos.y / zoom + params.yShift;\r
+    var z = pos.z / zoom + params.zShift;\r
     var total : f32 = 0.0;\r
     var amp   : f32 = 1.0;\r
-    var freq  : f32 = params.freq;\r
+    var freq  : f32 = max(params.freq, 1e-6);\r
     var angle     : f32 = params.seedAngle;\r
-    let angleInc  : f32 = 2.0 * PI / f32(params.octaves);\r
+    let angleInc  : f32 = 2.0 * PI / max(f32(params.octaves), 1.0);\r
 \r
     for(var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        let samplePos = vec3<f32>(x * freq / params.zoom,\r
-                                  y * freq / params.zoom,\r
-                                  z * freq / params.zoom);\r
+        let samplePos = vec3<f32>(x * freq, y * freq, z * freq);\r
         total = total + voronoiCircleGradient2Raw(samplePos, params) * amp;\r
         amp   = amp * params.gain;\r
         freq  = freq * params.lacunarity;\r
@@ -3471,10 +3472,11 @@ fn voronoiFlatShadeRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 }\r
 \r
 fn generateVoronoiFlatShade(posIn: vec3<f32>, params: NoiseParams) -> f32 {\r
-    var pos = posIn / params.zoom;\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var pos = posIn / zoom + vec3<f32>(params.xShift, params.yShift, params.zShift);\r
     var total : f32 = 0.0;\r
     var amp   : f32 = 1.0;\r
-    var freq  : f32 = params.freq;\r
+    var freq  : f32 = max(params.freq, 1e-6);\r
     for(var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
         total = total + voronoiFlatShadeRaw(pos * freq, params) * amp;\r
         amp  = amp * params.gain;\r
@@ -3520,16 +3522,15 @@ fn voronoiRipple3DRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 }\r
 \r
 fn generateVoronoiRipple3D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    var x = pos.x + params.xShift;\r
-    var y = pos.y + params.yShift;\r
-    var z = pos.z + params.zShift;\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var x = pos.x / zoom + params.xShift;\r
+    var y = pos.y / zoom + params.yShift;\r
+    var z = pos.z / zoom + params.zShift;\r
     var total : f32 = 0.0;\r
     var amp   : f32 = 1.0;\r
-    var freq  : f32 = params.freq;\r
+    var freq  : f32 = max(params.freq, 1e-6);\r
     for(var i: u32=0u; i<params.octaves; i=i+1u) {\r
-        let sample = vec3<f32>(x * freq / params.zoom,\r
-                               y * freq / params.zoom,\r
-                               z * freq / params.zoom);\r
+        let sample = vec3<f32>(x * freq, y * freq, z * freq);\r
         total = total + voronoiRipple3DRaw(sample, params) * amp;\r
         amp   = amp * params.gain;\r
         freq  = freq * params.lacunarity;\r
@@ -3577,17 +3578,16 @@ fn voronoiRipple3D2Raw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 }\r
 \r
 fn generateVoronoiRipple3D2(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    var x = pos.x + params.xShift;\r
-    var y = pos.y + params.yShift;\r
-    var z = pos.z + params.zShift;\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var x = pos.x / zoom + params.xShift;\r
+    var y = pos.y / zoom + params.yShift;\r
+    var z = pos.z / zoom + params.zShift;\r
     var total: f32 = 0.0;\r
     var amp: f32 = 1.0;\r
-    var freq: f32 = params.freq;\r
+    var freq: f32 = max(params.freq, 1e-6);\r
 \r
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        let sample = vec3<f32>(x * freq / params.zoom,\r
-                               y * freq / params.zoom,\r
-                               z * freq / params.zoom);\r
+        let sample = vec3<f32>(x * freq, y * freq, z * freq);\r
         total = total + voronoiRipple3D2Raw(sample, params) * amp;\r
         amp = amp * params.gain;\r
         freq = freq * params.lacunarity;\r
@@ -3628,17 +3628,16 @@ fn voronoiCircularRippleRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 }\r
 \r
 fn generateVoronoiCircularRipple(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    var x = pos.x + params.xShift;\r
-    var y = pos.y + params.yShift;\r
-    var z = pos.z + params.zShift;\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var x = pos.x / zoom + params.xShift;\r
+    var y = pos.y / zoom + params.yShift;\r
+    var z = pos.z / zoom + params.zShift;\r
     var total: f32 = 0.0;\r
     var amp: f32 = 1.0;\r
-    var freq: f32 = params.freq;\r
+    var freq: f32 = max(params.freq, 1e-6);\r
 \r
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        let sample = vec3<f32>(x * freq / params.zoom,\r
-                               y * freq / params.zoom,\r
-                               z * freq / params.zoom);\r
+        let sample = vec3<f32>(x * freq, y * freq, z * freq);\r
         total = total + voronoiCircularRippleRaw(sample, params) * amp;\r
         amp = amp * params.gain;\r
         freq = freq * params.lacunarity;\r
@@ -3718,15 +3717,16 @@ fn calculateRippleEffect(pos: vec3<f32>,\r
 \r
 // \u2014\u2014\u2014 generateRippleNoise \u2014\u2014\u2014\r
 fn generateRippleNoise(pos: vec3<f32>, p: NoiseParams) -> f32 {\r
-    var x = (pos.x + p.xShift) / p.zoom;\r
-    var y = (pos.y + p.yShift) / p.zoom;\r
-    var z = (pos.z + p.zShift) / p.zoom;\r
+    let zoom = max(p.zoom, 1e-6);\r
+    var x = pos.x / zoom + p.xShift;\r
+    var y = pos.y / zoom + p.yShift;\r
+    var z = pos.z / zoom + p.zShift;\r
     var sum: f32 = 0.0;\r
     var amp: f32 = 1.0;\r
-    var freq: f32 = p.freq;\r
+    var freq: f32 = max(p.freq, 1e-6);\r
     var angle: f32 = p.seedAngle * 2.0 * PI;\r
-    let angleInc = 2.0 * PI / f32(p.octaves);\r
-    let rippleFreqScaled = p.rippleFreq / p.zoom;\r
+    let angleInc = 2.0 * PI / max(f32(p.octaves), 1.0);\r
+    let rippleFreqScaled = p.rippleFreq;\r
     let neigh = i32(p.exp1);\r
 \r
     for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {\r
@@ -3804,10 +3804,11 @@ fn hexWormsRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
 // \u2014\u2014\u2014 2. HexWorms Generator \u2014\u2014\u2014\r
 fn generateHexWormsNoise(posIn: vec3<f32>, params: NoiseParams) -> f32 {\r
-    var pos   = posIn / params.zoom;\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var pos   = posIn / zoom + vec3<f32>(params.xShift, params.yShift, params.zShift);\r
     var sum   : f32 = 0.0;\r
     var amp   : f32 = 1.0;\r
-    var freq  : f32 = params.freq;\r
+    var freq  : f32 = max(params.freq, 1e-6);\r
 \r
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
         sum = sum + hexWormsRaw(pos * freq, params) * amp;\r
@@ -3851,10 +3852,11 @@ fn perlinWormsRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
 // \u2014\u2014\u2014 PerlinWorms Generator \u2014\u2014\u2014\r
 fn generatePerlinWormsNoise(posIn: vec3<f32>, params: NoiseParams) -> f32 {\r
-    var pos   = posIn / params.zoom;\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var pos   = posIn / zoom + vec3<f32>(params.xShift, params.yShift, params.zShift);\r
     var sum   : f32 = 0.0;\r
     var amp   : f32 = 1.0;\r
-    var freq  : f32 = params.freq;\r
+    var freq  : f32 = max(params.freq, 1e-6);\r
 \r
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
         sum = sum + perlinWormsRaw(pos * freq, params) * amp;\r
@@ -4032,7 +4034,593 @@ fn generateBlueNoise(pos : vec3<f32>, params: NoiseParams) -> f32 {\r
   return rClamped * 0.5 + 0.5;\r
 }\r
 \r
+const HYDRO_TAU : f32 = 6.283185307179586;\r
 \r
+fn hydroClamp01(x: f32) -> f32 {\r
+  return clamp(x, 0.0, 1.0);\r
+}\r
+\r
+fn hydroHash2(p: vec2<f32>) -> vec2<f32> {\r
+  let k = vec2<f32>(0.3183099, 0.3678794);\r
+  let q = p * k + k.yx;\r
+  return -1.0 + 2.0 * fract(16.0 * k * fract(q.x * q.y * (q.x + q.y)));\r
+}\r
+\r
+fn hydroSafeNormalize2(v: vec2<f32>) -> vec2<f32> {\r
+  let l = length(v);\r
+  if (l > 1e-10) {\r
+    return v / l;\r
+  }\r
+  return vec2<f32>(0.0, 0.0);\r
+}\r
+\r
+fn hydroPowInv(t: f32, power: f32) -> f32 {\r
+  return 1.0 - pow(1.0 - hydroClamp01(t), power);\r
+}\r
+\r
+fn hydroEaseOut(t: f32) -> f32 {\r
+  let v = 1.0 - hydroClamp01(t);\r
+  return 1.0 - v * v;\r
+}\r
+\r
+fn hydroSmoothStart(t: f32, smoothing: f32) -> f32 {\r
+  let s = max(smoothing, 1e-6);\r
+  if (t >= s) {\r
+    return t - 0.5 * s;\r
+  }\r
+  return 0.5 * t * t / s;\r
+}\r
+\r
+fn hydroLoadPrevClamped2D(fx: i32, fy: i32, fz: i32) -> vec4<f32> {\r
+  let cx = clamp(fx, 0, i32(frame.fullWidth) - 1);\r
+  let cy = clamp(fy, 0, i32(frame.fullHeight) - 1);\r
+  return loadPrevRGBA(cx, cy, fz);\r
+}\r
+\r
+fn hydroFetchPosClamped2D(fx: i32, fy: i32, fz: i32) -> vec3<f32> {\r
+  let cx = clamp(fx, 0, i32(frame.fullWidth) - 1);\r
+  let cy = clamp(fy, 0, i32(frame.fullHeight) - 1);\r
+  return fetchPos(cx, cy, fz);\r
+}\r
+\r
+fn hydroResolutionScale() -> f32 {\r
+  let refRes = 1024.0;\r
+  let curRes = max(min(f32(frame.fullWidth), f32(frame.fullHeight)), 1.0);\r
+  return curRes / refRes;\r
+}\r
+\r
+fn hydroResolveFiniteSlope2D(fx: i32, fy: i32, fz: i32) -> vec2<f32> {\r
+  let hL = hydroLoadPrevClamped2D(fx - 1, fy, fz).x;\r
+  let hR = hydroLoadPrevClamped2D(fx + 1, fy, fz).x;\r
+  let hD = hydroLoadPrevClamped2D(fx, fy - 1, fz).x;\r
+  let hU = hydroLoadPrevClamped2D(fx, fy + 1, fz).x;\r
+\r
+  let pL = hydroFetchPosClamped2D(fx - 1, fy, fz);\r
+  let pR = hydroFetchPosClamped2D(fx + 1, fy, fz);\r
+  let pD = hydroFetchPosClamped2D(fx, fy - 1, fz);\r
+  let pU = hydroFetchPosClamped2D(fx, fy + 1, fz);\r
+\r
+  let dx = max(abs(pR.x - pL.x), 1e-6);\r
+  let dy = max(abs(pU.y - pD.y), 1e-6);\r
+\r
+  let dHdX = (hR - hL) / dx;\r
+  let dHdY = (hU - hD) / dy;\r
+\r
+  return vec2<f32>(dHdX, dHdY);\r
+}\r
+\r
+fn hydroGuideGaussian(dx: i32, dy: i32, sigmaPx: f32) -> f32 {\r
+  let s = max(sigmaPx, 0.05);\r
+  let d2 = f32(dx * dx + dy * dy);\r
+  return exp(-0.5 * d2 / (s * s));\r
+}\r
+\r
+fn hydroGuideHeightAt(fx: i32, fy: i32, fz: i32, sigmaWorld: f32) -> f32 {\r
+  let sigmaPx = sigmaWorld * hydroResolutionScale();\r
+\r
+  var sumW = 0.0;\r
+  var sumH = 0.0;\r
+\r
+  for (var j: i32 = -4; j <= 4; j = j + 1) {\r
+    for (var i: i32 = -4; i <= 4; i = i + 1) {\r
+      let h = hydroLoadPrevClamped2D(fx + i, fy + j, fz).x;\r
+      let w = hydroGuideGaussian(i, j, sigmaPx);\r
+      sumW += w;\r
+      sumH += h * w;\r
+    }\r
+  }\r
+\r
+  return sumH / max(sumW, 1e-6);\r
+}\r
+\r
+fn hydroDrainBlurWeight(dx: i32, dy: i32, sigmaPx: f32) -> f32 {\r
+  let s = max(sigmaPx, 0.05);\r
+  let d2 = f32(dx * dx + dy * dy);\r
+  return exp(-0.5 * d2 / (s * s));\r
+}\r
+\r
+fn hydroBlurredHeightAt(fx: i32, fy: i32, fz: i32, sigmaWorld: f32) -> f32 {\r
+  let sigmaPx = sigmaWorld * hydroResolutionScale();\r
+\r
+  var sumW = 0.0;\r
+  var sumH = 0.0;\r
+\r
+  for (var j: i32 = -4; j <= 4; j = j + 1) {\r
+    for (var i: i32 = -4; i <= 4; i = i + 1) {\r
+      let s = hydroLoadPrevClamped2D(fx + i, fy + j, fz).x;\r
+      let w = hydroDrainBlurWeight(i, j, sigmaPx);\r
+      sumW += w;\r
+      sumH += s * w;\r
+    }\r
+  }\r
+\r
+  return sumH / max(sumW, 1e-6);\r
+}\r
+\r
+fn hydroBlurredRidgeAt(fx: i32, fy: i32, fz: i32, sigmaWorld: f32) -> f32 {\r
+  let sigmaPx = sigmaWorld * hydroResolutionScale();\r
+\r
+  var sumW = 0.0;\r
+  var sumR = 0.0;\r
+\r
+  for (var j: i32 = -4; j <= 4; j = j + 1) {\r
+    for (var i: i32 = -4; i <= 4; i = i + 1) {\r
+      let s = hydroLoadPrevClamped2D(fx + i, fy + j, fz);\r
+      let ridge = s.w * 2.0 - 1.0;\r
+      let w = hydroDrainBlurWeight(i, j, sigmaPx);\r
+      sumW += w;\r
+      sumR += ridge * w;\r
+    }\r
+  }\r
+\r
+  return sumR / max(sumW, 1e-6);\r
+}\r
+\r
+fn hydroPhacelleNoise(\r
+  p: vec2<f32>,\r
+  normDir: vec2<f32>,\r
+  freq: f32,\r
+  offset: f32,\r
+  normalization: f32\r
+) -> vec4<f32> {\r
+  let sideDir = normDir.yx * vec2<f32>(-1.0, 1.0) * freq * HYDRO_TAU;\r
+  let phaseOffset = offset * HYDRO_TAU;\r
+\r
+  let pInt = floor(p);\r
+  let pFrac = fract(p);\r
+\r
+  var phaseDir = vec2<f32>(0.0);\r
+  var weightSum = 0.0;\r
+\r
+  for (var j: i32 = -1; j <= 2; j = j + 1) {\r
+    for (var i: i32 = -1; i <= 2; i = i + 1) {\r
+      let gridOffset = vec2<f32>(f32(i), f32(j));\r
+      let gridPoint = pInt + gridOffset;\r
+      let randomOffset = hydroHash2(gridPoint) * 0.5;\r
+      let v = pFrac - gridOffset - randomOffset;\r
+\r
+      let sqrDist = dot(v, v);\r
+      var weight = exp(-sqrDist * 2.0);\r
+      weight = max(0.0, weight - 0.01111);\r
+\r
+      weightSum += weight;\r
+\r
+      let waveInput = dot(v, sideDir) + phaseOffset;\r
+      phaseDir += vec2<f32>(cos(waveInput), sin(waveInput)) * weight;\r
+    }\r
+  }\r
+\r
+  let interpolated = phaseDir / max(weightSum, 1e-6);\r
+  let mag = max(1.0 - normalization, length(interpolated));\r
+\r
+  return vec4<f32>(interpolated / max(mag, 1e-6), sideDir);\r
+}\r
+\r
+fn hydroPixelSpan2D(fx: i32, fy: i32, fz: i32) -> f32 {\r
+  let pL = hydroFetchPosClamped2D(fx - 1, fy, fz);\r
+  let pR = hydroFetchPosClamped2D(fx + 1, fy, fz);\r
+  let pD = hydroFetchPosClamped2D(fx, fy - 1, fz);\r
+  let pU = hydroFetchPosClamped2D(fx, fy + 1, fz);\r
+\r
+  let dx = max(abs(pR.x - pL.x) * 0.5, 1e-6);\r
+  let dy = max(abs(pU.y - pD.y) * 0.5, 1e-6);\r
+\r
+  return max(dx, dy);\r
+}\r
+\r
+fn hydroErosionFilter(\r
+  p: vec2<f32>,\r
+  heightAndSlopeIn: vec3<f32>,\r
+  fadeTargetIn: f32,\r
+  strengthIn: f32,\r
+  gullyWeightIn: f32,\r
+  detailIn: f32,\r
+  roundingIn: vec4<f32>,\r
+  onsetIn: vec4<f32>,\r
+  assumedSlopeIn: vec2<f32>,\r
+  scaleIn: f32,\r
+  octavesIn: u32,\r
+  lacunarityIn: f32,\r
+  gainIn: f32,\r
+  cellScaleIn: f32,\r
+  normalizationIn: f32,\r
+  pixelSpanIn: f32,\r
+  ridgeMapOut: ptr<function, f32>\r
+) -> vec4<f32> {\r
+  var heightAndSlope = heightAndSlopeIn;\r
+  var fadeTarget = clamp(fadeTargetIn, -1.0, 1.0);\r
+\r
+  let inputHeightAndSlope = heightAndSlopeIn;\r
+\r
+  var strength = strengthIn * scaleIn;\r
+  var freq = 1.0 / max(scaleIn * cellScaleIn, 1e-6);\r
+  let slopeLength = max(length(heightAndSlopeIn.yz), 1e-10);\r
+  var magnitude = 0.0;\r
+  var roundingMult = 1.0;\r
+\r
+  let roundingForInput =\r
+    mix(roundingIn.y, roundingIn.x, hydroClamp01(fadeTarget + 0.5)) * roundingIn.z;\r
+\r
+  var combiMask =\r
+    hydroEaseOut(hydroSmoothStart(slopeLength * onsetIn.x, roundingForInput * onsetIn.x));\r
+\r
+  var ridgeMapCombiMask = hydroEaseOut(slopeLength * onsetIn.z);\r
+  var ridgeMapFadeTarget = fadeTarget;\r
+\r
+  var gullySlope =\r
+    mix(\r
+      heightAndSlopeIn.yz,\r
+      hydroSafeNormalize2(heightAndSlopeIn.yz) * assumedSlopeIn.x,\r
+      assumedSlopeIn.y\r
+    );\r
+\r
+  let pixelSpan = max(pixelSpanIn, 1e-6);\r
+\r
+  for (var i: u32 = 0u; i < octavesIn; i = i + 1u) {\r
+    let stripeStep = freq * cellScaleIn * HYDRO_TAU * pixelSpan;\r
+    let stripeMask = 1.0 - smoothstep(1.05, 2.40, stripeStep);\r
+\r
+    if (stripeMask <= 1e-4) {\r
+      break;\r
+    }\r
+\r
+    var phacelle =\r
+      hydroPhacelleNoise(\r
+        p * freq,\r
+        hydroSafeNormalize2(gullySlope),\r
+        cellScaleIn,\r
+        0.25,\r
+        normalizationIn\r
+      );\r
+\r
+    phacelle = vec4<f32>(phacelle.xy, phacelle.z * -freq, phacelle.w * -freq);\r
+    let sloping = abs(phacelle.y);\r
+\r
+    let octaveStrength = strength * stripeMask;\r
+\r
+    gullySlope += sign(phacelle.y) * phacelle.zw * octaveStrength * gullyWeightIn;\r
+\r
+    let gullies = vec3<f32>(phacelle.x, phacelle.y * phacelle.zw);\r
+    let fadedGullies =\r
+      mix(vec3<f32>(fadeTarget, 0.0, 0.0), gullies * gullyWeightIn, combiMask);\r
+\r
+    heightAndSlope += fadedGullies * octaveStrength;\r
+    magnitude += octaveStrength;\r
+    fadeTarget = mix(fadeTarget, fadedGullies.x, stripeMask);\r
+\r
+    let roundingForOctave =\r
+      mix(roundingIn.y, roundingIn.x, hydroClamp01(phacelle.x + 0.5)) * roundingMult;\r
+\r
+    let newMask =\r
+      hydroEaseOut(hydroSmoothStart(sloping * onsetIn.y, roundingForOctave * onsetIn.y));\r
+\r
+    combiMask = hydroPowInv(combiMask, detailIn) * mix(1.0, newMask, stripeMask);\r
+\r
+    ridgeMapFadeTarget = mix(ridgeMapFadeTarget, gullies.x, ridgeMapCombiMask * stripeMask);\r
+\r
+    let newRidgeMapMask = hydroEaseOut(sloping * onsetIn.w);\r
+    ridgeMapCombiMask = ridgeMapCombiMask * mix(1.0, newRidgeMapMask, stripeMask);\r
+\r
+    strength *= gainIn;\r
+    freq *= lacunarityIn;\r
+    roundingMult *= roundingIn.w;\r
+  }\r
+\r
+  *ridgeMapOut = ridgeMapFadeTarget * (1.0 - ridgeMapCombiMask);\r
+\r
+  let delta = heightAndSlope - inputHeightAndSlope;\r
+  return vec4<f32>(delta, magnitude);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeHydrologyErosionHeightfield(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  if (readFrom3D() || writeTo3D()) {\r
+    return;\r
+  }\r
+\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  if (fx < 0 || fy < 0 || fx >= i32(frame.fullWidth) || fy >= i32(frame.fullHeight)) {\r
+    return;\r
+  }\r
+\r
+  let src = hydroLoadPrevClamped2D(fx, fy, fz);\r
+  let pos = fetchPos(fx, fy, fz);\r
+\r
+  var baseHeight = src.x;\r
+  var guideHeight = src.x;\r
+  let rawSlope = hydroResolveFiniteSlope2D(fx, fy, fz);\r
+  var guideSlope = rawSlope;\r
+\r
+  if (params.turbulence != 0u) {\r
+    baseHeight = src.w;\r
+    guideHeight = src.x;\r
+    guideSlope = src.yz;\r
+\r
+    if (length(guideSlope) < 1e-8) {\r
+      guideSlope = rawSlope;\r
+    }\r
+  }\r
+\r
+  let steerSlope = mix(rawSlope, guideSlope, 0.50);\r
+  let fadeHeight = mix(baseHeight, guideHeight, 0.28);\r
+\r
+  var erosionScale = params.zoom;\r
+  if (abs(erosionScale) < 1e-6) {\r
+    erosionScale = 0.15;\r
+  }\r
+\r
+  var domainScale = params.freq;\r
+  if (abs(domainScale) < 1e-6) {\r
+    domainScale = 1.0;\r
+  }\r
+\r
+  var erosionStrength = options.heightScale;\r
+  if (abs(erosionStrength) < 1e-6) {\r
+    erosionStrength = 1.0;\r
+  }\r
+  erosionStrength *= 0.22;\r
+\r
+  var gullyWeight = params.exp1;\r
+  if (abs(gullyWeight) < 1e-6) {\r
+    gullyWeight = 0.5;\r
+  }\r
+\r
+  var detail = params.seedAngle;\r
+  if (abs(detail) < 1e-6) {\r
+    detail = 1.5;\r
+  }\r
+\r
+  var fadeScale = params.exp2;\r
+  if (abs(fadeScale) < 1e-6) {\r
+    fadeScale = 1.6666667;\r
+  }\r
+\r
+  var cellScale = params.threshold;\r
+  if (abs(cellScale) < 1e-6) {\r
+    cellScale = 0.7;\r
+  }\r
+\r
+  var normalization = params.rippleFreq;\r
+  if (abs(normalization) < 1e-6) {\r
+    normalization = 0.5;\r
+  }\r
+  normalization = hydroClamp01(normalization);\r
+\r
+  var assumedSlopeValue = params.warpAmp;\r
+  if (abs(assumedSlopeValue) < 1e-6) {\r
+    assumedSlopeValue = 0.7;\r
+  }\r
+  assumedSlopeValue = max(assumedSlopeValue, 1e-4);\r
+\r
+  var assumedSlopeMix = params.gaborRadius;\r
+  if (abs(assumedSlopeMix) < 1e-6) {\r
+    assumedSlopeMix = 1.0;\r
+  }\r
+  assumedSlopeMix = hydroClamp01(assumedSlopeMix);\r
+\r
+  var onsetScale = params.terraceStep;\r
+  if (abs(onsetScale) < 1e-6) {\r
+    onsetScale = 8.0;\r
+  }\r
+  onsetScale = max(onsetScale / 8.0, 1e-4);\r
+\r
+  let rounding = vec4<f32>(\r
+    0.10,\r
+    0.00,\r
+    0.10,\r
+    max(params.lacunarity, 1.0)\r
+  );\r
+\r
+  let onset = vec4<f32>(\r
+    1.25,\r
+    1.25,\r
+    2.80,\r
+    1.50\r
+  ) * onsetScale;\r
+\r
+  let assumedSlope = vec2<f32>(assumedSlopeValue, assumedSlopeMix);\r
+\r
+  let seedShift = vec2<f32>(\r
+    f32(params.seed & 65535u) * 0.00001173,\r
+    f32((params.seed >> 16u) & 65535u) * 0.00000937\r
+  );\r
+\r
+  let domainP =\r
+    pos.xy * domainScale +\r
+    vec2<f32>(params.xShift, params.yShift) +\r
+    seedShift +\r
+    vec2<f32>(params.time * 0.021, -params.time * 0.017);\r
+\r
+  let fadeTarget = clamp((fadeHeight + params.zShift) * fadeScale, -1.0, 1.0);\r
+  let pixelSpan = hydroPixelSpan2D(fx, fy, fz);\r
+\r
+  var ridgeMap = 0.0;\r
+  let h = hydroErosionFilter(\r
+    domainP,\r
+    vec3<f32>(baseHeight, steerSlope.x, steerSlope.y),\r
+    fadeTarget,\r
+    erosionStrength,\r
+    gullyWeight,\r
+    detail,\r
+    rounding,\r
+    onset,\r
+    assumedSlope,\r
+    erosionScale,\r
+    max(params.octaves, 1u),\r
+    max(params.lacunarity, 1.0),\r
+    max(params.gain, 1e-4),\r
+    cellScale,\r
+    normalization,\r
+    pixelSpan,\r
+    &ridgeMap\r
+  );\r
+\r
+  let terrainHeightOffsetConst = options.baseRadius;\r
+  let terrainHeightOffsetFollowFade = hydroClamp01(max(params.edgeK, 0.0));\r
+\r
+  let offset =\r
+    mix(terrainHeightOffsetConst, -fadeTarget, terrainHeightOffsetFollowFade) * h.w;\r
+\r
+  let erodedHeight = baseHeight + h.x + offset;\r
+  let outSlope = steerSlope + h.yz;\r
+  let ridgeMapEncoded = hydroClamp01(ridgeMap * 0.5 + 0.5);\r
+\r
+  storeRGBA(\r
+    fx,\r
+    fy,\r
+    fz,\r
+    vec4<f32>(erodedHeight, outSlope.x, outSlope.y, ridgeMapEncoded)\r
+  );\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeHydrologyGuideField(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  if (readFrom3D() || writeTo3D()) {\r
+    return;\r
+  }\r
+\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  if (fx < 0 || fy < 0 || fx >= i32(frame.fullWidth) || fy >= i32(frame.fullHeight)) {\r
+    return;\r
+  }\r
+\r
+  let src = hydroLoadPrevClamped2D(fx, fy, fz);\r
+  let rawHeight = src.x;\r
+\r
+  var sigma = abs(params.threshold);\r
+  if (sigma < 1e-6) {\r
+    sigma = 0.90;\r
+  }\r
+\r
+  var guideBlend = params.exp1;\r
+  if (abs(guideBlend) < 1e-6) {\r
+    guideBlend = 0.35;\r
+  }\r
+  guideBlend = hydroClamp01(guideBlend);\r
+\r
+  let blurredC = hydroGuideHeightAt(fx, fy, fz, sigma);\r
+  let blurredL = hydroGuideHeightAt(fx - 1, fy, fz, sigma);\r
+  let blurredR = hydroGuideHeightAt(fx + 1, fy, fz, sigma);\r
+  let blurredD = hydroGuideHeightAt(fx, fy - 1, fz, sigma);\r
+  let blurredU = hydroGuideHeightAt(fx, fy + 1, fz, sigma);\r
+\r
+  let guideHeight = mix(rawHeight, blurredC, guideBlend);\r
+  let guideL = mix(hydroLoadPrevClamped2D(fx - 1, fy, fz).x, blurredL, guideBlend);\r
+  let guideR = mix(hydroLoadPrevClamped2D(fx + 1, fy, fz).x, blurredR, guideBlend);\r
+  let guideD = mix(hydroLoadPrevClamped2D(fx, fy - 1, fz).x, blurredD, guideBlend);\r
+  let guideU = mix(hydroLoadPrevClamped2D(fx, fy + 1, fz).x, blurredU, guideBlend);\r
+\r
+  let pL = hydroFetchPosClamped2D(fx - 1, fy, fz);\r
+  let pR = hydroFetchPosClamped2D(fx + 1, fy, fz);\r
+  let pD = hydroFetchPosClamped2D(fx, fy - 1, fz);\r
+  let pU = hydroFetchPosClamped2D(fx, fy + 1, fz);\r
+\r
+  let dx = max(abs(pR.x - pL.x), 1e-6);\r
+  let dy = max(abs(pU.y - pD.y), 1e-6);\r
+\r
+  let guideSlopeX = (guideR - guideL) / dx;\r
+  let guideSlopeY = (guideU - guideD) / dy;\r
+\r
+  storeRGBA(\r
+    fx,\r
+    fy,\r
+    fz,\r
+    vec4<f32>(guideHeight, guideSlopeX, guideSlopeY, rawHeight)\r
+  );\r
+}\r
+\r
+fn computeHydroDrainageField(fx: i32, fy: i32, fz: i32) -> vec4<f32> {\r
+  let coarseSigma = 1.75;\r
+\r
+  let hC = hydroBlurredHeightAt(fx, fy, fz, coarseSigma);\r
+  let hL = hydroBlurredHeightAt(fx - 1, fy, fz, coarseSigma);\r
+  let hR = hydroBlurredHeightAt(fx + 1, fy, fz, coarseSigma);\r
+  let hD = hydroBlurredHeightAt(fx, fy - 1, fz, coarseSigma);\r
+  let hU = hydroBlurredHeightAt(fx, fy + 1, fz, coarseSigma);\r
+\r
+  let pL = hydroFetchPosClamped2D(fx - 1, fy, fz);\r
+  let pR = hydroFetchPosClamped2D(fx + 1, fy, fz);\r
+  let pD = hydroFetchPosClamped2D(fx, fy - 1, fz);\r
+  let pU = hydroFetchPosClamped2D(fx, fy + 1, fz);\r
+\r
+  let dx = max(abs(pR.x - pL.x), 1e-6);\r
+  let dy = max(abs(pU.y - pD.y), 1e-6);\r
+\r
+  let slope = vec2<f32>(\r
+    (hR - hL) / dx,\r
+    (hU - hD) / dy\r
+  );\r
+\r
+  let flowDir = -hydroSafeNormalize2(slope);\r
+\r
+  let ridgeBroad = hydroBlurredRidgeAt(fx, fy, fz, 1.6);\r
+  let valleyPrior = 1.0 - smoothstep(-0.12, 0.08, ridgeBroad);\r
+\r
+  let valleyDepth = max(0.0, (hL + hR + hD + hU) * 0.25 - hC);\r
+  let concavityGain = max(abs(params.edgeK), 1e-4) * 36.0;\r
+  let concavityMask = hydroClamp01(valleyDepth * concavityGain);\r
+\r
+  let slopeOnset = max(abs(params.warpAmp), 1e-4);\r
+  let slopeMask = hydroEaseOut(hydroClamp01(length(slope) / slopeOnset));\r
+\r
+  let contrast = max(abs(params.exp1), 1e-4);\r
+  let gain = max(abs(params.exp2), 1e-4);\r
+\r
+  var drainage = valleyPrior * concavityMask * slopeMask;\r
+  drainage = pow(hydroClamp01(drainage), contrast);\r
+  drainage = hydroClamp01(drainage * gain);\r
+\r
+  return vec4<f32>(\r
+    drainage,\r
+    valleyPrior,\r
+    flowDir.x * 0.5 + 0.5,\r
+    flowDir.y * 0.5 + 0.5\r
+  );\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeHydrologyDrainageMask(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  if (readFrom3D() || writeTo3D()) {\r
+    return;\r
+  }\r
+\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  if (fx < 0 || fy < 0 || fx >= i32(frame.fullWidth) || fy >= i32(frame.fullHeight)) {\r
+    return;\r
+  }\r
+\r
+  let outCol = computeHydroDrainageField(fx, fy, fz);\r
+  storeRGBA(fx, fy, fz, outCol);\r
+}\r
 \r
 // Shared tiling constants\r
 const WGX : u32 = 8u;\r
@@ -5750,6 +6338,9 @@ fn computeGauss5x5(\r
         "computeTerraceNoise4D",
         "computeFoamNoise4D",
         "computeTurbulence4D",
+        "computeHydrologyErosionHeightfield",
+        "computeHydrologyGuideField",
+        "computeHydrologyDrainageMask",
         //normal map computing.
         "computeGauss5x5",
         "computeNormal",
