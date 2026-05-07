@@ -14,9 +14,7 @@ To run the demo, run `npm install` then `tinybuild` within this repository. `npm
 Newer Recording: https://www.youtube.com/watch?v=V-c-WTC2T1c
 See: https://www.youtube.com/watch?v=auawNwzHjFo for a live recording.
 
-<img width="3591" height="1879" alt="Screenshot 2025-11-18 231303" src="https://github.com/user-attachments/assets/f9c57bee-4d9b-45a0-ad27-c125af9d57ac" />
-
-![image](https://github.com/user-attachments/assets/1107b6be-7d54-4f6f-b1bb-e728dd27a29a)
+<img width="1601" height="1035" alt="image" src="https://github.com/user-attachments/assets/e7b3e377-1c31-45d8-b200-42e2a2b0da93" />
 
 ---
 
