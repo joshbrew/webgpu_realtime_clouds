@@ -9,12 +9,12 @@ To run the demo, run `npm install` then `tinybuild` within this repository. `npm
 
 #### See also: [https://github.com/joshbrew/webgpu_noise_compute_textures](https://github.com/joshbrew/webgpu_noise_compute_textures)
 
-<img width="1965" height="841" alt="image" src="https://github.com/user-attachments/assets/500e3465-fd66-4cb8-bd96-35f80615169c" />
+[5/6 demo (Youtube)](https://www.youtube.com/watch?v=ShBe7HvlEb8)
+
+<img width="2125" height="908" alt="Screenshot 2026-05-07 180853" src="https://github.com/user-attachments/assets/99f87b1f-0159-414a-93d2-d9a071f82448" />
 <img width="1601" height="1035" alt="image" src="https://github.com/user-attachments/assets/e7b3e377-1c31-45d8-b200-42e2a2b0da93" />
 <img width="1598" height="839" alt="image" src="https://github.com/user-attachments/assets/ef959ab5-070b-4fc1-bf39-444d091674c6" />
 
-Older Recording: https://www.youtube.com/watch?v=V-c-WTC2T1c
-See: https://www.youtube.com/watch?v=auawNwzHjFo for a live recording.
 
 ---
 
