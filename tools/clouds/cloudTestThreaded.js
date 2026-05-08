@@ -1919,7 +1919,7 @@ async function init() {
   setIf("c-bloom", preview.sun.bloom);
 
   setIf("p-coverage", 1.0);
-  setIf("p-density", 100.0);
+  setIf("p-density", 10.0);
   setIf("p-beer", 6);
   setIf("p-clamp", 0.015);
   setIf("p-ins", 1.0);
