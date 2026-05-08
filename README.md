@@ -1,4 +1,3 @@
-
 # WebGPU Volumetric Clouds
 
 This is an attempt to replicate ["Real-time rendering of volumetric clouds" by Fredrik Haggstrom](https://www.diva-portal.org/smash/record.jsf?pid=diva2:1223894&dswid=7420) in pure WebGPU and javascript. The results were a 60-150FPS real time cloud rendering with a custom compute pipeline for very fast iteration. I was impressed!
@@ -9,11 +8,15 @@ To run the demo, run `npm install` then `tinybuild` within this repository. `npm
 
 #### See also: [https://github.com/joshbrew/webgpu_noise_compute_textures](https://github.com/joshbrew/webgpu_noise_compute_textures)
 
+[5/7 demo (Youtube)](https://www.youtube.com/watch?v=HtLoZ3gxX-E)
+
 [5/6 demo (Youtube)](https://www.youtube.com/watch?v=ShBe7HvlEb8) 
 
+<img width="1721" height="1695" alt="image" src="https://github.com/user-attachments/assets/52a1366b-5a81-4e0c-9fe9-1c5f00676911" />
 <img width="2125" height="908" alt="Screenshot 2026-05-07 180853" src="https://github.com/user-attachments/assets/99f87b1f-0159-414a-93d2-d9a071f82448" />
 <img width="1601" height="1035" alt="image" src="https://github.com/user-attachments/assets/e7b3e377-1c31-45d8-b200-42e2a2b0da93" />
 <img width="1598" height="839" alt="image" src="https://github.com/user-attachments/assets/ef959ab5-070b-4fc1-bf39-444d091674c6" />
+
 
 
 ---
