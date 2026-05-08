@@ -18,8 +18,7 @@ To run the demo, run `npm install` then `tinybuild` within this repository. `npm
 <img width="2125" height="908" alt="Screenshot 2026-05-07 180853" src="https://github.com/user-attachments/assets/99f87b1f-0159-414a-93d2-d9a071f82448" />
 <img width="1601" height="1035" alt="image" src="https://github.com/user-attachments/assets/e7b3e377-1c31-45d8-b200-42e2a2b0da93" />
 <img width="1598" height="839" alt="image" src="https://github.com/user-attachments/assets/ef959ab5-070b-4fc1-bf39-444d091674c6" />
-
-
+<img width="2600" height="1402" alt="Screenshot 2026-05-07 223522" src="https://github.com/user-attachments/assets/939b4692-5aea-4238-93ba-84015ded4231" />
 
 ---
 
