@@ -17,6 +17,7 @@ The tuning playground uses `NoiseComputeBuilder` from [`webgpu_noise_compute_tex
 
 ## Demo videos
 
+- [5/23 demo](https://www.youtube.com/watch?v=UPtfQDZG6uU)
 - [5/7 demo](https://www.youtube.com/watch?v=HtLoZ3gxX-E)
 - [5/6 demo](https://www.youtube.com/watch?v=ShBe7HvlEb8)
 
