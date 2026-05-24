@@ -13,7 +13,7 @@ The tuning playground uses `NoiseComputeBuilder` from [`webgpu_noise_compute_tex
 ## Related projects
 
 - [webgpu_noise_compute_textures](https://github.com/joshbrew/webgpu_noise_compute_textures)
-- Fredrik Häggström, [Real-time rendering of volumetric clouds](https://www.diva-portal.org/smash/record.jsf?pid=diva2:1223894&dswid=7420)
+- Based on the work by Fredrik Häggström, [Real-time rendering of volumetric clouds](https://www.diva-portal.org/smash/record.jsf?pid=diva2:1223894&dswid=7420)
 
 ## Demo videos
 
@@ -105,16 +105,6 @@ The renderer is a compute-based volumetric cloud pass.
 5. Accumulate color and alpha into an output storage texture.
 6. Optionally reuse temporal history for animated/reprojected rendering.
 7. Optionally composite the output through `cloudsRender.wgsl`.
-
-The current v43 path includes performance-oriented shader logic for large and tall boxes:
-
-- Weather-column empty skipping.
-- Column-style Y-bounds acceleration derived from the weather field.
-- Protected near/edge lighting so close silhouettes do not smear or card out.
-- Far proxy sampling for safe horizon/interior cloud samples.
-- Adaptive thick-box stepping and lighting skip.
-
-The far proxy path is intentionally conservative. It keeps the same weather and shape style but avoids some full 3D/detail work where the cloud is far, screen-small, and visually safe.
 
 ---
 
