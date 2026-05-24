@@ -25,6 +25,7 @@ The tuning playground uses `NoiseComputeBuilder` from [`webgpu_noise_compute_tex
 
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/a926c419-e17f-46c3-a9c5-4ce5a9c38733" />
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/1325f126-dd80-43f9-a52f-9680cae36d24" />
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/4ce6690e-4c5b-44fe-89bc-52e141b6ac75" />
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/52a1366b-5a81-4e0c-9fe9-1c5f00676911" />
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/14edd013-c56c-4cb4-8d60-d8a474a2b356" />
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/d043386e-a4e3-4c38-9b6f-1b9e8f0eb76e" />
