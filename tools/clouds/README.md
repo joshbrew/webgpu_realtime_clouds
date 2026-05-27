@@ -895,7 +895,7 @@ Temporal and reduced-resolution rendering parameters.
 | frameIndex | `0` | Frame counter for jitter/reprojection. |
 | fullWidth | `0` | Full output width for reprojection math. |
 | fullHeight | `0` | Full output height for reprojection math. |
-| temporalCellRate | `1` | Interleaved update rate. Use `1`, `4`, `8`, or `16`. `1` means full march. |
+| temporalCellRate | `1` | Interleaved update rate. Use `1`, `2`, `4`, `8`, `16`, `32`, or `64`. `1` means full march. |
 | temporalCellPhase | `0` | Current phase for the interleaved cell update pattern. The worker advances this per frame. |
 
 ## `setPerfParams(perf)`
@@ -1021,6 +1021,27 @@ Common commands:
 
 The v43 playground default is `5`. This is usually the right place to start while animating.
 
+
+## Mobile and first-load behavior
+
+The playground now chooses a lighter startup profile on mobile-like devices. It keeps the same renderer and visual controls, but caps canvas pixel count, limits DPR, uses smaller startup procedural textures, and disables debug texture previews on mobile. Desktop defaults remain uncapped for performance testing.
+
+Startup baking is also staged through the worker with small yields between weather, blue-noise, shape, and detail texture creation. This lets the loading overlay paint before large GPU work starts and reduces the apparent browser freeze on first load.
+
+Mobile startup defaults:
+
+- Shape volume: `96³` instead of `128³`.
+- Weather map: `384²` instead of `512²`.
+- Blue noise: `128²` instead of `256²`.
+- Main canvas cap: about `900k` pixels and max side `1280`.
+- DPR cap: `1.35`.
+- Render Scale Divider: `6`.
+- Temporal Interleave: `1 / 4 rays per frame`.
+
+Desktop startup defaults stay uncapped for performance testing. Desktop keeps the `128³` shape volume, `512²` weather map, `256²` blue noise, Render Scale Divider `5`, and uses the full browser canvas size at the browser/device DPR.
+
+Use `?mobile=1` or `?profile=mobile` to force the mobile profile for testing. Use `?desktop=1` or `?profile=desktop` to force the uncapped desktop profile.
+
 ## Screen interleave
 
 Screen Interleave is now compact-dispatched when temporal history is available. The renderer first copies the previous full-resolution history forward, then dispatches only the owned Bayer subset of cloud rays for the current phase. That means `1 / 4 rays per frame` launches roughly one quarter of the cloud ray work instead of launching all pixels and branching inside the shader. The first history-seeding frame still renders all pixels.
@@ -1031,7 +1052,7 @@ Increasing `Box Half Y` is expensive because rays can spend more time inside the
 
 - Render Scale Divider `4` or `5`.
 - Reprojection enabled while animating.
-- Temporal Interleave `1 / 2` or `1 / 4` when animating and history is stable.
+- Temporal Interleave `1 / 2` or `1 / 4` when animating and history is stable. `1 / 32` and `1 / 64` are included as stress-test modes for evaluating the compact dispatch path.
 - Conservative `maxSteps`.
 - Protected near detail, but cheaper far interiors.
 
@@ -1106,4 +1127,32 @@ This implementation uses the companion WebGPU procedural texture work in [webgpu
 
 This pass keeps the known-good compact 8x8 Temporal Interleave path and removes the abandoned macro-voxel cache experiment from the active renderer, worker, and playground. The current performance path is Temporal Interleave plus the existing weather-column empty skipping, active-Y clipping, adaptive thick-box stepping, far proxy sampling, and front-occlusion acceleration.
 
-For testing, use `Temporal Interleave = 1 / 2` first, then `1 / 4`. The first history-seeding frame renders all pixels; after that, compact dispatch updates only the selected 8x8 scattered subset and copies the previous history for the rest.
+For testing, use `Temporal Interleave = 1 / 2` first, then `1 / 4`. `1 / 32` and `1 / 64` are intentionally extreme test modes. The first history-seeding frame renders all pixels; after that, compact dispatch updates only the selected 8x8 scattered subset and copies the previous history for the rest.
+
+
+## Pass 25 notes: extended interleave test rates
+
+The active performance path remains the compact 8x8 Temporal Interleave renderer. This pass adds `1 / 32` and `1 / 64` interleave options for testing. These modes update two or one pixel per 8x8 tile respectively, so they are useful for stress-testing compact dispatch and temporal accumulation, but `1 / 2`, `1 / 4`, and `1 / 8` remain the practical quality/performance range.
+
+## Pass 26 notes: shader micro-optimization cleanup
+
+This pass keeps the current visual model and defaults unchanged. The active optimization path is still compact 8x8 Temporal Interleave, weather-column empty skipping, active-Y clipping, adaptive stepping, far proxy sampling, and front-occlusion acceleration.
+
+Small shader cleanups in this pass:
+
+- Ray distance inside the primary march now uses the normalized ray parameter instead of recomputing `length(p - rayRo)` every sample.
+- The per-light-step sun transmittance early-out now compares accumulated optical depth against a precomputed cutoff instead of evaluating Beer law inside each sun loop iteration.
+- Secondary sun-jitter hashing no longer uses `sin()` in the inner light loop.
+- Removed unused weather-mapping parameters and dead locals left behind from older coordinate paths.
+
+## Pass 27 notes: mobile startup and deferred baking
+
+This pass keeps the current visual model, defaults, compact 8x8 Temporal Interleave path, and uncapped desktop canvas behavior intact. It adds a mobile startup profile, caps initial canvas resolution/DPR only on mobile-like devices, makes WebGPU device creation more forgiving on smaller adapters, skips debug texture previews on mobile, and stages the initial texture bake and first render-target/history allocation with worker-side progress/yields so first load is less likely to freeze the page.
+
+## Pass 28 notes: uncapped desktop canvas
+
+This pass keeps the mobile startup caps from pass 27, but removes desktop DPR and canvas-size caps. Desktop now sends the full canvas pixel size to the worker so 4K and high-DPR browser tests are not artificially limited.
+
+## Pass 29 notes: mobile detection and mobile interleave default
+
+This pass makes mobile detection more conservative so desktop Chrome is not treated as mobile just because `navigator.deviceMemory` reports `4`. Mobile mode is now selected by mobile user agents or touch/coarse small-screen signals, with URL overrides for testing. Mobile defaults now enable Temporal Interleave at `1 / 4 rays per frame`; desktop remains uncapped and defaults to full temporal sampling.

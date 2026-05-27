@@ -8,15 +8,74 @@ import wrkr from "./cloudTest.worker.js";
 
 let worker;
 
-// Constants (mirror worker)
-const SHAPE_SIZE = 128,
-  DETAIL_SIZE = 32,
-  WEATHER_W = 512,
-  WEATHER_H = 512,
-  BN_W = 256,
-  BN_H = 256;
-const DBG_SIZE = 224;
-const DPR = () => Math.max(1, Math.floor(window.devicePixelRatio || 1));
+// Constants (mirror worker). Mobile keeps the same shader path but lowers
+// startup texture/canvas pressure so first load does not stall the browser.
+function isMobileLikeDevice() {
+  const params = new URLSearchParams(location.search || "");
+  if (params.has("desktop") || params.get("profile") === "desktop") return false;
+  if (params.has("mobile") || params.get("profile") === "mobile") return true;
+
+  const ua = navigator.userAgent || "";
+  const uaMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+  const coarse = typeof matchMedia === "function" ? !!matchMedia("(pointer: coarse)").matches : false;
+  const noHover = typeof matchMedia === "function" ? !!matchMedia("(hover: none)").matches : false;
+  const touchPoints = Number(navigator.maxTouchPoints || 0);
+  const smallSide = Math.min(window.innerWidth || 0, window.innerHeight || 0);
+  const shortScreenSide = Math.min(screen?.width || 0, screen?.height || 0);
+  const lowMem = Number(navigator.deviceMemory || 8) <= 4;
+
+  // Do not classify desktop Chrome as mobile only because deviceMemory is 4 GB.
+  // Mobile caps are for touch/small-screen devices unless explicitly forced with ?mobile=1.
+  const touchSmallViewport = touchPoints > 0 && coarse && smallSide <= 980;
+  const touchSmallScreen = touchPoints > 0 && coarse && shortScreenSide > 0 && shortScreenSide <= 900;
+  const constrainedTouchDevice = touchPoints > 0 && coarse && noHover && lowMem && smallSide <= 1200;
+
+  return uaMobile || touchSmallViewport || touchSmallScreen || constrainedTouchDevice;
+}
+
+const MOBILE_PROFILE = isMobileLikeDevice();
+const STARTUP_PROFILE = MOBILE_PROFILE
+  ? {
+      shapeSize: 96,
+      detailSize: 32,
+      weatherW: 384,
+      weatherH: 384,
+      blueW: 128,
+      blueH: 128,
+      dbgSize: 128,
+      maxDpr: 1.35,
+      maxMainPixels: 900_000,
+      maxMainSide: 1280,
+      renderScaleDivider: 6,
+      temporalCellRate: 4,
+      debugCanvases: false,
+      capMainCanvas: true,
+    }
+  : {
+      shapeSize: 128,
+      detailSize: 32,
+      weatherW: 512,
+      weatherH: 512,
+      blueW: 256,
+      blueH: 256,
+      dbgSize: 224,
+      renderScaleDivider: 4,
+      temporalCellRate: 4,
+      debugCanvases: true,
+      capMainCanvas: false,
+    };
+
+const SHAPE_SIZE = STARTUP_PROFILE.shapeSize,
+  DETAIL_SIZE = STARTUP_PROFILE.detailSize,
+  WEATHER_W = STARTUP_PROFILE.weatherW,
+  WEATHER_H = STARTUP_PROFILE.weatherH,
+  BN_W = STARTUP_PROFILE.blueW,
+  BN_H = STARTUP_PROFILE.blueH;
+const DBG_SIZE = STARTUP_PROFILE.dbgSize;
+const DPR = () => {
+  const raw = Math.max(1, window.devicePixelRatio || 1);
+  return STARTUP_PROFILE.capMainCanvas ? Math.min(STARTUP_PROFILE.maxDpr, raw) : raw;
+};
 
 let ENTRY_POINTS = [];
 
@@ -31,8 +90,8 @@ const preview = {
     half: [18, 0.3, 18],
     uvScale: 1,
   },
-  renderScaleDivider: 5,
-  temporalCellRate: 1,
+  renderScaleDivider: STARTUP_PROFILE.renderScaleDivider,
+  temporalCellRate: STARTUP_PROFILE.temporalCellRate,
   gradeStyle: 3,
   sunTint: [1.0, 1.0, 1.0],
   cloudLitTint: [1.0, 1.0, 1.0],
@@ -198,6 +257,8 @@ function currentPreviewCoarseFactor() {
 
 function normalizeTemporalCellRate(value) {
   const n = Math.max(1, Number(value) | 0);
+  if (n >= 64) return 64;
+  if (n >= 32) return 32;
   if (n >= 16) return 16;
   if (n >= 8) return 8;
   if (n >= 4) return 4;
@@ -259,7 +320,7 @@ function injectPreviewLookControls() {
         </select>
       </label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Render Scale Divider</span><input id="v-render-scale-divider" type="number" step="1" min="1" max="8" title="Animated render-scale divider. 1 = full resolution, 4 = 1/4 resolution per axis, 5 = 1/5 resolution per axis, then upsampled."></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Temporal Interleave</span><select id="v-temporal-cell-rate" title="Compact history-backed screen interleave. After the first history frame, only a rotated 8x8 scattered subset is dispatched as cloud rays; previous history is copied forward for the rest."><option value="1">Off / full quality</option><option value="2">1 / 2 rays per frame</option><option value="4">1 / 4 rays per frame</option><option value="8">1 / 8 rays per frame</option><option value="16">1 / 16 rays per frame</option></select></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Temporal Interleave</span><select id="v-temporal-cell-rate" title="Compact history-backed screen interleave. After the first history frame, only a rotated 8x8 scattered subset is dispatched as cloud rays; previous history is copied forward for the rest."><option value="1">Off / full quality</option><option value="2">1 / 2 rays per frame</option><option value="4">1 / 4 rays per frame</option><option value="8">1 / 8 rays per frame</option><option value="16">1 / 16 rays per frame</option><option value="32">1 / 32 rays per frame</option><option value="64">1 / 64 rays per frame</option></select></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Front Occlusion</span><input id="t-frontOcclusionStrength" type="number" step="0.01" min="0" max="1" title="Close opaque cloud acceleration. 0 disables it; higher values cut behind-cloud work sooner once the front body has accumulated alpha."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Occ. Alpha Start</span><input id="t-frontOcclusionAlpha" type="number" step="0.01" min="0" max="0.98" title="Accumulated alpha where front-occlusion acceleration starts."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Occ. Step Boost</span><input id="t-frontOcclusionStepBoost" type="number" step="0.05" min="1" max="8" title="Maximum behind-front-cloud step multiplier."></label>
@@ -1366,6 +1427,12 @@ async function runFrameEnsuringTuning(payload = {}) {
 }
 
 // ---- UI busy indicator ----
+function nextPaint() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  });
+}
+
 function setBusy(on, msg = "Working...") {
   const ov = $("busyOverlay"),
     m = $("busyMsg");
@@ -1422,18 +1489,37 @@ function showPanelsFor(pass) {
   vis("p-preview", pass === "preview");
 }
 
+function clampCanvasPixelSize(pixelW, pixelH) {
+  let w = Math.max(1, Math.floor(pixelW));
+  let h = Math.max(1, Math.floor(pixelH));
+  if (!STARTUP_PROFILE.capMainCanvas) {
+    return { width: w, height: h, scale: 1 };
+  }
+
+  const maxSide = Math.max(256, STARTUP_PROFILE.maxMainSide | 0);
+  const maxPixels = Math.max(256 * 256, STARTUP_PROFILE.maxMainPixels | 0);
+  const sideScale = Math.min(1, maxSide / Math.max(w, h));
+  const pixelScale = Math.min(1, Math.sqrt(maxPixels / Math.max(1, w * h)));
+  const scale = Math.min(sideScale, pixelScale);
+  if (scale < 1) {
+    w = Math.max(1, Math.floor(w * scale));
+    h = Math.max(1, Math.floor(h * scale));
+  }
+  return { width: w, height: h, scale };
+}
+
 function sendSizes() {
   const dpr = DPR();
   const canvas = $("gpuCanvas");
   const cW = Math.max(1, Math.round(canvas.clientWidth));
   const cH = Math.max(1, Math.round(canvas.clientHeight));
-  const pixelW = Math.max(1, Math.floor(cW * dpr));
-  const pixelH = Math.max(1, Math.floor(cH * dpr));
-  const dbgSizePx = Math.round(DBG_SIZE * dpr);
+  const main = clampCanvasPixelSize(cW * dpr, cH * dpr);
+  const dbgSizePx = Math.max(1, Math.round(DBG_SIZE * dpr));
 
   rpc("resize", {
-    main: { width: pixelW, height: pixelH },
+    main,
     dbg: { width: dbgSizePx, height: dbgSizePx },
+    profile: { mobile: MOBILE_PROFILE, dpr, cssWidth: cW, cssHeight: cH },
   }).catch((e) => console.warn("resize rpc failed", e));
 }
 
@@ -2258,6 +2344,9 @@ async function init() {
   setIf("v-temporal-cell-rate", normalizeTemporalCellRate(preview.temporalCellRate ?? 1));
   syncPreviewLookInputs();
 
+  setBusy(true, MOBILE_PROFILE ? "Starting mobile WebGPU worker..." : "Starting WebGPU worker...");
+  await nextPaint();
+
   // spawn worker
   worker = new Worker(wrkr, { type: "module" });
   worker.onmessage = (ev) => {
@@ -2268,6 +2357,11 @@ async function init() {
       return ok ? resolve(data) : reject(error || new Error("Worker error"));
     }
     if (type === "log") console.log(...(data || []));
+    if (type === "progress") {
+      const msg = data?.message || data || "Working...";
+      const ov = $("busyOverlay");
+      if (ov && ov.style.display !== "none") setBusy(true, msg);
+    }
     if (type === "frame") {
       const info = data || {};
       const fmt = (v) => (Number.isFinite(v) ? String(Math.round(v * 10) / 10) : "-");
@@ -2320,7 +2414,16 @@ async function init() {
           blue: offscreenDbg["dbg-blue"],
         },
       },
-      constants: { SHAPE_SIZE, DETAIL_SIZE, WEATHER_W, WEATHER_H, BN_W, BN_H },
+      constants: {
+        SHAPE_SIZE,
+        DETAIL_SIZE,
+        WEATHER_W,
+        WEATHER_H,
+        BN_W,
+        BN_H,
+        DEBUG_ENABLED: STARTUP_PROFILE.debugCanvases,
+        MOBILE_PROFILE,
+      },
     },
     [
       offscreenMain,
@@ -2361,12 +2464,14 @@ async function init() {
   }
 
   sendSizes();
+  await nextPaint();
 
   try {
     await setTileTransformsRPC(tileTransforms);
   } catch {}
 
-  setBusy(true, "Initializing...");
+  setBusy(true, MOBILE_PROFILE ? "Initializing mobile profile..." : "Initializing...");
+  await nextPaint();
   try {
     refreshSliceLabel();
 
@@ -2378,6 +2483,8 @@ async function init() {
       shapeParams: safeClone(shapeParams),
       detailParams: safeClone(detailParams),
       tileTransforms: safeClone(tileTransforms),
+      progressive: true,
+      skipDebug: !STARTUP_PROFILE.debugCanvases,
     });
 
     readPreview();

@@ -7,6 +7,8 @@ import previewWGSL from "./cloudsRender.wgsl";
 const _has = (o, k) => Object.prototype.hasOwnProperty.call(o || {}, k);
 const normalizeTemporalRate = (value) => {
   const n = Math.max(1, Number(value) | 0);
+  if (n >= 64) return 64;
+  if (n >= 32) return 32;
   if (n >= 16) return 16;
   if (n >= 8) return 8;
   if (n >= 4) return 4;
