@@ -13,11 +13,10 @@ The tuning playground uses `NoiseComputeBuilder` from [`webgpu_noise_compute_tex
 ## Related projects
 
 - [webgpu_noise_compute_textures](https://github.com/joshbrew/webgpu_noise_compute_textures)
-- Based on the work by Fredrik Häggström, [Real-time rendering of volumetric clouds](https://www.diva-portal.org/smash/record.jsf?pid=diva2:1223894&dswid=7420)
+- Fredrik Häggström, [Real-time rendering of volumetric clouds](https://www.diva-portal.org/smash/record.jsf?pid=diva2:1223894&dswid=7420)
 
 ## Demo videos
 
-- [5/23 demo](https://www.youtube.com/watch?v=UPtfQDZG6uU)
 - [5/7 demo](https://www.youtube.com/watch?v=HtLoZ3gxX-E)
 - [5/6 demo](https://www.youtube.com/watch?v=ShBe7HvlEb8)
 
@@ -105,6 +104,20 @@ The renderer is a compute-based volumetric cloud pass.
 5. Accumulate color and alpha into an output storage texture.
 6. Optionally reuse temporal history for animated/reprojected rendering.
 7. Optionally composite the output through `cloudsRender.wgsl`.
+
+The current v43 path includes performance-oriented shader logic for large and tall boxes:
+
+- Weather-column empty skipping.
+- Column-style Y-bounds acceleration derived from the weather field.
+- Active-Y ray clipping plus a global active-Y early-out for rays that cross the tall AABB but never cross the actual cloud profile band.
+- Protected near/edge lighting so close silhouettes do not smear or card out.
+- Far proxy sampling for safe horizon/interior cloud samples.
+- Adaptive thick-box stepping and lighting skip.
+
+- Original-style cloud body sampling is preserved by default. The experimental Y-domain compensation remains opt-in through `verticalTextureHomogeneity`.
+- Screen interleave is now compact-dispatched when history is available, so skipped pixels are not launched as cloud rays. The previous full history is copied forward before the owned subset overwrites it.
+
+The far proxy path is intentionally conservative. It keeps the same weather and shape style but avoids some full 3D/detail work where the cloud is far, screen-small, and visually safe.
 
 ---
 
@@ -249,6 +262,11 @@ clouds.setTuning({
   fluffFactor: 2.0,
   anvilLift: 0.6,
   alphaCutoff: 0.98,
+  frontOcclusionStrength: 0.72,
+  frontOcclusionAlpha: 0.66,
+  frontOcclusionStepBoost: 3.0,
+  sliceJitterStrength: 0.18,
+  verticalLayerDecorrelation: 0.78,
 });
 
 clouds.setReprojSettings({
@@ -386,6 +404,11 @@ clouds.setTuning({
   fluffFactor: 2.0,
   anvilLift: 0.6,
   alphaCutoff: 0.98,
+  frontOcclusionStrength: 0.72,
+  frontOcclusionAlpha: 0.66,
+  frontOcclusionStepBoost: 3.0,
+  sliceJitterStrength: 0.18,
+  verticalLayerDecorrelation: 0.78,
 });
 
 function frame(frameIndex) {
@@ -847,6 +870,14 @@ Raymarch and visual stability parameters. These control quality, performance, LO
 | thickStepBoost | `1.28` | Internal step boost for thick boxes. |
 | thickDetailSkip | `0.18` | Internal detail-skip strength in safe interiors. |
 | thickLightSkip | `0.42` | Internal light-skip strength in safe interiors. |
+| verticalStepBoost | `3.0` | Extra primary ray step budget for tall boxes. Keeps Y expansion closer to X/Z cost. |
+| verticalTextureHomogeneity | `0.0` | Enables homogeneous tall-Y behavior. Tall boxes use repeated warped Y phases and tiled shape/detail sampling instead of stretching one 3D texture slab through the whole raw AABB. `0` keeps raw box-height profiling. |
+| verticalLightingStepBoost | `1.35` | Mild sun-step boost for tall boxes after vertical texture normalization. |
+| frontOcclusionStrength | `0.72` | Close-cloud behind-body acceleration. `0` disables it; higher values cut hidden rays sooner after front opacity builds. |
+| frontOcclusionAlpha | `0.66` | Accumulated alpha where front-occlusion acceleration starts. |
+| frontOcclusionStepBoost | `3.0` | Maximum step multiplier used behind an already opaque close cloud front. |
+| sliceJitterStrength | `0.18` | Stable per-step ray jitter that breaks up horizontal slice bands in tall boxes. |
+| verticalLayerDecorrelation | `0.78` | Subtle non-planar Y perturbation for shape/detail sampling so tall boxes do not produce horizontal sheets. |
 
 ## `setReprojSettings(reprojection)`
 
@@ -864,6 +895,8 @@ Temporal and reduced-resolution rendering parameters.
 | frameIndex | `0` | Frame counter for jitter/reprojection. |
 | fullWidth | `0` | Full output width for reprojection math. |
 | fullHeight | `0` | Full output height for reprojection math. |
+| temporalCellRate | `1` | Interleaved update rate. Use `1`, `4`, `8`, or `16`. `1` means full march. |
+| temporalCellPhase | `0` | Current phase for the interleaved cell update pattern. The worker advances this per frame. |
 
 ## `setPerfParams(perf)`
 
@@ -988,14 +1021,27 @@ Common commands:
 
 The v43 playground default is `5`. This is usually the right place to start while animating.
 
+## Screen interleave
+
+Screen Interleave is now compact-dispatched when temporal history is available. The renderer first copies the previous full-resolution history forward, then dispatches only the owned Bayer subset of cloud rays for the current phase. That means `1 / 4 rays per frame` launches roughly one quarter of the cloud ray work instead of launching all pixels and branching inside the shader. The first history-seeding frame still renders all pixels.
+
 ## Tall boxes
 
-Increasing `Box Half Y` is expensive because rays can spend more time inside the vertical cloud slab. v43 reduces this cost with weather-derived column bounds, empty weather skipping, adaptive thick-box stepping, and far-proxy sampling. Still, very tall boxes should use:
+Increasing `Box Half Y` is expensive because rays can spend more time inside the vertical cloud slab. v43 reduces this cost with active-Y ray clipping, a global active-Y early-out, weather-derived column bounds, empty weather skipping, adaptive thick-box stepping, and far-proxy sampling. Still, very tall boxes should use:
 
 - Render Scale Divider `4` or `5`.
 - Reprojection enabled while animating.
+- Temporal Interleave `1 / 2` or `1 / 4` when animating and history is stable.
 - Conservative `maxSteps`.
 - Protected near detail, but cheaper far interiors.
+
+The default path preserves the original uploaded cloud sampling style. `verticalTextureHomogeneity` now defaults to `0`, so the extra Y-domain compensation is opt-in.
+
+If you see horizontal layer bands in very tall volumes, keep `verticalTextureHomogeneity` at `0` first to confirm the original look. The slice and Y-decorrelation controls are still available as experimental visual tools, but they are no longer part of the default look.
+
+## Close opaque clouds
+
+When cloud coverage fills the screen, front opacity should save work instead of fully marching hidden material behind it. `frontOcclusionStrength` starts a conservative behind-front acceleration once the accumulated alpha passes `frontOcclusionAlpha`; it also allows a stronger transmittance cutoff and larger steps behind dense close bodies. Lower it toward `0` for exact full-depth marching, or raise `frontOcclusionStepBoost` for heavier close-up scenes where the foreground cloud mass is already opaque.
 
 ## Horizon boxes
 
@@ -1055,3 +1101,9 @@ WebGPU implementation by Joshua Brewster (MIT License)
 Inspired by Fredrik Häggström's [Real-time rendering of volumetric clouds](https://www.diva-portal.org/smash/record.jsf?pid=diva2:1223894&dswid=7420).
 
 This implementation uses the companion WebGPU procedural texture work in [webgpu_noise_compute_textures](https://github.com/joshbrew/webgpu_noise_compute_textures).
+
+## Pass 24 notes: cleanup after interleave stabilization
+
+This pass keeps the known-good compact 8x8 Temporal Interleave path and removes the abandoned macro-voxel cache experiment from the active renderer, worker, and playground. The current performance path is Temporal Interleave plus the existing weather-column empty skipping, active-Y clipping, adaptive thick-box stepping, far proxy sampling, and front-occlusion acceleration.
+
+For testing, use `Temporal Interleave = 1 / 2` first, then `1 / 4`. The first history-seeding frame renders all pixels; after that, compact dispatch updates only the selected 8x8 scattered subset and copies the previous history for the rest.

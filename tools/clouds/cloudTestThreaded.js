@@ -32,6 +32,7 @@ const preview = {
     uvScale: 1,
   },
   renderScaleDivider: 5,
+  temporalCellRate: 1,
   gradeStyle: 3,
   sunTint: [1.0, 1.0, 1.0],
   cloudLitTint: [1.0, 1.0, 1.0],
@@ -187,12 +188,29 @@ const reprojDefaultScale = 1 / 16;
 const reprojTemporalBlend = 0.94;
 let animRunning = false;
 
-function currentReprojectionTemporalBlend(enabled = reprojEnabled) {
+function currentReprojectionTemporalBlend(enabled = cloudHistoryEnabled()) {
   return enabled ? reprojTemporalBlend : 0.0;
 }
 
 function currentPreviewCoarseFactor() {
-  return reprojEnabled ? previewRenderScaleDivider() : 1;
+  return cloudHistoryEnabled() ? previewRenderScaleDivider() : 1;
+}
+
+function normalizeTemporalCellRate(value) {
+  const n = Math.max(1, Number(value) | 0);
+  if (n >= 16) return 16;
+  if (n >= 8) return 8;
+  if (n >= 4) return 4;
+  if (n >= 2) return 2;
+  return 1;
+}
+
+function temporalCellUpdateEnabled() {
+  return normalizeTemporalCellRate(preview.temporalCellRate ?? 1) > 1;
+}
+
+function cloudHistoryEnabled() {
+  return reprojEnabled || temporalCellUpdateEnabled();
 }
 
 // ---- DOM helpers ----
@@ -241,6 +259,12 @@ function injectPreviewLookControls() {
         </select>
       </label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Render Scale Divider</span><input id="v-render-scale-divider" type="number" step="1" min="1" max="8" title="Animated render-scale divider. 1 = full resolution, 4 = 1/4 resolution per axis, 5 = 1/5 resolution per axis, then upsampled."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Temporal Interleave</span><select id="v-temporal-cell-rate" title="Compact history-backed screen interleave. After the first history frame, only a rotated 8x8 scattered subset is dispatched as cloud rays; previous history is copied forward for the rest."><option value="1">Off / full quality</option><option value="2">1 / 2 rays per frame</option><option value="4">1 / 4 rays per frame</option><option value="8">1 / 8 rays per frame</option><option value="16">1 / 16 rays per frame</option></select></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Front Occlusion</span><input id="t-frontOcclusionStrength" type="number" step="0.01" min="0" max="1" title="Close opaque cloud acceleration. 0 disables it; higher values cut behind-cloud work sooner once the front body has accumulated alpha."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Occ. Alpha Start</span><input id="t-frontOcclusionAlpha" type="number" step="0.01" min="0" max="0.98" title="Accumulated alpha where front-occlusion acceleration starts."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Occ. Step Boost</span><input id="t-frontOcclusionStepBoost" type="number" step="0.05" min="1" max="8" title="Maximum behind-front-cloud step multiplier."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Slice Jitter</span><input id="t-sliceJitterStrength" type="number" step="0.01" min="0" max="1" title="Low-amplitude ray jitter that breaks residual march bands without turning tall clouds into screen-space speckle."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Y Decorrelation</span><input id="t-verticalLayerDecorrelation" type="number" step="0.01" min="0" max="1" title="Tiles and bends Y-domain shape/detail sampling so taller volumes read like repeated fluffy structure instead of horizontal shelves."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Strength</span><input id="v-shadow-strength" type="number" step="0.01" min="0" max="5"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Edge</span><input id="v-shadow-edge" type="number" step="0.01" min="0" max="2.2"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Darkness</span><input id="v-shadow-darkness" type="number" step="0.01" min="0" max="6"></label>
@@ -523,6 +547,7 @@ function setFieldValue(id, val) {
 function syncPreviewLookInputs() {
   setFieldValue("v-grade", preview.gradeStyle);
   setFieldValue("v-render-scale-divider", preview.renderScaleDivider ?? 5);
+  setFieldValue("v-temporal-cell-rate", normalizeTemporalCellRate(preview.temporalCellRate ?? 1));
   setFieldValue("v-sr", preview.sky[0]);
   setFieldValue("v-sg", preview.sky[1]);
   setFieldValue("v-sb", preview.sky[2]);
@@ -742,6 +767,14 @@ function readTuning() {
     fluffFactor: +($("t-fluffFactor")?.value || 4.0),
     anvilLift: +($("t-anvilLift")?.value || 0.6),
     alphaCutoff: +($("t-alphaCutoff")?.value || 0.98),
+    verticalStepBoost: +($("t-verticalStepBoost")?.value || 3.0),
+    verticalTextureHomogeneity: +($("t-verticalTextureHomogeneity")?.value || 0.0),
+    verticalLightingStepBoost: +($("t-verticalLightingStepBoost")?.value || 1.35),
+    frontOcclusionStrength: +($("t-frontOcclusionStrength")?.value || 0.72),
+    frontOcclusionAlpha: +($("t-frontOcclusionAlpha")?.value || 0.66),
+    frontOcclusionStepBoost: +($("t-frontOcclusionStepBoost")?.value || 3.0),
+    sliceJitterStrength: +($("t-sliceJitterStrength")?.value || 0.08),
+    verticalLayerDecorrelation: +($("t-verticalLayerDecorrelation")?.value || 0.35),
   };
 }
 
@@ -1059,6 +1092,7 @@ function readPreview() {
   preview.box.uvScale = Math.max(0.001, num("v-box-uv", preview.box.uvScale ?? 1));
   preview.gradeStyle = u32("v-grade", preview.gradeStyle);
   preview.renderScaleDivider = normalizeRenderScaleDivider(u32("v-render-scale-divider", preview.renderScaleDivider ?? 5));
+  preview.temporalCellRate = normalizeTemporalCellRate(u32("v-temporal-cell-rate", preview.temporalCellRate ?? 1));
   preview.sunTint[0] = clamp01(num("v-sun-r", preview.sunTint[0]));
   preview.sunTint[1] = clamp01(num("v-sun-g", preview.sunTint[1]));
   preview.sunTint[2] = clamp01(num("v-sun-b", preview.sunTint[2]));
@@ -1093,15 +1127,19 @@ function computeCoarseFactorFromScale(scale) {
 
 function getReprojPayload() {
   const enabled = !!reprojEnabled;
-  const coarseFactor = enabled ? previewRenderScaleDivider() : 1;
-  const scale = enabled ? 1 / Math.max(1, coarseFactor * coarseFactor) : reprojDefaultScale;
+  const temporalCellRate = normalizeTemporalCellRate(preview.temporalCellRate ?? 1);
+  const historyEnabled = enabled || temporalCellRate > 1;
+  const coarseFactor = historyEnabled ? previewRenderScaleDivider() : 1;
+  const scale = historyEnabled ? 1 / Math.max(1, coarseFactor * coarseFactor) : reprojDefaultScale;
   return {
     enabled,
     scale,
     coarseFactor,
     frameIndex: 0,
     sampleOffset: 0,
-    temporalBlend: currentReprojectionTemporalBlend(enabled),
+    temporalCellRate,
+    temporalCellPhase: 0,
+    temporalBlend: currentReprojectionTemporalBlend(historyEnabled),
   };
 }
 
@@ -1121,7 +1159,7 @@ function ensureCoarseInPayload(payload) {
     payload.coarseFactor = Math.max(qCoarse, payload.reproj.coarseFactor | 0);
     payload.reproj.coarseFactor = payload.coarseFactor;
     payload.reproj.scale = 1 / Math.max(1, payload.coarseFactor * payload.coarseFactor);
-  } else if (reprojEnabled) {
+  } else if (cloudHistoryEnabled()) {
     const rp = getReprojPayload();
     payload.reproj = payload.reproj || rp;
     payload.coarseFactor = Math.max(qCoarse, rp.coarseFactor | 0);
@@ -1313,7 +1351,7 @@ async function runAfterBakeAndTuning(
       extraPayload || {},
     );
 
-    if (reprojEnabled) payload.reproj = getReprojPayload();
+    if (cloudHistoryEnabled()) payload.reproj = getReprojPayload();
     ensureCoarseInPayload(payload);
     await runFrameLatest(payload);
   } finally {
@@ -1547,7 +1585,7 @@ async function wireUI() {
         cloudParams,
       };
 
-      if (reprojEnabled) payload.reproj = getReprojPayload();
+      if (cloudHistoryEnabled()) payload.reproj = getReprojPayload();
       ensureCoarseInPayload(payload);
 
       payload.waitForGpu = true;
@@ -1657,7 +1695,7 @@ async function wireUI() {
           preview: safeClone(preview),
           cloudParams,
         };
-        if (reprojEnabled) payload.reproj = getReprojPayload();
+        if (cloudHistoryEnabled()) payload.reproj = getReprojPayload();
         ensureCoarseInPayload(payload);
         await runFrameLatest(payload);
       } catch (e) {
@@ -1767,7 +1805,7 @@ async function wireUI() {
           preview: safeClone(preview),
           cloudParams,
         };
-        if (reprojEnabled) payload.reproj = getReprojPayload();
+        if (cloudHistoryEnabled()) payload.reproj = getReprojPayload();
         ensureCoarseInPayload(payload);
         await runFrameLatest(payload);
       } catch (e) {
@@ -1809,7 +1847,7 @@ async function wireUI() {
           preview: safeClone(preview),
           cloudParams,
         };
-        if (reprojEnabled) payload.reproj = getReprojPayload();
+        if (cloudHistoryEnabled()) payload.reproj = getReprojPayload();
         ensureCoarseInPayload(payload);
         await runFrameLatest(payload);
       } catch (e) {
@@ -1834,7 +1872,7 @@ async function wireUI() {
       cloudParams,
       tuning,
     };
-    if (reprojEnabled) payload.reproj = getReprojPayload();
+    if (cloudHistoryEnabled()) payload.reproj = getReprojPayload();
     ensureCoarseInPayload(payload);
     try {
       await runFrameLatest(payload);
@@ -1860,11 +1898,11 @@ async function wireUI() {
       cloudParams,
       tuning,
     };
-    if (reprojEnabled) payload.reproj = getFreshReprojPayload();
+    if (cloudHistoryEnabled()) payload.reproj = getFreshReprojPayload();
     ensureCoarseInPayload(payload);
     try {
       await runFrameLatest(payload);
-      if (reprojEnabled) {
+      if (cloudHistoryEnabled()) {
         const rp = getReprojPayload();
         await rpc("setReproj", { reproj: rp, perf: null });
       }
@@ -1949,7 +1987,7 @@ async function wireUI() {
         cloudParams,
       };
 
-      if (reprojEnabled) payload.reproj = getReprojPayload();
+      if (cloudHistoryEnabled()) payload.reproj = getReprojPayload();
       ensureCoarseInPayload(payload);
       await runFrameLatest(payload);
     } finally {
@@ -2193,6 +2231,14 @@ async function init() {
   setIf("t-fluffFactor", 2.0);
   setIf("t-anvilLift", 0.6);
   setIf("t-alphaCutoff", 0.98);
+  setIf("t-verticalStepBoost", 3.0);
+  setIf("t-verticalTextureHomogeneity", 0.0);
+  setIf("t-verticalLightingStepBoost", 1.35);
+  setIf("t-frontOcclusionStrength", 0.72);
+  setIf("t-frontOcclusionAlpha", 0.66);
+  setIf("t-frontOcclusionStepBoost", 3.0);
+  setIf("t-sliceJitterStrength", 0.08);
+  setIf("t-verticalLayerDecorrelation", 0.35);
 
   // preview
   setIf("v-cx", preview.cam.x);
@@ -2209,6 +2255,7 @@ async function init() {
   setIf("v-box-hy", preview.box.half[1]);
   setIf("v-box-hz", preview.box.half[2]);
   setIf("v-box-uv", preview.box.uvScale);
+  setIf("v-temporal-cell-rate", normalizeTemporalCellRate(preview.temporalCellRate ?? 1));
   syncPreviewLookInputs();
 
   // spawn worker
@@ -2353,7 +2400,7 @@ async function init() {
       cloudParams,
     };
 
-    if (reprojEnabled) payload.reproj = getReprojPayload();
+    if (cloudHistoryEnabled()) payload.reproj = getReprojPayload();
     ensureCoarseInPayload(payload);
 
     const { timings } = await rpc("runFrame", payload);

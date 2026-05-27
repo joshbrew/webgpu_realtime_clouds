@@ -971,6 +971,15 @@ function snapshotTransforms() {
 // -----------------------------------------------------------------------------
 // reproj normalization
 // -----------------------------------------------------------------------------
+function normalizeTemporalCellRate(value) {
+  const n = Math.max(1, Number(value) | 0);
+  if (n >= 16) return 16;
+  if (n >= 8) return 8;
+  if (n >= 4) return 4;
+  if (n >= 2) return 2;
+  return 1;
+}
+
 function normalizeReproj(r) {
   if (!r) return null;
 
@@ -985,6 +994,9 @@ function normalizeReproj(r) {
     frameIndex: (r.frameIndex ? r.frameIndex >>> 0 : 0) >>> 0,
     fullWidth: r.fullWidth ? r.fullWidth >>> 0 : undefined,
     fullHeight: r.fullHeight ? r.fullHeight >>> 0 : undefined,
+    temporalCellRate: normalizeTemporalCellRate(r.temporalCellRate),
+    temporalCellPhase: r.temporalCellPhase ? r.temporalCellPhase >>> 0 : 0,
+    compactInterleave: r.compactInterleave ? 1 : 0,
     scale: typeof r.scale === "number" ? r.scale : undefined,
     coarseFactor: typeof r.coarseFactor === "number" ? Math.max(1, r.coarseFactor | 0) : undefined,
   };
@@ -1236,6 +1248,7 @@ function makeViewSignature(preview, w, h) {
     roundSig(preview?.styleSunBleed ?? 0.85, 1000),
     roundSig(preview?.styleMidLift ?? 1.10, 1000),
     preview?.godRaysEnabled ? 1 : 0,
+    normalizeTemporalCellRate(preview?.temporalCellRate ?? 1),
     roundSig(preview?.godRayStrength ?? 0.0, 1000),
     roundSig(preview?.godRayLength ?? 1.0, 1000),
     roundSig(preview?.godRayFalloff ?? 1.55, 1000),
@@ -1251,6 +1264,7 @@ function invalidateReprojectionHistory() {
   if (workerReproj) {
     workerReproj.frameIndex = 0;
     workerReproj.sampleOffset = 0;
+    workerReproj.temporalCellPhase = 0;
   }
 }
 
@@ -1275,6 +1289,8 @@ function cloneReprojForReset(r) {
     sampleOffset: 0,
     temporalBlend: 0.0,
     frameIndex: 0,
+    temporalCellPhase: 0,
+    compactInterleave: 0,
   });
 }
 
@@ -1358,6 +1374,7 @@ async function runFrame({
     if (workerReproj && nextReproj && !reproj.resetHistory && nextReproj.enabled && nextReproj.frameIndex === 0 && workerReproj.frameIndex > 0) {
       nextReproj.frameIndex = workerReproj.frameIndex >>> 0;
       nextReproj.sampleOffset = workerReproj.sampleOffset >>> 0;
+      nextReproj.temporalCellPhase = workerReproj.temporalCellPhase >>> 0;
     }
     workerReproj = nextReproj;
     if (reproj.resetHistory) invalidateReprojectionHistory();
@@ -1379,10 +1396,12 @@ async function runFrame({
   });
 
   const useReproj = !!(workerReproj && workerReproj.enabled);
-  const useTemporalHistory = !!(workerReproj && workerReproj.temporalBlend > 0.0001);
+  const workerTemporalCellRate = normalizeTemporalCellRate(workerReproj?.temporalCellRate);
+  const useTemporalCells = workerTemporalCellRate > 1;
+  const useTemporalHistory = !!(workerReproj && (workerReproj.temporalBlend > 0.0001 || useTemporalCells));
   const resetReprojThisFrame = useTemporalHistory && reprojResetFrames > 0;
   let effectiveReproj = workerReproj;
-  let effectiveCoarseFactor = Math.max(1, coarseFactor | 0, renderScaleDividerCoarseFactor(preview, useReproj));
+  let effectiveCoarseFactor = Math.max(1, coarseFactor | 0, renderScaleDividerCoarseFactor(preview, useTemporalHistory));
   if (resetReprojThisFrame) {
     effectiveReproj = cloneReprojForReset(workerReproj);
     historyPrevView = null;
@@ -1399,19 +1418,26 @@ async function runFrame({
       if (!(effectiveReproj.frameIndex === 0 && !historyPrevView)) {
         effectiveReproj.frameIndex = ((effectiveReproj.frameIndex || 0) + 1) >>> 0;
         effectiveReproj.sampleOffset = coarseDriven ? 0 : (effectiveReproj.frameIndex % cells) >>> 0;
+        const temporalCellRate = normalizeTemporalCellRate(effectiveReproj.temporalCellRate);
+        effectiveReproj.temporalCellRate = temporalCellRate;
+        // True temporal interleave rotates the owner phase. Non-owner pixels
+        // reuse and copy forward full-resolution history in the cloud shader.
+        effectiveReproj.temporalCellPhase = temporalCellRate > 1 ? (effectiveReproj.frameIndex % temporalCellRate) >>> 0 : 0;
         if (workerReproj) {
           workerReproj.frameIndex = effectiveReproj.frameIndex >>> 0;
           workerReproj.sampleOffset = effectiveReproj.sampleOffset >>> 0;
+          workerReproj.temporalCellRate = effectiveReproj.temporalCellRate >>> 0;
+          workerReproj.temporalCellPhase = effectiveReproj.temporalCellPhase >>> 0;
         }
       }
     }
   }
 
-  if (useReproj) {
+  if (useTemporalHistory) {
     if (!workerReproj && reproj) workerReproj = normalizeReproj(reproj);
     if (!effectiveReproj) effectiveReproj = workerReproj;
 
-    if (motionImage) {
+    if (useReproj && motionImage) {
       try {
         motionTex?.destroy?.();
         motionTex = device.createTexture({
@@ -1429,7 +1455,7 @@ async function runFrame({
       motionView = null;
     }
 
-    if (depthImage) {
+    if (useReproj && depthImage) {
       try {
         depthTex?.destroy?.();
         depthTex = device.createTexture({
@@ -1463,10 +1489,12 @@ async function runFrame({
     if (workerPerf) cb.setPerfParams(workerPerf);
     if (effectiveReproj) {
       effectiveCoarseFactor = Math.max(effectiveCoarseFactor, getReprojCoarseFactor(effectiveReproj, effectiveCoarseFactor));
-      if (effectiveReproj) {
-        effectiveReproj.coarseFactor = effectiveCoarseFactor;
-        effectiveReproj.scale = 1 / Math.max(1, effectiveCoarseFactor * effectiveCoarseFactor);
-      }
+      effectiveReproj.coarseFactor = effectiveCoarseFactor;
+      effectiveReproj.scale = 1 / Math.max(1, effectiveCoarseFactor * effectiveCoarseFactor);
+      effectiveReproj.temporalCellRate = normalizeTemporalCellRate(effectiveReproj.temporalCellRate);
+      effectiveReproj.temporalCellPhase = effectiveReproj.temporalCellRate > 1
+        ? (effectiveReproj.frameIndex % effectiveReproj.temporalCellRate) >>> 0
+        : 0;
       cb.setReprojSettings(getDispatchReprojSettings(effectiveReproj, effectiveCoarseFactor));
     }
   } else {
@@ -1476,6 +1504,18 @@ async function runFrame({
       historyPrevView: null,
     });
     cb.setHistoryOutView(null);
+    cb.setReprojSettings({
+      enabled: 0,
+      subsample: 1,
+      sampleOffset: 0,
+      temporalBlend: 0.0,
+      frameIndex: 0,
+      fullWidth: MAIN_W,
+      fullHeight: MAIN_H,
+      temporalCellRate: 1,
+      temporalCellPhase: 0,
+      compactInterleave: 0,
+    });
   }
 
   cb.setBox(cloudBox);
@@ -1525,7 +1565,7 @@ async function runFrame({
 
   cb.setOptions({ writeRGB: true, outputChannel: 0, debugForceFog: 0 });
 
-  if (!useReproj) cb.createOutputTexture(MAIN_W, MAIN_H, 1);
+  if (!useTemporalHistory) cb.createOutputTexture(MAIN_W, MAIN_H, 1);
 
   const shouldWaitForGpu = !!waitForGpu;
   const tAll0 = performance.now();
@@ -1621,6 +1661,7 @@ async function runFrame({
       if (workerReproj) {
         workerReproj.frameIndex = 0;
         workerReproj.sampleOffset = 0;
+        workerReproj.temporalCellPhase = 0;
       }
     }
   }
@@ -1646,6 +1687,9 @@ async function runFrame({
     coarseFactor: cf,
     directPreview: !!encodedDispatch.directPreview,
     resetReprojection: resetReprojThisFrame,
+    temporalCellRate: workerTemporalCellRate,
+    temporalCellPhase: workerReproj?.temporalCellPhase ?? 0,
+    interleaveStats: encodedDispatch.interleaveStats || null,
     frame: submittedFrameCount,
   };
 
@@ -1666,6 +1710,12 @@ async function runFrame({
       cf,
       "directPreview:",
       !!encodedDispatch.directPreview,
+      "temporalCellRate:",
+      workerTemporalCellRate,
+      "interleave:",
+      timings.interleaveStats
+        ? `${timings.interleaveStats.updatedPixels}/${timings.interleaveStats.totalPixels} tile=${timings.interleaveStats.tile}`
+        : "n/a",
     );
   }
 
@@ -2027,6 +2077,7 @@ async function _handleMessage(ev) {
       if (workerReproj && workerReproj.temporalBlend > 0.0001 && payload?.reproj?.resetHistory) {
         workerReproj.frameIndex = 0;
         workerReproj.sampleOffset = 0;
+        workerReproj.temporalCellPhase = 0;
         invalidateReprojectionHistory();
       }
 
@@ -2034,7 +2085,7 @@ async function _handleMessage(ev) {
         lastRunPayload.reproj = workerReproj
           ? Object.assign({}, workerReproj, { resetHistory: false })
           : workerReproj;
-        const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload.preview, !!(workerReproj && workerReproj.enabled));
+        const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload.preview, !!(workerReproj && (workerReproj.enabled || normalizeTemporalCellRate(workerReproj.temporalCellRate) > 1)));
         if (workerReproj) {
           lastRunPayload.coarseFactor = Math.max(qCoarse, getReprojCoarseFactor(workerReproj, lastRunPayload.coarseFactor || 1));
           lastRunPayload.reproj.coarseFactor = lastRunPayload.coarseFactor;
@@ -2047,7 +2098,7 @@ async function _handleMessage(ev) {
       if (cb) {
         if (workerPerf) cb.setPerfParams(workerPerf);
         if (workerReproj) {
-          const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload?.preview, !!workerReproj.enabled);
+          const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload?.preview, !!(workerReproj.enabled || normalizeTemporalCellRate(workerReproj.temporalCellRate) > 1));
           const cf = Math.max(qCoarse, getReprojCoarseFactor(workerReproj, 1));
           workerReproj.coarseFactor = cf;
           workerReproj.scale = 1 / Math.max(1, cf * cf);
@@ -2056,7 +2107,7 @@ async function _handleMessage(ev) {
       }
 
       renderBundleCache.clear();
-      if (!workerReproj || !workerReproj.enabled) stopLoop();
+      if (!workerReproj || (!workerReproj.enabled && normalizeTemporalCellRate(workerReproj.temporalCellRate) <= 1)) stopLoop();
 
       respond(true, { ok: true, reproj: workerReproj, perf: workerPerf });
       return;
