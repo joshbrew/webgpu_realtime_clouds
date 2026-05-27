@@ -8711,6 +8711,8 @@ fn computeGauss5x5(
   var _has = (o, k) => Object.prototype.hasOwnProperty.call(o || {}, k);
   var normalizeTemporalRate = (value) => {
     const n = Math.max(1, Number(value) | 0);
+    if (n >= 64) return 64;
+    if (n >= 32) return 32;
     if (n >= 16) return 16;
     if (n >= 8) return 8;
     if (n >= 4) return 4;
@@ -11163,6 +11165,9 @@ fn computeGauss5x5(
   var WEATHER_H = 512;
   var BN_W = 256;
   var BN_H = 256;
+  var debugPreviewEnabled = true;
+  var mobileProfileEnabled = false;
+  var lastResizeProfile = null;
   var noise = {
     weather: { arrayView: null, dirty: false, gCleared: false, bCleared: false },
     blue: { arrayView: null, dirty: false },
@@ -11236,17 +11241,46 @@ fn computeGauss5x5(
   var lastViewSignature = null;
   var reprojResetFrames = 0;
   var lastGpuFrameMs = 0;
+  var STARTUP_DEFER_MS = 0;
+  function deferToBrowser(ms = STARTUP_DEFER_MS) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+  async function progressiveYield(enabled, message = "Working...") {
+    if (!enabled) return;
+    try {
+      postMessage({ type: "progress", data: { message } });
+    } catch {
+    }
+    await deferToBrowser();
+  }
+  function renderDebugIfEnabled(kind = "all") {
+    if (!debugPreviewEnabled) return;
+    if (kind === "weather") {
+      renderWeatherDebug();
+      return;
+    }
+    if (kind === "slices") {
+      renderDebugSlices();
+      return;
+    }
+    renderWeatherDebug();
+    renderDebugSlices();
+  }
   async function ensureDevice() {
     if (device) return;
-    const adapter = await navigator.gpu.requestAdapter();
+    const adapter = await navigator.gpu.requestAdapter({ powerPreference: mobileProfileEnabled ? "low-power" : "high-performance" });
     if (!adapter) throw new Error("No suitable GPU adapter (worker)");
-    const max = adapter.limits.maxBufferSize;
-    const wantMaxBufferSize = Math.min(max, 1024 * 1024 * 1024);
-    device = await adapter.requestDevice({
-      requiredLimits: {
-        maxBufferSize: wantMaxBufferSize
-      }
-    });
+    const maxBufferSize = adapter.limits?.maxBufferSize || 0;
+    const defaultSafeBufferSize = 256 * 1024 * 1024;
+    const wantedBufferSize = Math.min(maxBufferSize || defaultSafeBufferSize, mobileProfileEnabled ? defaultSafeBufferSize : 1024 * 1024 * 1024);
+    try {
+      device = await adapter.requestDevice(
+        wantedBufferSize > defaultSafeBufferSize ? { requiredLimits: { maxBufferSize: wantedBufferSize } } : {}
+      );
+    } catch (err) {
+      console.warn("requestDevice with custom limits failed; retrying with defaults", err);
+      device = await adapter.requestDevice();
+    }
     queue = device.queue;
     nb = new NoiseComputeBuilder(device, queue);
     cb = new CloudComputeBuilder(device, queue);
@@ -11380,7 +11414,7 @@ fn computeGauss5x5(
   }
   async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {}, weatherBParams = null) {
     if (noise.weather.arrayView && !force && !noise.weather.dirty) {
-      renderWeatherDebug();
+      renderDebugIfEnabled("weather");
       noise.weather.dirty = false;
       return { baseMs: 0, gMs: 0, bMs: 0, totalMs: 0 };
     }
@@ -11466,7 +11500,7 @@ fn computeGauss5x5(
     }
     noise.weather.arrayView = (typeof nb.get2DView === "function" ? nb.get2DView("weather2d", { dimension: "2d-array" }) : baseView) || baseView;
     noise.weather.dirty = false;
-    renderWeatherDebug();
+    renderDebugIfEnabled("weather");
     const totalMs = performance.now() - T0;
     log(
       "[BENCH] weather base(ms):",
@@ -11623,7 +11657,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     maybeApplySeedToPermTable(blueParams);
     if (noise.blue.arrayView && !force && !noise.blue.dirty) {
       noise.blue.dirty = false;
-      if (dbg.blue) {
+      if (debugPreviewEnabled && dbg.blue) {
         nb.renderTextureToCanvas(noise.blue.arrayView, dbg.blue, {
           preserveCanvasSize: true,
           clear: true,
@@ -11647,7 +11681,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     const blurMs = performance.now() - blurT0;
     noise.blue.arrayView = filteredBlueView || rawBlueView;
     noise.blue.dirty = false;
-    if (dbg.blue) {
+    if (debugPreviewEnabled && dbg.blue) {
       nb.renderTextureToCanvas(noise.blue.arrayView, dbg.blue, {
         preserveCanvasSize: true,
         clear: true,
@@ -11664,7 +11698,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (noise.shape128.view3D && !force && !noise.shape128.dirty) {
       noise.shape128.dirty = false;
       if (typeof queue?.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
-      renderDebugSlices();
+      renderDebugIfEnabled("slices");
       return { baseMs: 0, bandsMs: [0, 0, 0], totalMs: 0 };
     }
     const T0 = performance.now();
@@ -11707,7 +11741,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     noise.shape128.view3D = nb.get3DView("shape128");
     noise.shape128.dirty = false;
     if (typeof queue?.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
-    renderDebugSlices();
+    renderDebugIfEnabled("slices");
     const totalMs = performance.now() - T0;
     log(
       "[BENCH] shape base(ms):",
@@ -11730,7 +11764,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (noise.detail32.view3D && !force && !noise.detail32.dirty) {
       noise.detail32.dirty = false;
       if (typeof queue?.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
-      renderDebugSlices();
+      renderDebugIfEnabled("slices");
       return { bandsMs: [0, 0, 0], totalMs: 0 };
     }
     const T0 = performance.now();
@@ -11764,7 +11798,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     noise.detail32.view3D = nb.get3DView("detail32");
     noise.detail32.dirty = false;
     if (typeof queue?.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
-    renderDebugSlices();
+    renderDebugIfEnabled("slices");
     const totalMs = performance.now() - T0;
     log(
       "[BENCH] detail bands(ms):",
@@ -11937,6 +11971,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
   function normalizeTemporalCellRate(value) {
     const n = Math.max(1, Number(value) | 0);
+    if (n >= 64) return 64;
+    if (n >= 32) return 32;
     if (n >= 16) return 16;
     if (n >= 8) return 8;
     if (n >= 4) return 4;
@@ -12364,7 +12400,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       } else {
         depthView = null;
       }
+      const outputNeedsAlloc = !cb.outTexture || cb.width !== MAIN_W || cb.height !== MAIN_H || cb.layers !== 1;
+      if (outputNeedsAlloc) await progressiveYield(mobileProfileEnabled, "Allocating cloud render targets...");
       cb.createOutputTexture(MAIN_W, MAIN_H, 1);
+      const historyNeedsAlloc = !historyAllocated || historyTexWidth !== (cb.width || MAIN_W) || historyTexHeight !== (cb.height || MAIN_H) || historyTexLayers !== (cb.layers || 1);
+      if (historyNeedsAlloc) await progressiveYield(mobileProfileEnabled, "Allocating temporal history...");
       ensureHistoryTextures(cb.width || MAIN_W, cb.height || MAIN_H, cb.layers || 1);
       historyOutView = historyUsesAasOut ? historyViewA : historyViewB;
       cb.setInputMaps({
@@ -12437,7 +12477,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       camPos: [preview?.cam?.x || 0, preview?.cam?.y || 0, preview?.cam?.z || 0]
     });
     cb.setOptions({ writeRGB: true, outputChannel: 0, debugForceFog: 0 });
-    if (!useTemporalHistory) cb.createOutputTexture(MAIN_W, MAIN_H, 1);
+    if (!useTemporalHistory) {
+      const outputNeedsAlloc = !cb.outTexture || cb.width !== MAIN_W || cb.height !== MAIN_H || cb.layers !== 1;
+      if (outputNeedsAlloc) await progressiveYield(mobileProfileEnabled, "Allocating cloud render target...");
+      cb.createOutputTexture(MAIN_W, MAIN_H, 1);
+    }
     const shouldWaitForGpu = !!waitForGpu;
     const tAll0 = performance.now();
     if (shouldWaitForGpu && typeof queue.onSubmittedWorkDone === "function") {
@@ -12729,7 +12773,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         WEATHER_H = constants.WEATHER_H;
         BN_W = constants.BN_W;
         BN_H = constants.BN_H;
+        debugPreviewEnabled = constants.DEBUG_ENABLED !== false;
+        mobileProfileEnabled = !!constants.MOBILE_PROFILE;
+        await progressiveYield(true, "Starting WebGPU worker...");
         await ensureDevice();
+        await progressiveYield(mobileProfileEnabled, "Configuring canvas...");
         configureMainContext();
         renderBundleCache.clear();
         respond(true, {
@@ -12744,6 +12792,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         MAIN_H = Math.max(1, main.height | 0);
         DBG_W = Math.max(1, dbgSize.width | 0);
         DBG_H = Math.max(1, dbgSize.height | 0);
+        lastResizeProfile = payload.profile || null;
         if (canvasMain) {
           canvasMain.width = MAIN_W;
           canvasMain.height = MAIN_H;
@@ -12812,21 +12861,34 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       if (type === "bakeAll") {
         await ensureDevice();
         const t0 = performance.now();
-        if (payload?.tileTransforms) applyNoiseTransforms(payload.tileTransforms, { allowPositions: !!payload.tileTransforms.explicit, allowScale: true, allowVel: true, additive: !!payload.tileTransforms.additive });
-        if (payload?.noiseTransforms) applyNoiseTransforms(payload.noiseTransforms, { allowPositions: true, allowScale: true, allowVel: true, additive: !!payload.noiseTransforms.additive });
-        pushTransformsToCloudBuilder();
-        const weather = await bakeWeather2D(
-          payload.weatherParams || {},
-          true,
-          payload.billowParams || {},
-          payload.weatherBParams || payload.weatherB || null
-        );
-        const blue = await bakeBlue2D(payload.blueParams || {}, true);
-        const shape = await bakeShape128(payload.shapeParams || {}, true);
-        const detail = await bakeDetail32(payload.detailParams || {}, true);
-        const t1 = performance.now();
-        invalidateReprojectionHistory();
-        respond(true, { baked: "all", timings: { weather, blue, shape, detail, totalMs: t1 - t0 } });
+        const progressive = !!payload?.progressive;
+        const prevDebugEnabled = debugPreviewEnabled;
+        if (payload?.skipDebug === true) debugPreviewEnabled = false;
+        try {
+          if (payload?.tileTransforms) applyNoiseTransforms(payload.tileTransforms, { allowPositions: !!payload.tileTransforms.explicit, allowScale: true, allowVel: true, additive: !!payload.tileTransforms.additive });
+          if (payload?.noiseTransforms) applyNoiseTransforms(payload.noiseTransforms, { allowPositions: true, allowScale: true, allowVel: true, additive: !!payload.noiseTransforms.additive });
+          pushTransformsToCloudBuilder();
+          await progressiveYield(progressive, "Baking weather map...");
+          const weather = await bakeWeather2D(
+            payload.weatherParams || {},
+            true,
+            payload.billowParams || {},
+            payload.weatherBParams || payload.weatherB || null
+          );
+          await progressiveYield(progressive, "Baking blue noise...");
+          const blue = await bakeBlue2D(payload.blueParams || {}, true);
+          await progressiveYield(progressive, `Baking shape volume ${SHAPE_SIZE}\xB3...`);
+          const shape = await bakeShape128(payload.shapeParams || {}, true);
+          await progressiveYield(progressive, `Baking detail volume ${DETAIL_SIZE}\xB3...`);
+          const detail = await bakeDetail32(payload.detailParams || {}, true);
+          await progressiveYield(progressive, "Preparing first frame...");
+          const t1 = performance.now();
+          invalidateReprojectionHistory();
+          respond(true, { baked: "all", timings: { weather, blue, shape, detail, totalMs: t1 - t0 } });
+        } finally {
+          debugPreviewEnabled = prevDebugEnabled;
+          if (debugPreviewEnabled) renderDebugIfEnabled();
+        }
         return;
       }
       if (type === "setTileTransforms" || type === "setNoiseTransforms") {
