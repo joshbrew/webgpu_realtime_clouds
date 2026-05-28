@@ -1372,10 +1372,15 @@ export class CloudComputeBuilder {
 
     putF(192, s.frontOcclusionAlpha ?? 0.66);
     putF(196, s.frontOcclusionStepBoost ?? 3.0);
-    putF(200, s.sliceJitterStrength ?? 0.18);
-    putF(204, s.verticalLayerDecorrelation ?? 0.78);
+    putF(200, s.sliceJitterStrength ?? 0.08);
+    putF(204, s.verticalLayerDecorrelation ?? 0.35);
 
-    for (let i = 208; i < this._abTuning.byteLength; i += 4)
+    putF(208, 0.0);
+    putF(212, 0.0);
+    putF(216, 0.0);
+    putF(220, 0.0);
+
+    for (let i = 224; i < this._abTuning.byteLength; i += 4)
       dv.setUint32(i, 0, true);
 
     this._writeIfChanged("tuning", this.tuningBuffer, this._abTuning);

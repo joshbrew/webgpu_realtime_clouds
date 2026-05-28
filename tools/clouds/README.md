@@ -260,7 +260,6 @@ clouds.setTuning({
   sunSteps: 6,
   sunStride: 3,
   fluffFactor: 2.0,
-  anvilLift: 0.6,
   alphaCutoff: 0.98,
   frontOcclusionStrength: 0.72,
   frontOcclusionAlpha: 0.66,
@@ -402,7 +401,6 @@ clouds.setTuning({
   raySmoothDens: 0.34,
   raySmoothSun: 0.34,
   fluffFactor: 2.0,
-  anvilLift: 0.6,
   alphaCutoff: 0.98,
   frontOcclusionStrength: 0.72,
   frontOcclusionAlpha: 0.66,
@@ -787,7 +785,7 @@ Cloud appearance and lighting parameters. Builder defaults are shown.
 |---|---:|---|
 | globalCoverage | `1.0` | Overall cloud coverage multiplier. |
 | globalDensity | `1000.0` | Density/extinction scale. |
-| cloudAnvilAmount | `0.0` | Horizontal anvil spreading amount. |
+| cloudAnvilAmount | `0.0` | Single anvil/cumulonimbus amount. Higher values continue to overdrive tower height, lift/headroom, soft cap taper, and anvil spread. |
 | cloudBeer | `6.0` | Beer/Powder style density response. |
 | attenuationClamp | `0.015` | Minimum light transmittance clamp. |
 | inScatterG | `0.55` | Forward/in-scatter phase anisotropy. |
@@ -864,8 +862,7 @@ Raymarch and visual stability parameters. These control quality, performance, LO
 | raySmoothDens | `0.34` | Density smoothing along the ray. |
 | raySmoothSun | `0.34` | Sun lighting smoothing along the ray. |
 | fluffFactor | `2.0` | Edge erosion/scallop strength. |
-| anvilLift | `0.6` | Height influence for anvil shaping. |
-| alphaCutoff | `0.98` | Early ray termination alpha. Higher marches deeper. |
+| alphaCutoff | `0.98` | Early ray termination alpha. When accumulated opacity reaches this cutoff, output alpha is clamped to `1.0` and the ray stops. Higher values march deeper. |
 | thickBoxPerf | `0.65` | Internal strength of thick-box acceleration. |
 | thickStepBoost | `1.28` | Internal step boost for thick boxes. |
 | thickDetailSkip | `0.18` | Internal detail-skip strength in safe interiors. |
@@ -877,7 +874,9 @@ Raymarch and visual stability parameters. These control quality, performance, LO
 | frontOcclusionAlpha | `0.66` | Accumulated alpha where front-occlusion acceleration starts. |
 | frontOcclusionStepBoost | `3.0` | Maximum step multiplier used behind an already opaque close cloud front. |
 | sliceJitterStrength | `0.18` | Stable per-step ray jitter that breaks up horizontal slice bands in tall boxes. |
-| verticalLayerDecorrelation | `0.78` | Subtle non-planar Y perturbation for shape/detail sampling so tall boxes do not produce horizontal sheets. |
+| verticalLayerDecorrelation | `0.78` | Subtle non-planar Y perturbation for shape/detail sampling so tall boxes do not produce as bad of horizontal sheets. |
+
+Lot of very minor knobs here with only subtle effects for edge cases, most can be left at defaults.
 
 ## `setReprojSettings(reprojection)`
 
@@ -1024,9 +1023,9 @@ The v43 playground default is `5`. This is usually the right place to start whil
 
 ## Mobile and first-load behavior
 
-The playground now chooses a lighter startup profile on mobile-like devices. It keeps the same renderer and visual controls, but caps canvas pixel count, limits DPR, uses smaller startup procedural textures, and disables debug texture previews on mobile. Desktop defaults remain uncapped for performance testing.
-
 Startup baking is also staged through the worker with small yields between weather, blue-noise, shape, and detail texture creation. This lets the loading overlay paint before large GPU work starts and reduces the apparent browser freeze on first load.
+
+The playground  chooses a lighter startup profile on mobile-like devices. It keeps the same renderer and visual controls, but caps canvas pixel count, limits DPR, uses smaller startup procedural textures, and disables debug texture previews on mobile. Desktop defaults remain uncapped for performance testing. Mobile performance is not good, though, but it is testable.
 
 Mobile startup defaults:
 
@@ -1037,6 +1036,8 @@ Mobile startup defaults:
 - DPR cap: `1.35`.
 - Render Scale Divider: `6`.
 - Temporal Interleave: `1 / 4 rays per frame`.
+
+Performance is still garbo on mobile, though, but it does kinda work.
 
 Desktop startup defaults stay uncapped for performance testing. Desktop keeps the `128³` shape volume, `512²` weather map, `256²` blue noise, Render Scale Divider `5`, and uses the full browser canvas size at the browser/device DPR.
 
@@ -1112,9 +1113,6 @@ If lighting cards or flat planes appear:
 
 ---
 
-
----
-
 # Credits
 
 WebGPU implementation by Joshua Brewster (MIT License)
@@ -1123,36 +1121,3 @@ Inspired by Fredrik Häggström's [Real-time rendering of volumetric clouds](htt
 
 This implementation uses the companion WebGPU procedural texture work in [webgpu_noise_compute_textures](https://github.com/joshbrew/webgpu_noise_compute_textures).
 
-## Pass 24 notes: cleanup after interleave stabilization
-
-This pass keeps the known-good compact 8x8 Temporal Interleave path and removes the abandoned macro-voxel cache experiment from the active renderer, worker, and playground. The current performance path is Temporal Interleave plus the existing weather-column empty skipping, active-Y clipping, adaptive thick-box stepping, far proxy sampling, and front-occlusion acceleration.
-
-For testing, use `Temporal Interleave = 1 / 2` first, then `1 / 4`. `1 / 32` and `1 / 64` are intentionally extreme test modes. The first history-seeding frame renders all pixels; after that, compact dispatch updates only the selected 8x8 scattered subset and copies the previous history for the rest.
-
-
-## Pass 25 notes: extended interleave test rates
-
-The active performance path remains the compact 8x8 Temporal Interleave renderer. This pass adds `1 / 32` and `1 / 64` interleave options for testing. These modes update two or one pixel per 8x8 tile respectively, so they are useful for stress-testing compact dispatch and temporal accumulation, but `1 / 2`, `1 / 4`, and `1 / 8` remain the practical quality/performance range.
-
-## Pass 26 notes: shader micro-optimization cleanup
-
-This pass keeps the current visual model and defaults unchanged. The active optimization path is still compact 8x8 Temporal Interleave, weather-column empty skipping, active-Y clipping, adaptive stepping, far proxy sampling, and front-occlusion acceleration.
-
-Small shader cleanups in this pass:
-
-- Ray distance inside the primary march now uses the normalized ray parameter instead of recomputing `length(p - rayRo)` every sample.
-- The per-light-step sun transmittance early-out now compares accumulated optical depth against a precomputed cutoff instead of evaluating Beer law inside each sun loop iteration.
-- Secondary sun-jitter hashing no longer uses `sin()` in the inner light loop.
-- Removed unused weather-mapping parameters and dead locals left behind from older coordinate paths.
-
-## Pass 27 notes: mobile startup and deferred baking
-
-This pass keeps the current visual model, defaults, compact 8x8 Temporal Interleave path, and uncapped desktop canvas behavior intact. It adds a mobile startup profile, caps initial canvas resolution/DPR only on mobile-like devices, makes WebGPU device creation more forgiving on smaller adapters, skips debug texture previews on mobile, and stages the initial texture bake and first render-target/history allocation with worker-side progress/yields so first load is less likely to freeze the page.
-
-## Pass 28 notes: uncapped desktop canvas
-
-This pass keeps the mobile startup caps from pass 27, but removes desktop DPR and canvas-size caps. Desktop now sends the full canvas pixel size to the worker so 4K and high-DPR browser tests are not artificially limited.
-
-## Pass 29 notes: mobile detection and mobile interleave default
-
-This pass makes mobile detection more conservative so desktop Chrome is not treated as mobile just because `navigator.deviceMemory` reports `4`. Mobile mode is now selected by mobile user agents or touch/coarse small-screen signals, with URL overrides for testing. Mobile defaults now enable Temporal Interleave at `1 / 4 rays per frame`; desktop remains uncapped and defaults to full temporal sampling.

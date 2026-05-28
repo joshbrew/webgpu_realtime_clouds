@@ -71,7 +71,12 @@ struct CloudTuning {
   frontOcclusionAlpha: f32,
   frontOcclusionStepBoost: f32,
   sliceJitterStrength: f32,
-  verticalLayerDecorrelation: f32
+  verticalLayerDecorrelation: f32,
+
+  _pad1: f32,
+  _pad2: f32,
+  _pad3: f32,
+  _pad4: f32
 };
 @group(0) @binding(10) var<uniform> TUNE: CloudTuning;
 
@@ -367,14 +372,18 @@ fn distanceBlueScreen(pixI: vec2<i32>, rayDistance: f32, nearDistance: f32) -> f
 
 // box helpers
 fn anvilStrength() -> f32 {
-  return saturate(C.cloudAnvilAmount) * max(TUNE.anvilLift, 0.0);
+  let a = anvilAmount();
+  let overdrive = anvilOverdrive();
+  return a + overdrive * 0.62;
 }
 
 fn anvilLiftWorld() -> f32 {
-  // Keep a modest amount of vertical headroom so stronger anvils do not clip,
-  // but avoid turning the control into a simple Y stretch.
+  // Cloud Anvil drives both lift and cap spread. Values above 1 act as a
+  // controlled cumulonimbus overdrive without a separate exaggeration knob.
   let boxH = max(verticalReferenceBoxH(), EPS);
-  return boxH * anvilStrength() * 0.18;
+  let tower = anvilTowerStrength();
+  let overdrive = anvilOverdrive();
+  return boxH * anvilStrength() * (mix_f(0.18, 0.46, tower) + overdrive * 0.055);
 }
 
 fn boxMin() -> vec3<f32> { return wg_boxMinCached; }
@@ -386,18 +395,25 @@ fn anvilShapePos(pos: vec3<f32>, ph: f32) -> vec3<f32> {
     return pos;
   }
 
-  let spreadMask = saturate(remap(ph, 0.55, 0.92, 0.0, 1.0));
-  let flattenMask = saturate(remap(ph, 0.72, 0.99, 0.0, 1.0));
+  let tower = anvilTowerStrength();
+  let overdrive = anvilOverdrive();
+  let spreadMask = saturate(remap(ph, mix_f(0.66, 0.52, tower), 0.95, 0.0, 1.0));
+  let flattenMask = saturate(remap(ph, mix_f(0.80, 0.68, tower), 0.998, 0.0, 1.0));
+  let columnMask = smoothstep(0.08, 0.66, ph) * (1.0 - smoothstep(0.94, 0.998, ph));
 
   var local = pos - B.center;
-  let spread = 1.0 + anvil * spreadMask * 2.2;
+
+  // Stronger anvil values build a taller, tighter cumulonimbus body first,
+  // then spread the upper cap outward into the anvil.
+  let columnTighten = 1.0 + tower * columnMask * (0.54 + overdrive * 0.20);
+  local = vec3<f32>(local.x / columnTighten, local.y, local.z / columnTighten);
+
+  let spread = 1.0 + anvil * spreadMask * (2.05 + tower * 0.82 + overdrive * 0.28);
   local = vec3<f32>(local.x / spread, local.y, local.z / spread);
 
-  // Flatten and shelf the upper plume so the top spreads outward instead of
-  // only stretching upward.
-  let flatten = anvil * flattenMask * 0.55;
+  let flatten = anvil * flattenMask * mix_f(0.48, 0.24, tower);
   local.y = mix_f(local.y, local.y * (1.0 + flatten), flattenMask);
-  local.y = local.y - anvil * flattenMask * max(verticalReferenceHalfY(), 1.0) * 0.12;
+  local.y = local.y - anvil * flattenMask * max(verticalReferenceHalfY(), 1.0) * (0.10 + tower * 0.10 + overdrive * 0.03);
 
   return B.center + local;
 }
@@ -466,6 +482,26 @@ fn verticalDomainScale() -> f32 {
   return max(wg_verticalDomainScale, 1.0);
 }
 
+fn anvilAmount() -> f32 {
+  return max(C.cloudAnvilAmount, 0.0);
+}
+
+fn anvilAmount01() -> f32 {
+  return saturate(C.cloudAnvilAmount);
+}
+
+fn anvilTowerStrength() -> f32 {
+  let a = anvilAmount();
+  let baseTower = smoothstep(0.03, 0.72, a);
+  let highAnvil = saturate(remap(a, 0.78, 2.10, 0.0, 1.0));
+  return saturate(baseTower * 0.90 + highAnvil * 0.42);
+}
+
+fn anvilOverdrive() -> f32 {
+  let a = anvilAmount();
+  return max(a - 1.0, 0.0);
+}
+
 fn verticalReferenceHalfY() -> f32 {
   return max(wg_verticalRefHalfY, EPS);
 }
@@ -519,7 +555,7 @@ fn worldWarpY(pos_xz: vec2<f32>, ph: f32, boxMaxXZ: f32) -> f32 {
   let n1 = smoothCellHash2D(p * 1.91 + vec2<f32>(5.43, 71.29), 6.50);
   let n2 = smoothCellHash2D(p * 3.37 + vec2<f32>(19.81, 2.67), 13.00);
   let ridge = ridge01(n0 * 0.50 + n1 * 0.32 + n2 * 0.18);
-  let signed = (n0 - 0.5) * 0.52 + (n1 - 0.5) * 0.33 + (ridge - 0.5) * 0.15;
+  let signed = (n0 - 0.5) * 0.52 + (n1 - 0.5) * 0.33 + (ridge - 0.5) * 0.15 + (n2 - 0.5) * 0.08;
   let edgeDamp = smoothstep(0.02, 0.18, ph) * (1.0 - smoothstep(0.88, 1.0, ph));
   let amp = max(verticalReferenceHalfY() * 0.32, 0.12) * tall * edgeDamp;
   return signed * amp;
@@ -561,7 +597,9 @@ fn shapeUVW_fromWarp(pos: vec3<f32>, ph: f32, w: vec2<f32>) -> vec3<f32> {
   let ap = verticalScaledDomainPos(anvilShapePos(pos, ph));
   let tall = tallBoxBlend();
   let yBreak = worldWarpY(pos.xz, ph, wg_boxMaxXZ);
-  let yPhase = ph * mix_f(7.0, 3.10, tall);
+  let oldVerticalPhase = ph * 7.0;
+  let tallSafePhase = ph * mix_f(7.0, 3.10, tall);
+  let yPhase = mix_f(tallSafePhase, oldVerticalPhase, anvilTowerStrength());
   let pW = vec3<f32>(
     ap.x + w.x + NTransform.shapeOffsetWorld.x,
     ap.y + yBreak + yPhase + NTransform.shapeOffsetWorld.y,
@@ -619,6 +657,16 @@ fn weatherUV_from(pos_world: vec3<f32>, wScale: f32) -> vec2<f32> {
   return rel * tileInvWorld * wScale;
 }
 
+fn anvilColumnFactor(wm: vec4<f32>) -> f32 {
+  let tower = anvilTowerStrength();
+  let cov = saturate(C.globalCoverage);
+  let body = saturate(wm.r * 0.68 + wm.g * 0.32);
+  let core = saturate(max(wm.r, wm.g * 0.92));
+  let footprint = smoothstep(0.46, 0.82, body);
+  let coreBoost = smoothstep(0.62, 0.94, core);
+  return saturate(mix_f(footprint, max(footprint, coreBoost), tower) * cov);
+}
+
 // ---------------------- height shape and density
 fn heightShape(ph: f32, wBlue: f32) -> f32 {
   let sr_bottom = saturate(remap(ph, 0.0, 0.07, 0.0, 1.0));
@@ -644,7 +692,8 @@ fn weatherBaseTopY(wm: vec4<f32>) -> vec2<f32> {
   let jTop = (wm.g * 2.0 - 1.0) * (TUNE.topJitterFrac * boxH);
 
   let baseY = boxBottom + jBase;
-  let topY = boxTop + jTop + anvilLiftWorld();
+  let anvilCol = anvilColumnFactor(wm);
+  let topY = boxTop + jTop + anvilLiftWorld() * anvilCol;
 
   return vec2<f32>(baseY, topY);
 }
@@ -792,10 +841,21 @@ fn detailProxyFromShape(ph: f32, s: vec4<f32>) -> vec3<f32> {
 fn densityHeight(ph: f32) -> f32 {
   var ret = ph;
   ret *= saturate(remap(ph, 0.0, 0.2, 0.0, 1.0));
+
   let anvil = anvilStrength();
-  let capSupport = smoothstep(0.56, 0.86, saturate(ph)) * (1.0 - smoothstep(0.94, 1.0, saturate(ph)));
-  ret *= 1.0 + anvil * capSupport * 0.30;
-  ret *= saturate(remap(ph, mix_f(0.90, 0.96, anvil), 1.0, 1.0, 0.0));
+  let tower = anvilTowerStrength();
+  let bridgeSupport = smoothstep(0.28, 0.78, saturate(ph)) * (1.0 - smoothstep(0.92, 0.99, saturate(ph)));
+  let capSupport = smoothstep(0.50, 0.90, saturate(ph)) * (1.0 - smoothstep(0.97, 1.0, saturate(ph)));
+
+  // Blend the older softer cap taper into stronger anvil values so the same
+  // anvil control builds a taller tower and broader top without adding another
+  // redundant vertical-form knob.
+  let oldAnvilTaper = saturate(remap(sqrt(max(ph, 0.0)), 0.4, 0.95, 1.0, 0.2));
+  ret *= mix_f(1.0, mix_f(1.0, oldAnvilTaper, anvilAmount01()), tower);
+  ret *= 1.0 + tower * bridgeSupport * 0.48;
+  ret *= 1.0 + anvil * capSupport * mix_f(0.30, 0.12, tower);
+
+  ret *= saturate(remap(ph, mix_f(0.92, 0.985, saturate(anvil)), 1.0, 1.0, 0.0));
   ret *= max(C.globalDensity * 10.0, 0.0);
   return ret;
 }
@@ -828,6 +888,16 @@ fn densityFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>) -> f
   let bodyNoise = saturate(s.g * 0.45 + s.b * 0.35 + s.a * 0.20);
   let bodyLift3D = mix_f(1.0, mix_f(0.92, 1.08, bodyNoise), tallLayerBreak);
   SA = saturate(SA * bodyLift3D);
+
+  let tower = anvilTowerStrength();
+  let overdrive = anvilOverdrive();
+  let wVar = fract(wm.r * 1.7 + wm.g * 2.3);
+  let oldVerticalBulge = 1.0 + 0.22 * (abs(fract(phD * (1.0 + wVar * 1.7)) - 0.5) * 2.0 - 0.5) * 0.5;
+  let towerColumn = smoothstep(0.06, 0.64, phD) * (1.0 - smoothstep(0.90, 1.0, phD));
+  let towerLift = 1.0 + tower * towerColumn * (0.14 + bodyNoise * 0.18 + overdrive * 0.06);
+  let coreNoise = saturate(s.r * 0.52 + s.g * 0.28 + (1.0 - det.g) * 0.20);
+  let coreBoost = 1.0 + tower * towerColumn * coreNoise * (0.10 + overdrive * 0.18);
+  SA = saturate(SA * mix_f(1.0, oldVerticalBulge, tower) * towerLift * coreBoost);
 
   let gate = weatherCoverageGate(wm);
   let SNnd = saturate(remap(SNsample * SA, gate, 1.0, 0.0, 1.0));
@@ -1661,7 +1731,12 @@ fn computeCloud(
   }
 
   // ray direction
-  let ndc = uvPix * 2.0 - vec2<f32>(1.0, 1.0);
+  let jitterPhase = f32((reproj.frameIndex + reproj.temporalCellPhase) & 255u) * 0.754877666;
+  let rayJx = hash11Fast(f32(fullPix.x) * 0.06711056 + f32(fullPix.y) * 0.00583715 + jitterPhase) - 0.5;
+  let rayJy = hash11Fast(f32(fullPix.x) * 0.01145137 + f32(fullPix.y) * 0.09324173 + jitterPhase + 13.37) - 0.5;
+  let jitterPix = vec2<f32>(rayJx, rayJy) * 0.30;
+  let jitteredUvPix = (vec2<f32>(pixI) + 0.5 + jitterPix) / fullResF;
+  let ndc = jitteredUvPix * 2.0 - vec2<f32>(1.0, 1.0);
   let tanY = tan(0.5 * V.fovY);
 
   let rd_camera = normalize(vec3<f32>(ndc.x * V.aspect * tanY, -ndc.y * tanY, -1.0));
@@ -1823,7 +1898,11 @@ fn computeCloud(
 
   loop {
     if (iter >= TUNE.maxSteps) { break; }
-    if (t >= t1 || Tr < transmittanceCutoff()) { break; }
+    if (t >= t1) { break; }
+    if (Tr <= transmittanceCutoff()) {
+      Tr = 0.0;
+      break;
+    }
 
     let sliceJitter = saturate(TUNE.sliceJitterStrength);
     let sliceHash = sampleBlueScreenScaled(pixI + vec2<i32>(iter * 17, iter * 29), mix_f(2.0, 1.0, sliceJitter));
@@ -2139,7 +2218,18 @@ fn computeCloud(
       runMeanL += lNow;
       runN += 1.0;
 
-      if (Tr < frontOcclusionCutoff(frontOccF)) { break; }
+      // Once the selected opacity cutoff is reached, force the result opaque
+      // and stop marching. This preserves the early-exit win without leaving
+      // dense clouds slightly see-through. Front-occlusion early exits use the
+      // same closure so the accelerated path also remains opaque.
+      if (Tr <= transmittanceCutoff()) {
+        Tr = 0.0;
+        break;
+      }
+      if (Tr <= frontOcclusionCutoff(frontOccF)) {
+        Tr = 0.0;
+        break;
+      }
     }
 
     prevDens = densSmoothed;
@@ -2153,9 +2243,11 @@ fn computeCloud(
   // compose
   var newCol: vec4<f32>;
   if (opt.writeRGB == 1u) {
-    newCol = vec4<f32>(rgb, 1.0 - Tr);
+    let outAlpha = select(1.0 - Tr, 1.0, (1.0 - Tr) >= clamp(TUNE.alphaCutoff, 0.0, 0.999));
+    newCol = vec4<f32>(rgb, outAlpha);
   } else {
-    let a = 1.0 - Tr;
+    let aRaw = 1.0 - Tr;
+    let a = select(aRaw, 1.0, aRaw >= clamp(TUNE.alphaCutoff, 0.0, 0.999));
     if (opt.outputChannel == 0u) { newCol = vec4<f32>(a, 0.0, 0.0, 1.0); }
     else if (opt.outputChannel == 1u) { newCol = vec4<f32>(0.0, a, 0.0, 1.0); }
     else if (opt.outputChannel == 2u) { newCol = vec4<f32>(0.0, 0.0, a, 1.0); }

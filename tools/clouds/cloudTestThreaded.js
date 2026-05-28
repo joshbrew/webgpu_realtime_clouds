@@ -59,8 +59,8 @@ const STARTUP_PROFILE = MOBILE_PROFILE
       blueW: 256,
       blueH: 256,
       dbgSize: 224,
-      renderScaleDivider: 4,
-      temporalCellRate: 4,
+      renderScaleDivider: 5,
+      temporalCellRate: 1,
       debugCanvases: true,
       capMainCanvas: false,
     };
@@ -826,7 +826,6 @@ function readTuning() {
     raySmoothDens: +($("t-raySmoothDens")?.value || 0.34),
     raySmoothSun: +($("t-raySmoothSun")?.value || 0.34),
     fluffFactor: +($("t-fluffFactor")?.value || 4.0),
-    anvilLift: +($("t-anvilLift")?.value || 0.6),
     alphaCutoff: +($("t-alphaCutoff")?.value || 0.98),
     verticalStepBoost: +($("t-verticalStepBoost")?.value || 3.0),
     verticalTextureHomogeneity: +($("t-verticalTextureHomogeneity")?.value || 0.0),
@@ -2325,6 +2324,21 @@ async function init() {
   setIf("t-frontOcclusionStepBoost", 3.0);
   setIf("t-sliceJitterStrength", 0.08);
   setIf("t-verticalLayerDecorrelation", 0.35);
+
+  const anvilInput = $("p-anvil");
+  if (anvilInput) {
+    anvilInput.removeAttribute("max");
+    anvilInput.min = "0";
+    anvilInput.step = "0.01";
+    anvilInput.title = "Single cloud anvil/cumulonimbus amount. Higher values continue to overdrive tower height and cap spread.";
+  }
+
+  const anvilLiftInput = $("t-anvilLift");
+  if (anvilLiftInput) {
+    anvilLiftInput.disabled = true;
+    const wrap = anvilLiftInput.closest("label") || anvilLiftInput.parentElement;
+    if (wrap) wrap.style.display = "none";
+  }
 
   // preview
   setIf("v-cx", preview.cam.x);
