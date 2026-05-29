@@ -406,9 +406,12 @@ fn godRayShaft(
   let radialGate = 1.0 / (1.0 + radialX * radialX * mix(1.45, 2.35, clamp(falloff * 0.22, 0.0, 1.0)));
   let angularGate = smoothstep(0.08, 0.88, towardSun) * mix(0.68, 1.22, lowSun);
 
-  let horizonFog = pow(clamp(1.0 - abs(uv.y - 0.55) * 2.0, 0.0, 1.0), 0.48);
-  let upperFog = pow(clamp(1.0 - uv.y, 0.0, 1.0), 0.30);
-  let fogDensity = mix(0.34, 0.92, max(horizonFog, upperFog * 0.42)) * mix(0.74, 1.18, lowSun);
+  let rayDir = rayDirFromUV(uv);
+  let rayHorizon = pow(clamp(1.0 - abs(rayDir.y) * 8.5, 0.0, 1.0), 1.35);
+  let beamFog = smoothstep(0.18, 0.88, towardSun) * radialGate;
+  let sunColumnFog = (1.0 - smoothstep(0.18, 1.0, radialX)) * smoothstep(0.08, 0.72, towardSun);
+  let horizonSuppression = 1.0 - rayHorizon * (0.54 + 0.18 * lowSun) * (1.0 - max(beamFog, sunColumnFog));
+  let fogDensity = mix(0.22, 0.58, max(beamFog, sunColumnFog)) * mix(0.74, 1.08, lowSun) * horizonSuppression;
 
   let localFadeA = pow(max(1.0 - cloudA, 0.0), 1.10);
   let localFadeB = pow(max(1.0 - cloudA, 0.0), 1.95);
@@ -700,10 +703,11 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   let godRayColor = mix(sunWash, sunColor, 0.72);
 
   if (cloudA < 0.003) {
+    let clearRayWindow = smoothstep(0.16, 0.88, towardSunSky) * stableSunProximity(in.uv, uvSun, towardSunSky, fwdDot);
     let clearLinear =
-      sky * (1.0 - godRayShadow * (0.16 + 0.34 * lowSun)) +
+      sky * (1.0 - godRayShadow * (0.09 + 0.24 * lowSun) * clearRayWindow) +
       sunColor * (1.18 * sunDisk + 0.22 * sunGlow) +
-      godRayColor * godRays * (0.40 + 0.86 * lowSun);
+      godRayColor * godRays * (0.34 + 0.72 * lowSun) * max(clearRayWindow, 0.18);
 
     let clearMapped = toneMapFilmic(clearLinear * max(R.exposure * 0.80, 0.0));
     let clearStyled = applyStyleGrade(clearMapped, style, 0.0);
@@ -989,8 +993,9 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
     (1.0 - 0.72 * edgeAlphaBand) *
     mix(1.0, 0.72, shadowBand);
 
+  let cloudRayWindow = smoothstep(0.16, 0.88, towardSunSky) * stableSunProximity(in.uv, uvSun, towardSunSky, fwdDot);
   var linear =
-    sky * skyMask * (1.0 - godRayShadow * (0.13 + 0.30 * lowSun) * skyFogMask) +
+    sky * skyMask * (1.0 - godRayShadow * (0.08 + 0.22 * lowSun) * skyFogMask * cloudRayWindow) +
     cloudShaded;
 
   linear += sunColor * (
@@ -1002,9 +1007,10 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   linear +=
     godRayColor *
     godRays *
-    (0.32 + 0.68 * lowSun) *
+    (0.26 + 0.58 * lowSun) *
     skyFogMask *
-    rayBodyMask;
+    rayBodyMask *
+    max(cloudRayWindow, 0.16);
 
   let mapped = toneMapFilmic(linear * max(R.exposure * 0.82, 0.0));
   let styled = applyStyleGrade(mapped, style, clamp(cloudA * 1.15 + bodyCore * 0.35, 0.0, 1.0));

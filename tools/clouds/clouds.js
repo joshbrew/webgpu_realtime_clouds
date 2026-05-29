@@ -1399,8 +1399,10 @@ export class CloudComputeBuilder {
     putF(212, s.directLightBoost ?? 0.58);
     putF(216, s.alphaBoostThreshold ?? 0.22);
     putF(220, s.alphaBoostAmount ?? 0.16);
+    putF(224, s.alphaMinCutoff ?? 0.04);
+    putF(228, s.alphaMinSoftness ?? 0.035);
 
-    for (let i = 224; i < this._abTuning.byteLength; i += 4)
+    for (let i = 232; i < this._abTuning.byteLength; i += 4)
       dv.setUint32(i, 0, true);
 
     this._writeIfChanged("tuning", this.tuningBuffer, this._abTuning);
