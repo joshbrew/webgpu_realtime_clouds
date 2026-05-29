@@ -220,7 +220,7 @@ fn alphaGradAt(uv:vec2<f32>, layer:i32)->vec2<f32> {
   let px = 1.0 / max(dims, vec2<f32>(1.0, 1.0));
 
   let r1 = px * 1.5;
-  let r2 = px * 3.0;
+  let r2 = px * 4.0;
 
   let aL1 = textureSampleLevel(tex, samp, uv - vec2<f32>(r1.x, 0.0), layer, 0.0).a;
   let aR1 = textureSampleLevel(tex, samp, uv + vec2<f32>(r1.x, 0.0), layer, 0.0).a;
@@ -235,18 +235,28 @@ fn alphaGradAt(uv:vec2<f32>, layer:i32)->vec2<f32> {
   let g1 = vec2<f32>(aR1 - aL1, aU1 - aD1);
   let g2 = vec2<f32>(aR2 - aL2, aU2 - aD2);
 
-  return g1 * 0.72 + g2 * 0.28;
+  return g1 * 0.60 + g2 * 0.40;
 }
 
 fn alphaGradLite(uv:vec2<f32>, layer:i32)->vec2<f32> {
   let dims = vec2<f32>(textureDimensions(tex, 0));
   let px = 1.0 / max(dims, vec2<f32>(1.0, 1.0));
-  let r = px * 2.0;
-  let aL = textureSampleLevel(tex, samp, uv - vec2<f32>(r.x, 0.0), layer, 0.0).a;
-  let aR = textureSampleLevel(tex, samp, uv + vec2<f32>(r.x, 0.0), layer, 0.0).a;
-  let aD = textureSampleLevel(tex, samp, uv - vec2<f32>(0.0, r.y), layer, 0.0).a;
-  let aU = textureSampleLevel(tex, samp, uv + vec2<f32>(0.0, r.y), layer, 0.0).a;
-  return vec2<f32>(aR - aL, aU - aD);
+  let r1 = px * 2.0;
+  let r2 = px * 4.0;
+
+  let aL1 = textureSampleLevel(tex, samp, uv - vec2<f32>(r1.x, 0.0), layer, 0.0).a;
+  let aR1 = textureSampleLevel(tex, samp, uv + vec2<f32>(r1.x, 0.0), layer, 0.0).a;
+  let aD1 = textureSampleLevel(tex, samp, uv - vec2<f32>(0.0, r1.y), layer, 0.0).a;
+  let aU1 = textureSampleLevel(tex, samp, uv + vec2<f32>(0.0, r1.y), layer, 0.0).a;
+
+  let aL2 = textureSampleLevel(tex, samp, uv - vec2<f32>(r2.x, 0.0), layer, 0.0).a;
+  let aR2 = textureSampleLevel(tex, samp, uv + vec2<f32>(r2.x, 0.0), layer, 0.0).a;
+  let aD2 = textureSampleLevel(tex, samp, uv - vec2<f32>(0.0, r2.y), layer, 0.0).a;
+  let aU2 = textureSampleLevel(tex, samp, uv + vec2<f32>(0.0, r2.y), layer, 0.0).a;
+
+  let g1 = vec2<f32>(aR1 - aL1, aU1 - aD1);
+  let g2 = vec2<f32>(aR2 - aL2, aU2 - aD2);
+  return g1 * 0.62 + g2 * 0.38;
 }
 
 fn alphaOccLite(uv:vec2<f32>, layer:i32)->f32 {

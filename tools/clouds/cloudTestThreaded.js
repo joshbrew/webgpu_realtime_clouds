@@ -1350,6 +1350,39 @@ async function setTileTransformsRPC(tt) {
   return rpc("setTileTransforms", { tileTransforms: safeClone(tt) });
 }
 
+async function getWorkerFrameState() {
+  try {
+    return await rpc("getFrameState", {});
+  } catch {
+    return null;
+  }
+}
+
+function mergeAnimatedOffsetsForPayload(workerFrameState = null) {
+  const out = safeClone(tileTransforms);
+  const src = workerFrameState?.transforms || null;
+  const copyOffset = (dstKey, srcKey) => {
+    const v = src?.[srcKey];
+    if (!Array.isArray(v) || v.length < 3) return;
+    const a = [Number(v[0]) || 0, Number(v[1]) || 0, Number(v[2]) || 0];
+    out[dstKey] = a;
+    out[`${dstKey}World`] = a.slice(0, 3);
+  };
+
+  copyOffset("weatherOffset", "weatherOffsetWorld");
+  copyOffset("shapeOffset", "shapeOffsetWorld");
+  copyOffset("detailOffset", "detailOffsetWorld");
+
+  out.explicit = true;
+  out.explicitPositions = true;
+  return out;
+}
+
+function isPositionControlEvent(ev) {
+  const id = ev?.target?.id || "";
+  return /-pos-[xyz]$/.test(id);
+}
+
 // ---- entry-point helpers ----
 function isEntry4D(ep) {
   return typeof ep === "string" && /4D/.test(ep);
@@ -1974,23 +2007,28 @@ function buildLiveAnimationPayload(options = {}) {
   };
 
   if (options.includeTransforms) {
-    payload.tileTransforms = Object.assign(safeClone(tileTransforms), { explicit: true });
+    payload.tileTransforms = Object.assign(safeClone(tileTransforms), {
+      explicit: !!options.explicitPositions,
+      explicitPositions: !!options.explicitPositions,
+    });
   }
 
   return payload;
 }
 
 let _liveAnimationUpdateIncludeTransforms = false;
+let _liveAnimationUpdateExplicitPositions = false;
 
-function queueLiveAnimationUpdate(delayMs = 90, options = {}) {
+function queueLiveAnimationUpdate(_delayMs = 90, options = {}) {
   if (!animRunning) return false;
   _liveAnimationUpdateQueued = true;
   _liveAnimationUpdateIncludeTransforms = _liveAnimationUpdateIncludeTransforms || !!options.includeTransforms;
-  if (_liveAnimationUpdateTimer) clearTimeout(_liveAnimationUpdateTimer);
-  _liveAnimationUpdateTimer = setTimeout(() => {
+  _liveAnimationUpdateExplicitPositions = _liveAnimationUpdateExplicitPositions || !!options.explicitPositions;
+  if (_liveAnimationUpdateTimer) return true;
+  _liveAnimationUpdateTimer = requestAnimationFrame(() => {
     _liveAnimationUpdateTimer = 0;
     flushLiveAnimationUpdate().catch((err) => console.warn("live animation update failed", err));
-  }, delayMs);
+  });
   return true;
 }
 
@@ -2005,8 +2043,10 @@ async function flushLiveAnimationUpdate() {
     do {
       _liveAnimationUpdateQueued = false;
       const includeTransforms = _liveAnimationUpdateIncludeTransforms;
+      const explicitPositions = _liveAnimationUpdateExplicitPositions;
       _liveAnimationUpdateIncludeTransforms = false;
-      const payload = buildLiveAnimationPayload({ includeTransforms });
+      _liveAnimationUpdateExplicitPositions = false;
+      const payload = buildLiveAnimationPayload({ includeTransforms, explicitPositions });
       await rpc("setLiveFrameState", payload);
       lastTuningSent = cloneTuning(payload.tuning);
     } while (_liveAnimationUpdateQueued && animRunning);
@@ -2080,6 +2120,51 @@ function debounceAsync(fn, delayMs = 90) {
   return wrapped;
 }
 
+function frameCoalescedAsync(fn) {
+  let frame = 0;
+  let running = false;
+  let rerun = false;
+  let lastArgs = [];
+
+  const run = async () => {
+    frame = 0;
+    if (running) {
+      rerun = true;
+      return;
+    }
+    running = true;
+    try {
+      do {
+        rerun = false;
+        await fn(...lastArgs);
+      } while (rerun);
+    } finally {
+      running = false;
+    }
+  };
+
+  const wrapped = (...args) => {
+    lastArgs = args;
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      run().catch((err) => console.warn("live UI task failed", err));
+    });
+  };
+
+  wrapped.cancel = () => {
+    if (frame) cancelAnimationFrame(frame);
+    frame = 0;
+  };
+
+  wrapped.flush = (...args) => {
+    lastArgs = args;
+    wrapped.cancel();
+    return run();
+  };
+
+  return wrapped;
+}
+
 function attachByIds(ids, handler, opts = {}) {
   const delayMs = opts.delayMs ?? 90;
   const onInput = debounceAsync(handler, delayMs);
@@ -2097,10 +2182,24 @@ function attachByIds(ids, handler, opts = {}) {
 
 function attachPanelInputs(panel, handler, delayMs = 90) {
   if (!panel) return;
-  const onInput = debounceAsync(handler, delayMs);
-  const onChange = (ev) => {
-    onInput.flush(ev).catch((err) => console.warn("panel change handler failed", err));
+  const debouncedInput = debounceAsync(handler, delayMs);
+  const liveInput = frameCoalescedAsync(handler);
+
+  const onInput = (ev) => {
+    if (animRunning) {
+      debouncedInput.cancel();
+      liveInput(ev);
+      return;
+    }
+    liveInput.cancel();
+    debouncedInput(ev);
   };
+
+  const onChange = (ev) => {
+    const runner = animRunning ? liveInput : debouncedInput;
+    runner.flush(ev).catch((err) => console.warn("panel change handler failed", err));
+  };
+
   panel.querySelectorAll("input,select,textarea").forEach((inp) => {
     inp.addEventListener("input", onInput);
     inp.addEventListener("change", onChange);
@@ -2406,11 +2505,19 @@ async function wireUI() {
         console.warn("Failed setReproj", e);
       }
 
+      readWeather();
+      readWeatherG();
+      readWeatherB();
+      readShape();
+      readShapeTransform();
+      readDetail();
+      readDetailTransform();
       readPreview();
       const cloudParams = readCloudParams();
 
       setBusy(true, "Seeding animation...");
       try {
+        const workerFrameState = await getWorkerFrameState();
         await sendTuningNow();
         const payload = {
           weatherParams: safeClone(weatherParams),
@@ -2418,10 +2525,10 @@ async function wireUI() {
           weatherBParams: safeClone(weatherBParams),
           shapeParams: safeClone(shapeParams),
           detailParams: safeClone(detailParams),
-          tileTransforms: safeClone(tileTransforms),
+          tileTransforms: mergeAnimatedOffsetsForPayload(workerFrameState),
           preview: safeClone(preview),
           cloudParams,
-          reproj: rp,
+          reproj: getFreshFullFrameReprojPayload(),
         };
         ensureCoarseInPayload(payload);
         await runFrameLatest(payload);
@@ -2483,6 +2590,7 @@ async function wireUI() {
       readPreview();
       const cloudParams = readCloudParams();
       await sendTuningNow();
+      const workerFrameState = await getWorkerFrameState();
 
       const payload = {
         weatherParams: safeClone(weatherParams),
@@ -2490,7 +2598,7 @@ async function wireUI() {
         weatherBParams: safeClone(weatherBParams),
         shapeParams: safeClone(shapeParams),
         detailParams: safeClone(detailParams),
-        tileTransforms: safeClone(tileTransforms),
+        tileTransforms: mergeAnimatedOffsetsForPayload(workerFrameState),
         preview: safeClone(preview),
         cloudParams,
       };
@@ -2586,10 +2694,10 @@ async function wireUI() {
       "we-axis-y",
       "we-axis-z",
     ],
-    async () => {
+    async (ev) => {
       try {
         readWeatherTransform();
-        if (queueLiveAnimationUpdate(80, { includeTransforms: true })) return;
+        if (queueLiveAnimationUpdate(80, { includeTransforms: true, explicitPositions: isPositionControlEvent(ev) })) return;
         await setTileTransformsRPC(tileTransforms);
 
         await sendTuningNow();
@@ -2697,10 +2805,10 @@ async function wireUI() {
       "sh-axis-y",
       "sh-axis-z",
     ],
-    async () => {
+    async (ev) => {
       try {
         readShapeTransform();
-        if (queueLiveAnimationUpdate(80, { includeTransforms: true })) return;
+        if (queueLiveAnimationUpdate(80, { includeTransforms: true, explicitPositions: isPositionControlEvent(ev) })) return;
         await setTileTransformsRPC(tileTransforms);
 
         await sendTuningNow();
@@ -2740,10 +2848,10 @@ async function wireUI() {
       "de-axis-y",
       "de-axis-z",
     ],
-    async () => {
+    async (ev) => {
       try {
         readDetailTransform();
-        if (queueLiveAnimationUpdate(80, { includeTransforms: true })) return;
+        if (queueLiveAnimationUpdate(80, { includeTransforms: true, explicitPositions: isPositionControlEvent(ev) })) return;
         await setTileTransformsRPC(tileTransforms);
 
         await sendTuningNow();

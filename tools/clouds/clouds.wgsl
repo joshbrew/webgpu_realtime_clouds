@@ -1854,6 +1854,11 @@ fn computeCloud(
   }
 
   let fullPix = fullPixFromCurrent(pixI);
+  let interleaveResolveF = select(
+    0.0,
+    clamp((sqrt(f32(max(temporalRate, 1u))) - 1.0) * 0.75, 0.0, 1.0),
+    compactInterleave
+  );
   let screenInterleaveF = 0.0;
 
   let fullResF = vec2<f32>(f32(frame.fullWidth), f32(frame.fullHeight));
@@ -2444,6 +2449,12 @@ fn computeCloud(
         let rgbDiff = length(prevCol.rgb - newCol.rgb);
 
         var stability = exp(-motionMag * 0.9) * exp(-alphaDiff * 6.0) * exp(-rgbDiff * 3.5);
+        let edgeAlphaMax = max(prevCol.a, newCol.a);
+        let edgeAlphaMin = min(prevCol.a, newCol.a);
+        let interleaveEdge = interleaveResolveF
+          * smoothstep(0.018, 0.34, edgeAlphaMax)
+          * (1.0 - smoothstep(0.36, 0.86, edgeAlphaMin));
+        let interleaveEdgeStable = interleaveEdge * exp(-motionMag * 0.95) * exp(-rgbDiff * 2.25);
         let bodyStable = smoothstep(0.38, 0.95, min(prevCol.a, newCol.a)) * exp(-motionMag * 0.35) * exp(-alphaDiff * 3.5);
         let speckleStable = bodyStable * exp(-motionMag * 1.8) * (1.0 - smoothstep(0.02, 0.16, rgbDiff));
         let convFrames = min(f32(reproj.frameIndex), 4.0);
@@ -2470,7 +2481,7 @@ fn computeCloud(
 
         let relBase = mix_f(TUNE.taaRelMax, TUNE.taaRelMin, saturate(stability));
         let relBody = mix_f(relBase, max(TUNE.taaRelMin * 0.95, 0.070), stableBody);
-        let rel = relBody * mix_f(1.0, 0.92, rayFarHistoryF);
+        let rel = relBody * mix_f(1.0, 0.92, rayFarHistoryF) * mix_f(1.0, 0.72, interleaveEdge);
 
         let newLum = luminance(newCol.rgb);
         let prevLum = luminance(prevCol.rgb);
@@ -2487,15 +2498,17 @@ fn computeCloud(
         tbSafe *= mix_f(1.0, 0.72, currentIsDarker);
         tbSafe = min(tbSafe, mix_f(0.78, 0.46, currentIsBrighter));
         tbSafe = min(tbSafe, mix_f(0.88, 0.58, currentIsDarker));
-        let interleaveStable = screenInterleaveF
+        let interleaveStable = interleaveResolveF
           * exp(-alphaDiff * 10.0)
           * exp(-rgbDiff * 6.0)
           * smoothstep(0.18, 0.86, min(prevCol.a, newCol.a));
-        let interleaveFloor = screenInterleaveF * mix_f(0.30, 0.72, max(stableBody, interleaveStable));
-        tbSafe = max(tbSafe, interleaveFloor);
-        tbSafe = min(tbSafe, mix_f(0.86, 0.955, max(stableBody, interleaveStable)));
+        let interleaveFloor = interleaveResolveF * mix_f(0.30, 0.72, max(stableBody, interleaveStable));
+        let interleaveEdgeFloor = mix_f(0.56, 0.84, smoothstep(0.10, 0.92, interleaveEdgeStable)) * interleaveEdgeStable;
+        tbSafe = max(tbSafe, max(interleaveFloor, interleaveEdgeFloor));
+        tbSafe = min(tbSafe, mix_f(0.86, 0.965, max(max(stableBody, interleaveStable), interleaveEdgeStable)));
 
-        let historyA = clamp(prevCol.a, newCol.a - 0.12, newCol.a + 0.12);
+        let historyAlphaClamp = mix_f(0.12, 0.045, smoothstep(0.08, 0.86, interleaveEdgeStable));
+        let historyA = clamp(prevCol.a, newCol.a - historyAlphaClamp, newCol.a + historyAlphaClamp);
         let historyCol = vec4<f32>(prevClampedRGB, historyA);
         let blended = mix_v4(newCol, historyCol, tbSafe);
         textureStore(outTex, pixI, frame.layerIndex, blended);
