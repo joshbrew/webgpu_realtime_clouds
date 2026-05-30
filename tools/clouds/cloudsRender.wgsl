@@ -85,8 +85,55 @@ fn sampleCloudRaw(uv:vec2<f32>, layer:i32)->vec4<f32> {
   return textureSampleLevel(tex, samp, uv, layer, 0.0);
 }
 
+fn cloudDeDitherWeight(center: vec4<f32>, tap: vec4<f32>, spatialWeight: f32) -> f32 {
+  let centerA = clamp(center.a, 0.0, 1.0);
+  let tapA = clamp(tap.a, 0.0, 1.0);
+  let alphaDelta = abs(tapA - centerA);
+  let lumaDelta = abs(luma(tap.rgb) - luma(center.rgb));
+  let alphaWeight = exp(-alphaDelta * 18.0);
+  let lumaWeight = exp(-lumaDelta * 14.0);
+  let visibilityWeight = smoothstep(0.01, 0.12, tapA);
+  return spatialWeight * alphaWeight * lumaWeight * visibilityWeight;
+}
+
 fn sampleCloud(uv:vec2<f32>, layer:i32)->vec4<f32> {
-  return sampleCloudRaw(uv, layer);
+  let center = sampleCloudRaw(uv, layer);
+  let centerA = clamp(center.a, 0.0, 1.0);
+  if (R.compositeQuality == 0u || centerA < 0.01 || centerA > 0.995) {
+    return center;
+  }
+
+  let dims = vec2<f32>(textureDimensions(tex, 0));
+  let px = 1.0 / max(dims, vec2<f32>(1.0, 1.0));
+  let radius = mix(1.0, 1.35, smoothstep(0.10, 0.85, centerA));
+  let stepUv = px * radius;
+
+  let left  = sampleCloudRaw(clamp(uv + vec2<f32>(-stepUv.x, 0.0), vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999)), layer);
+  let right = sampleCloudRaw(clamp(uv + vec2<f32>( stepUv.x, 0.0), vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999)), layer);
+  let down  = sampleCloudRaw(clamp(uv + vec2<f32>(0.0, -stepUv.y), vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999)), layer);
+  let up    = sampleCloudRaw(clamp(uv + vec2<f32>(0.0,  stepUv.y), vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999)), layer);
+
+  let wCenter = 1.0;
+  let wLeft = cloudDeDitherWeight(center, left, 0.58);
+  let wRight = cloudDeDitherWeight(center, right, 0.58);
+  let wDown = cloudDeDitherWeight(center, down, 0.58);
+  let wUp = cloudDeDitherWeight(center, up, 0.58);
+
+  let wSum = max(wCenter + wLeft + wRight + wDown + wUp, 1e-5);
+  let filtered = (
+    center * wCenter +
+    left * wLeft +
+    right * wRight +
+    down * wDown +
+    up * wUp
+  ) / wSum;
+
+  let edgeBand = smoothstep(0.02, 0.18, centerA) * (1.0 - smoothstep(0.62, 0.98, centerA));
+  let bodyBand = smoothstep(0.18, 0.72, centerA) * (1.0 - smoothstep(0.88, 0.99, centerA));
+  let qualityF = min(f32(R.compositeQuality), 2.0) * 0.5;
+  let blend = clamp(mix(0.40, 0.62, qualityF) * edgeBand + 0.14 * bodyBand, 0.0, 0.72);
+
+  return mix(center, filtered, blend);
 }
 
 fn alphaFloorGate(alpha: f32) -> f32 {

@@ -76,7 +76,12 @@ struct CloudTuning {
   directLightBlend: f32,
   directLightBoost: f32,
   alphaBoostThreshold: f32,
-  alphaBoostAmount: f32
+  alphaBoostAmount: f32,
+
+  minOutputAlpha: f32,
+  outputAlphaFeather: f32,
+  _pad1: f32,
+  _pad2: f32
 };
 @group(0) @binding(10) var<uniform> TUNE: CloudTuning;
 
@@ -401,18 +406,21 @@ fn anvilShapePos(pos: vec3<f32>, ph: f32) -> vec3<f32> {
     return pos;
   }
 
+  let phs = saturate(ph);
   let tower = anvilTowerStrength();
   let overdrive = anvilOverdrive();
-  let spreadMask = saturate(remap(ph, mix_f(0.66, 0.52, tower), 0.95, 0.0, 1.0));
-  let flattenMask = saturate(remap(ph, mix_f(0.80, 0.68, tower), 0.998, 0.0, 1.0));
-  let columnMask = smoothstep(0.08, 0.66, ph) * (1.0 - smoothstep(0.94, 0.998, ph));
+
+  // The lower storm body keeps its original footprint. The anvil deformation
+  // only narrows the neck and spreads the upper cap, which prevents tall storm
+  // cells from collapsing into a skinny column when Cloud Anvil is raised.
+  let neckMask = smoothstep(0.30, 0.62, phs) * (1.0 - smoothstep(0.82, 0.985, phs));
+  let spreadMask = saturate(remap(phs, mix_f(0.70, 0.58, tower), 0.96, 0.0, 1.0));
+  let flattenMask = saturate(remap(phs, mix_f(0.80, 0.70, tower), 0.998, 0.0, 1.0));
 
   var local = pos - B.center;
 
-  // Stronger anvil values build a taller, tighter cumulonimbus body first,
-  // then spread the upper cap outward into the anvil.
-  let columnTighten = 1.0 + tower * columnMask * (0.54 + overdrive * 0.20);
-  local = vec3<f32>(local.x / columnTighten, local.y, local.z / columnTighten);
+  let neckTighten = 1.0 + tower * neckMask * (0.34 + overdrive * 0.14);
+  local = vec3<f32>(local.x / neckTighten, local.y, local.z / neckTighten);
 
   let spread = 1.0 + anvil * spreadMask * (2.05 + tower * 0.82 + overdrive * 0.28);
   local = vec3<f32>(local.x / spread, local.y, local.z / spread);
@@ -470,6 +478,18 @@ fn worldWarpXZ(pos_xz: vec2<f32>, ph: f32, boxMaxXZ: f32) -> vec2<f32> {
   let user = vec2<f32>(cos(opt._r3), sin(opt._r3)) * opt._r2 * 0.001;
 
   return vec2<f32>(ox, oz) * warpAmp + rot * mix_f(0.3, 1.2, ph) + user;
+}
+
+fn worldWarpXZLighting(pos_xz: vec2<f32>, ph: f32, boxMaxXZ: f32) -> vec2<f32> {
+  let normv = max(boxMaxXZ, 1.0);
+  let p = pos_xz / normv;
+  let warpAmp = TUNE.baseJitterFrac * boxMaxXZ * 0.34;
+
+  let sx = smoothCellHash2D(p + vec2<f32>(12.34, 78.9), 4.0) - 0.5;
+  let sz = smoothCellHash2D(p + vec2<f32>(98.7, 6.54), 4.0) - 0.5;
+  let user = vec2<f32>(cos(opt._r3), sin(opt._r3)) * opt._r2 * 0.001;
+
+  return vec2<f32>(sx, sz) * warpAmp * mix_f(0.72, 1.04, saturate(ph)) + user;
 }
 
 fn tallBoxBlend() -> f32 {
@@ -746,12 +766,33 @@ fn anvilColumnFactor(wm: vec4<f32>) -> f32 {
 }
 
 // ---------------------- height shape and density
+fn anvilBodyHeightSupport(ph: f32) -> f32 {
+  let phs = saturate(ph);
+  let tower = anvilTowerStrength();
+  let footBand = smoothstep(0.018, 0.13, phs) * (1.0 - smoothstep(0.42, 0.72, phs));
+  let middleBand = smoothstep(0.13, 0.34, phs) * (1.0 - smoothstep(0.58, 0.86, phs));
+  return tower * max(footBand * 0.22, middleBand * 0.16);
+}
+
+fn anvilLowerBodySupport(ph: f32, wm: vec4<f32>, shapeCore: f32) -> f32 {
+  let phs = saturate(ph);
+  let tower = anvilTowerStrength();
+  let overdrive = saturate(anvilOverdrive() * 0.35);
+  let lowerBand = smoothstep(0.035, 0.18, phs) * (1.0 - smoothstep(0.48, 0.78, phs));
+  let middleBand = smoothstep(0.16, 0.40, phs) * (1.0 - smoothstep(0.62, 0.88, phs));
+  let bodyBand = max(lowerBand * 0.82, middleBand);
+  let weatherBody = smoothstep(0.46, 0.86, saturate(max(wm.r, wm.g * 0.92)));
+  let shapeBody = smoothstep(0.36, 0.80, saturate(shapeCore));
+  return bodyBand * weatherBody * shapeBody * tower * (0.07 + tower * 0.12 + overdrive * 0.05);
+}
+
 fn heightShape(ph: f32, wBlue: f32) -> f32 {
   let sr_bottom = saturate(remap(ph, 0.0, 0.07, 0.0, 1.0));
   let stop_h = saturate(wBlue + 0.12);
   let sr_top = saturate(remap(ph, stop_h * 0.2, stop_h, 1.0, 0.0));
   var base = sr_bottom * sr_top;
   let anvilFactor = saturate(C.cloudAnvilAmount) * saturate(C.globalCoverage);
+  base = max(base, anvilBodyHeightSupport(ph));
   let expo = saturate(remap(ph, 0.65, 0.95, 1.0, 1.0 - anvilFactor * 0.9));
   return pow(base, expo);
 }
@@ -994,9 +1035,11 @@ fn densityFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>) -> f
 
   let midBodyBand = smoothstep(0.16, 0.40, phD) * (1.0 - smoothstep(0.64, 0.90, phD));
   let weatherBody = smoothstep(0.50, 0.90, saturate(max(wm.r, wm.g * 0.92)));
-  let shapeBody = smoothstep(0.42, 0.82, saturate(s.r * 0.74 + s.g * 0.18 + s.b * 0.08));
+  let shapeBodyCore = saturate(s.r * 0.74 + s.g * 0.18 + s.b * 0.08);
+  let shapeBody = smoothstep(0.42, 0.82, shapeBodyCore);
   let stretchBodySupport = verticalStretchFactor() * midBodyBand * weatherBody * shapeBody;
   core = max(core, stretchBodySupport * mix_f(0.06, 0.20, anvilTowerStrength()));
+  core = max(core, anvilLowerBodySupport(phD, wm, shapeBodyCore));
 
   let fluff = max(TUNE.fluffFactor, 0.0);
   let fluff01 = saturate(fluff / (fluff + 1.45));
@@ -1043,12 +1086,14 @@ fn densityMacroFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>) -> f32 {
   // Keep far/proxy LODs scalloped, but do not let the proxy become a solid
   // filler that erases detail erosion from the real detail volume.
   var core = saturate(remap(SNnd, 0.12 + breakup * 0.14, 1.0, 0.0, 1.0));
+  let macroShapeBodyCore = saturate(s.r * 0.72 + s.g * 0.20 + s.b * 0.08);
   let macroMidBody = verticalStretchFactor()
     * smoothstep(0.16, 0.42, phD)
     * (1.0 - smoothstep(0.64, 0.90, phD))
     * smoothstep(0.48, 0.88, saturate(max(wm.r, wm.g * 0.92)))
-    * smoothstep(0.42, 0.82, saturate(s.r * 0.72 + s.g * 0.20 + s.b * 0.08));
+    * smoothstep(0.42, 0.82, macroShapeBodyCore);
   core = max(core, macroMidBody * mix_f(0.045, 0.16, anvilTowerStrength()));
+  core = max(core, anvilLowerBodySupport(phD, wm, macroShapeBodyCore) * 0.82);
   core = pow(core, 1.16);
 
   let contour = ridge01(contrast01(saturate(shape * 0.64 + fbm_s * 0.36), 2.10));
@@ -1077,8 +1122,10 @@ fn densityWeatherProxy(ph: f32, wm: vec4<f32>) -> f32 {
     * smoothstep(0.18, 0.44, phD)
     * (1.0 - smoothstep(0.62, 0.88, phD))
     * smoothstep(0.54, 0.90, cloudField);
+  let proxyAnvilBody = anvilLowerBodySupport(phD, wm, cloudField) * 0.62;
   core *= saturate(1.0 - edgeGrain * mix_f(0.055, 0.145, topCarve) - stretchProxy * 0.052 * (1.0 - proxyMidBody * 0.70));
   core = max(core, proxyMidBody * 0.06);
+  core = max(core, proxyAnvilBody);
   core *= baseCarve;
 
   return max(core, 0.0);
@@ -1107,7 +1154,7 @@ fn sampleLightingDensity(
   let phL = computePH(pos, wm);
   if (phL < 0.0 || wm.b >= 1.0) { return 0.0; }
 
-  let w = worldWarpXZ(pos.xz, phL, wg_boxMaxXZ);
+  let w = worldWarpXZLighting(pos.xz, phL, wg_boxMaxXZ);
   let s = sampleShapeRGBAWarp(pos, phL, lodShape, w);
   let det = sampleDetailRGBWarp(pos, phL, lodDetail, w);
 
@@ -1672,7 +1719,8 @@ fn sampleCloudDensityAt(
   if (ph < 0.0 || wm.b >= 1.0) { return 0.0; }
 
   let lodShape = clamp(lodShapeBase + 0.65, 0.0, wg_maxMipS);
-  let s = sampleShapeRGBA(p, ph, lodShape);
+  let w = worldWarpXZLighting(p.xz, ph, wg_boxMaxXZ);
+  let s = sampleShapeRGBAWarp(p, ph, lodShape, w);
   let d = densityMacroFromSamples(ph, wm, s) * insideFaceFade(p, boxMin(), boxMax());
 
   return max(d, 0.0);
@@ -1706,8 +1754,11 @@ fn sunTransmittance(
   if (availableDist <= TUNE.minStep) { return 1.0; }
 
   let targetStep = max(nominalStepLen, TUNE.minStep);
+  let requestedSteps = max(stepsIn, 1);
   let distSteps = i32(ceil(availableDist / targetStep));
-  let steps = clamp(max(max(stepsIn, 1), distSteps), 1, 28);
+  let distLimitedSteps = min(distSteps, max(requestedSteps + 2, 4));
+  let maxLightSteps = clamp(TUNE.sunSteps + 6, 8, 18);
+  let steps = clamp(max(requestedSteps, distLimitedSteps), 1, maxLightSteps);
   let lightStep = availableDist / f32(steps);
 
   var opticalDepth = 0.0;
@@ -1728,8 +1779,12 @@ fn sunTransmittance(
     let jx = hash11Fast(jf + 0.17) * 2.0 - 1.0;
     let jy = hash11Fast(jf + 9.73) * 2.0 - 1.0;
     let pj = p + (sideA * jx + sideB * jy) * jitterAmp;
+    let lightMipAdd = min(f32(i) * 0.5, 2.5);
     let d = sampleCloudDensityAt(
-      pj, weatherLOD, lodShapeBase, wScale
+      pj,
+      clamp(weatherLOD + lightMipAdd * 0.35, 0.0, wg_maxMipW),
+      lodShapeBase + lightMipAdd,
+      wScale
     );
     opticalDepth += d * lightStep * SUN_EXTINCTION_SCALE;
     if (opticalDepth > sunCutoffOD) { break; }
@@ -2052,7 +2107,12 @@ fn computeCloud(
     }
 
     let sliceJitter = saturate(TUNE.sliceJitterStrength);
-    let sliceHash = sampleBlueScreenScaled(pixI + vec2<i32>(iter * 17, iter * 29), mix_f(2.0, 1.0, sliceJitter));
+    let sliceHash = hash11Fast(
+      f32(fullPix.x) * 0.071324 +
+      f32(fullPix.y) * 0.117913 +
+      f32(iter) * 0.167351 +
+      rand0 * 19.1731
+    );
     let sampleT = clamp(t + (sliceHash - 0.5) * min(baseStep, rayBudgetStep) * 0.34 * sliceJitter, t0, t1);
     let p = rayRo + rayRd * sampleT;
     let sampleRayDistance = max(sampleT, 0.0);
@@ -2070,6 +2130,8 @@ fn computeCloud(
     stepLen = clamp(stepLen * temporalMarchF, TUNE.minStep, effectiveMaxStep * max(temporalMarchF, 1.0));
     let thickLodExtra = thickPerfF * saturate(TUNE.thickDetailSkip) * smoothstep(0.28, 0.96, sampleRayDistance);
     let weatherLOD = clamp(weatherLOD_base + min(TUNE.farLodPush * farF, 0.18), 0.0, wg_maxMipW);
+    let nearHorizontalRayF = (1.0 - smoothstep(0.035, 0.22, abs(rayRd.y)))
+      * (1.0 - smoothstep(effectiveNearFluffDist * 0.85, effectiveNearFluffDist * 4.25, sampleRayDistance));
 
 
     let uv_weather = weatherUV_from(p, wScale);
@@ -2078,7 +2140,8 @@ fn computeCloud(
 
     let ph_coarse = computePH(p, wm_primary);
 
-    let columnSkip = verticalColumnSkipDistance(p, rayRd, wm_primary, stepLen, effectiveMaxStep, thickPerfF, screenFarF);
+    var columnSkip = verticalColumnSkipDistance(p, rayRd, wm_primary, stepLen, effectiveMaxStep, thickPerfF, screenFarF);
+    columnSkip = mix_f(columnSkip, 0.0, nearHorizontalRayF);
     if (columnSkip > stepLen * 1.12) {
       prevDens = 0.0;
       prevMacroDens = 0.0;
@@ -2104,7 +2167,7 @@ fn computeCloud(
     }
 
     let weatherGateFast = weatherCoverageGate(wm_primary);
-    if (weatherGateFast >= TUNE.weatherRejectGate && sampleRayDistance > nearFineDist * 2.0) {
+    if (weatherGateFast >= TUNE.weatherRejectGate && sampleRayDistance > nearFineDist * 2.0 && nearHorizontalRayF < 0.35) {
       let rejectF = smoothstep(TUNE.weatherRejectGate, 1.0, weatherGateFast);
       let rejectPerfF = max(max(rejectF, thickPerfF * 0.45), screenFarF * 0.50);
       let rejectBoost = mix_f(1.18, min(max(TUNE.emptySkipMult, 1.0), 4.35), rejectPerfF);
@@ -2162,7 +2225,8 @@ fn computeCloud(
       * smoothstep(nearFineDist * 5.0, nearFineDist * 12.0, sampleRayDistance)
       * verticalInteriorF
       * weatherFilledF
-      * max(thickPerfF, screenFarF * 0.65);
+      * max(thickPerfF, screenFarF * 0.65)
+      * (1.0 - nearHorizontalRayF * 0.85);
 
     var s: vec4<f32>;
     var densMacro: f32;
@@ -2182,10 +2246,10 @@ fn computeCloud(
     // jump so silhouettes and wisps survive.
     let macroEmptyThreshold = max(TUNE.sunDensityGate * mix_f(0.38, 0.82, thickPerfF), 0.00005);
     let macroMissF = smoothstep(macroEmptyThreshold * 2.5, macroEmptyThreshold * 0.45, max(densMacro, prevMacroDens));
-    let macroMissAllowed = macroMissF * smoothstep(nearFineDist * 1.25, nearFineDist * 3.0, sampleRayDistance) * max(thickPerfF, screenFarF * 0.55);
+    let macroMissAllowed = macroMissF * smoothstep(nearFineDist * 1.25, nearFineDist * 3.0, sampleRayDistance) * max(thickPerfF, screenFarF * 0.55) * (1.0 - nearHorizontalRayF * 0.90);
     if (macroMissAllowed > 0.72 && densMacro < macroEmptyThreshold) {
-      let missBoost = mix_f(1.20, min(max(TUNE.emptySkipMult, 1.0), 2.85), macroMissAllowed);
-      let missStep = clamp(stepLen * missBoost, TUNE.minStep, effectiveMaxStep * 2.15);
+      let missBoost = mix_f(1.25, min(max(TUNE.emptySkipMult, 1.0), 3.55), macroMissAllowed);
+      let missStep = clamp(stepLen * missBoost, TUNE.minStep, effectiveMaxStep * 2.80);
       prevDens = 0.0;
       prevMacroDens = max(densMacro, 0.0);
       prevTsun = Tsun_cached;
@@ -2198,7 +2262,7 @@ fn computeCloud(
     let denseLightingFastF = saturate(remap(max(densMacro, prevMacroDens), 0.15, 0.35, 0.0, 1.0));
     let macroOnly = (farLightingFastF * denseLightingFastF) > 0.72;
 
-    let farProxyRawF = smoothstep(0.66, 1.0, max(farF, screenFarF)) * smoothstep(nearFineDist * 2.0, nearFineDist * 6.0, sampleRayDistance);
+    let farProxyRawF = smoothstep(0.66, 1.0, max(farF, screenFarF)) * smoothstep(nearFineDist * 2.0, nearFineDist * 6.0, sampleRayDistance) * (1.0 - nearHorizontalRayF * 0.75);
     let farProxyEdgeProtect = 1.0 - smoothstep(0.025, 0.16, densMacro);
     let farProxySafeF = max(farProxyRawF * (1.0 - farProxyEdgeProtect * 0.65), usedWeatherProxy * 0.86);
     let proxyOnlyF = farProxySafeF;
@@ -2243,7 +2307,13 @@ fn computeCloud(
     let sampleStepLen = clamp(stepLen * stepBoost, TUNE.minStep, occStepLimit);
 
     if (densSmoothed > 0.00008) {
-      let bnLocal = distanceBlueScreen(pixI, sampleRayDistance, effectiveNearFluffDist);
+      let localNoise = hash11Fast(
+        f32(fullPix.x) * 0.093427 +
+        f32(fullPix.y) * 0.047971 +
+        f32(iter) * 0.217873 +
+        rand0 * 23.731
+      );
+      let bnLocal = mix_f(rand0, localNoise, 0.55);
       let shadowInteriorProbe = saturate(remap(densMacroSmoothed, 0.05, 0.32, 0.0, 1.0));
       let proxyPerfF = max(proxyOnlyF, saturate(remap(max(farF, screenFarF), 0.45, 0.95, 0.0, 1.0)));
       let closeRayProtect = 1.0 - smoothstep(effectiveNearFluffDist * 1.00, effectiveNearFluffDist * 2.40, sampleRayDistance);
@@ -2251,7 +2321,7 @@ fn computeCloud(
       let lightingEdgeProtect = saturate(max(closeRayProtect * 0.90, silhouetteProtect * (1.0 - shadowInteriorProbe * 0.55)));
       let thickLightF = thickPerfF * saturate(TUNE.thickLightSkip) * smoothstep(0.10, 0.72, sampleRayDistance);
       let thickLightPerfF = thickLightF * (1.0 - lightingEdgeProtect);
-      let adaptiveStrideAdd = i32(floor(farF * 4.0 + shadowInteriorProbe * farF * 2.5 + proxyPerfF * 2.0 + thickLightPerfF * mix_f(1.0, 4.8, shadowInteriorProbe) + screenInterleaveF * f32(max(temporalRate, 1u))));
+      let adaptiveStrideAdd = i32(floor(farF * 4.5 + screenFarF * 1.25 + shadowInteriorProbe * farF * 2.75 + proxyPerfF * 2.35 + thickLightPerfF * mix_f(1.2, 5.2, shadowInteriorProbe) + screenInterleaveF * f32(max(temporalRate, 1u))));
       let sunStrideSafe = max(TUNE.sunStride + adaptiveStrideAdd, 1);
       if ((iter % sunStrideSafe) == 0) {
         if (densMacroSmoothed * sampleStepLen > TUNE.sunDensityGate) {
@@ -2276,8 +2346,9 @@ fn computeCloud(
           Tsun_cached = 1.0;
         }
 
-        let fastLighting = (sunStrideSafe > TUNE.sunStride && lightingEdgeProtect < 0.22) || macroOnly || (farF > 0.34) || (proxyPerfF > 0.42) || (thickLightPerfF > 0.45 && shadowInteriorProbe > 0.18);
-        let ultraFastLighting = fastLighting && (((thickLightPerfF > 0.38 && shadowInteriorProbe > 0.18) && lightingEdgeProtect < 0.14) || proxyPerfF > 0.70 || Tr < 0.48);
+        let thickDenseFastLighting = thickLightPerfF > 0.30 && shadowInteriorProbe > 0.12 && lightingEdgeProtect < 0.20;
+        let fastLighting = (sunStrideSafe > TUNE.sunStride && lightingEdgeProtect < 0.22) || macroOnly || (farF > 0.34) || (proxyPerfF > 0.42) || thickDenseFastLighting;
+        let ultraFastLighting = fastLighting && (thickDenseFastLighting || ((thickLightPerfF > 0.38 && shadowInteriorProbe > 0.18) && lightingEdgeProtect < 0.14) || proxyPerfF > 0.70 || Tr < 0.48);
         if (!fastLighting && sunStrideSafe <= 1) {
           shapeN_cached = approxShapeNormal(p, max(ph, 0.0), max(0.0, lodShapeLighting));
         } else if (ultraFastLighting) {
@@ -2397,12 +2468,16 @@ fn computeCloud(
     aRaw > alphaBoostThreshold
   );
   let aBoosted = min(1.0, aRaw + alphaBoostAmount * alphaBoostRamp);
+  let minOutputAlpha = clamp(TUNE.minOutputAlpha, 0.0, 0.45);
+  let outputAlphaGate = select(1.0, 0.0, aBoosted < minOutputAlpha);
+  let outputAlpha = aBoosted * outputAlphaGate;
+  let outputRGB = rgb * outputAlphaGate;
 
   var newCol: vec4<f32>;
   if (opt.writeRGB == 1u) {
-    newCol = vec4<f32>(rgb, aBoosted);
+    newCol = vec4<f32>(outputRGB, outputAlpha);
   } else {
-    let a = aBoosted;
+    let a = outputAlpha;
     if (opt.outputChannel == 0u) { newCol = vec4<f32>(a, 0.0, 0.0, 1.0); }
     else if (opt.outputChannel == 1u) { newCol = vec4<f32>(0.0, a, 0.0, 1.0); }
     else if (opt.outputChannel == 2u) { newCol = vec4<f32>(0.0, 0.0, a, 1.0); }

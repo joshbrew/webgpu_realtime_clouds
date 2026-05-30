@@ -254,8 +254,8 @@ export class CloudComputeBuilder {
         maxSteps: 256,
         minStep: 0.003,
         maxStep: 0.16,
-        sunSteps: 6,
-        sunStride: 3,
+        sunSteps: 5,
+        sunStride: 4,
         sunMinTr: 0.003,
         phaseJitter: 1.0,
         stepJitter: 0.3,
@@ -285,8 +285,8 @@ export class CloudComputeBuilder {
         farStepMult: 2.05,
         bnFarScale: 0.28,
         farTaaHistoryBoost: 1.8,
-        raySmoothDens: 0.34,
-        raySmoothSun: 0.34,
+        raySmoothDens: 0.40,
+        raySmoothSun: 0.40,
         fluffFactor: 2.0,
         anvilLift: 0.6,
         alphaCutoff: 0.98,
@@ -297,11 +297,17 @@ export class CloudComputeBuilder {
         verticalStepBoost: 3.0,
         verticalTextureHomogeneity: 0.0,
         verticalLightingStepBoost: 1.35,
-        frontOcclusionStrength: 0.72,
-        frontOcclusionAlpha: 0.66,
-        frontOcclusionStepBoost: 3.0,
+        frontOcclusionStrength: 0.82,
+        frontOcclusionAlpha: 0.58,
+        frontOcclusionStepBoost: 3.6,
         sliceJitterStrength: 0.08,
         verticalLayerDecorrelation: 0.35,
+        directLightBlend: 0.78,
+        directLightBoost: 0.58,
+        alphaBoostThreshold: 0.22,
+        alphaBoostAmount: 0.16,
+        minOutputAlpha: 0.10,
+        outputAlphaFeather: 0.0,
       },
     };
 
@@ -1399,8 +1405,10 @@ export class CloudComputeBuilder {
     putF(212, s.directLightBoost ?? 0.58);
     putF(216, s.alphaBoostThreshold ?? 0.22);
     putF(220, s.alphaBoostAmount ?? 0.16);
+    putF(224, s.minOutputAlpha ?? 0.10);
+    putF(228, s.outputAlphaFeather ?? 0.0);
 
-    for (let i = 224; i < this._abTuning.byteLength; i += 4)
+    for (let i = 232; i < this._abTuning.byteLength; i += 4)
       dv.setUint32(i, 0, true);
 
     this._writeIfChanged("tuning", this.tuningBuffer, this._abTuning);
@@ -2765,7 +2773,7 @@ export class CloudComputeBuilder {
     }
 
     const compositeQuality = Math.max(0, Math.min(2, opts.compositeQuality ?? 2)) >>> 0;
-    const alphaFloor = Math.max(0, Math.min(0.24, opts.alphaFloor ?? 0.085));
+    const alphaFloor = Math.max(0, Math.min(0.24, opts.alphaFloor ?? 0.10));
 
     dv.setUint32(0, layerIndex, true);
     dv.setUint32(4, compositeQuality, true);
