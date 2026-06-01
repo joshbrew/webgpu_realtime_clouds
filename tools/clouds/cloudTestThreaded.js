@@ -82,6 +82,12 @@ const DPR = () => {
 let ENTRY_POINTS = [];
 
 // Default preview + noise param blocks (each has seed)
+const DEFAULT_FOG_PROFILE = Object.freeze({
+  fogDensity: 0.34,
+  fogHorizon: 0.30,
+  fogSun: 1.50,
+});
+
 const preview = {
   cam: { x: -0.75, y: -1.2, z: -0.95, yawDeg: 35, pitchDeg: 28, fovYDeg: 60 },
   exposure: 1.18,
@@ -114,6 +120,9 @@ const preview = {
   styleSunBleed: 0.66,
   styleMidLift: 1.26,
   alphaFloor: 0.0,
+  fogDensity: DEFAULT_FOG_PROFILE.fogDensity,
+  fogHorizon: DEFAULT_FOG_PROFILE.fogHorizon,
+  fogSun: DEFAULT_FOG_PROFILE.fogSun,
   godRaysEnabled: true,
   godRayStrength: 1.00,
   godRayLength: 1.10,
@@ -2097,6 +2106,9 @@ function organizeSidebarControlGroups() {
     rgbRow("Sky", "v-s", ["R", "G", "B"]),
     rgbRow("Sun tint", "v-sun", ["R", "G", "B"]),
   ]);
+  appendControlGroup(previewPanel, "Atmosphere", [
+    { label: "Fog", columns: 3, fields: [{ id: "v-fog-density", label: "Density" }, { id: "v-fog-horizon", label: "Horizon" }, { id: "v-fog-sun", label: "Sun" }] },
+  ], { hint: "grade linked" });
   appendControlGroup(previewPanel, "Resolve", [
     { label: "Image", columns: 3, fields: [{ id: "v-exposure", label: "Exposure" }, { id: "v-alpha-floor", label: "Alpha floor" }, { id: "t-minOutputAlpha", label: "Min alpha" }] },
     { label: "Contrast", columns: 3, fields: [{ id: "v-shadow-strength", label: "Strength" }, { id: "v-shadow-edge", label: "Edge" }, { id: "v-shadow-darkness", label: "Dark" }] },
@@ -2128,7 +2140,7 @@ function organizeSidebarControlGroups() {
   ]);
   appendControlGroup(tuningPanel, "Vertical Form", [
     { label: "Layer", columns: 3, fields: [{ id: "t-verticalTextureHomogeneity", label: "Homo" }, { id: "t-verticalLayerDecorrelation", label: "Decorr" }, { id: "t-sliceJitterStrength", label: "Jitter" }] },
-    { label: "Steps", columns: 2, fields: [{ id: "t-verticalStepBoost", label: "March" }, { id: "t-verticalLightingStepBoost", label: "Light" }] },
+    { label: "Anvil", columns: 3, fields: [{ id: "t-anvilLift", label: "Exag" }, { id: "t-verticalStepBoost", label: "March" }, { id: "t-verticalLightingStepBoost", label: "Light" }] },
   ]);
   appendControlGroup(tuningPanel, "March", [
     { label: "Steps", columns: 3, fields: [{ id: "t-maxSteps", label: "Max" }, { id: "t-minStep", label: "Min" }, { id: "t-maxStep", label: "Step" }] },
@@ -2575,6 +2587,9 @@ function injectPreviewLookControls() {
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Render Scale Divider / Coarse Factor</span><input id="v-render-scale-divider" type="number" step="1" min="1" max="8" title="Compute coarse factor for still and animated renders. 1 = full resolution, 4 is the default coarse compute scale, then upsampled to the full presentation canvas."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Temporal Interleave</span><select id="v-temporal-cell-rate" title="Compact history-backed screen interleave. After the first history frame, only a rotated 8x8 scattered subset is dispatched as cloud rays; previous history is copied forward for the rest."><option value="1">Off / full quality</option><option value="2">1 / 2 rays per frame</option><option value="4">1 / 4 rays per frame</option><option value="8">1 / 8 rays per frame</option><option value="16">1 / 16 rays per frame</option><option value="32">1 / 32 rays per frame</option><option value="64">1 / 64 rays per frame</option></select></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Floor</span><input id="v-alpha-floor" type="number" step="0.005" min="0" max="0.24" title="Composite alpha floor. Faint cloud alpha below this threshold fades out before sky compositing, reducing glow haze without running the removed cream resolve."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Density</span><input id="v-fog-density" type="number" step="0.01" min="0" max="2" title="Atmospheric depth fog strength. The active color grade controls the fog color family."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Horizon</span><input id="v-fog-horizon" type="number" step="0.01" min="0" max="2" title="How strongly fog gathers around the horizon and distant cloud silhouettes."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Sun</span><input id="v-fog-sun" type="number" step="0.01" min="0" max="2" title="Amount of sun-washed color injected into the atmospheric fog by the active color grade."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Min Output Alpha</span><input id="t-minOutputAlpha" type="number" step="0.005" min="0" max="0.45" title="Compute-side alpha cutoff. Pixels below this alpha are written transparent before temporal history so low-opacity speckle cannot accumulate."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Front Occlusion</span><input id="t-frontOcclusionStrength" type="number" step="0.01" min="0" max="1" title="Close opaque cloud acceleration. 0 disables it; higher values cut behind-cloud work sooner once the front body has accumulated alpha."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Occ. Alpha Start</span><input id="t-frontOcclusionAlpha" type="number" step="0.01" min="0" max="0.98" title="Accumulated alpha where front-occlusion acceleration starts."></label>
@@ -3069,6 +3084,17 @@ function lightingProfileForGrade(style) {
 }
 
 
+
+
+function fogProfileForGrade(style, current = preview) {
+  const preset = GRADE_PRESETS[style] || GRADE_PRESETS[0] || {};
+  return {
+    fogDensity: +(preset.fogDensity ?? current?.fogDensity ?? DEFAULT_FOG_PROFILE.fogDensity),
+    fogHorizon: +(preset.fogHorizon ?? current?.fogHorizon ?? DEFAULT_FOG_PROFILE.fogHorizon),
+    fogSun: +(preset.fogSun ?? current?.fogSun ?? DEFAULT_FOG_PROFILE.fogSun),
+  };
+}
+
 function setControlValue(id, val) {
   const el = $(id);
   if (!el) return;
@@ -3152,6 +3178,9 @@ function syncPreviewLookInputs() {
   setFieldValue("v-render-scale-divider", preview.renderScaleDivider ?? 4);
   setFieldValue("v-temporal-cell-rate", normalizeTemporalCellRate(preview.temporalCellRate ?? 1));
   setFieldValue("v-alpha-floor", preview.alphaFloor ?? 0.0);
+  setFieldValue("v-fog-density", preview.fogDensity ?? DEFAULT_FOG_PROFILE.fogDensity);
+  setFieldValue("v-fog-horizon", preview.fogHorizon ?? DEFAULT_FOG_PROFILE.fogHorizon);
+  setFieldValue("v-fog-sun", preview.fogSun ?? DEFAULT_FOG_PROFILE.fogSun);
   setFieldValue("v-sr", preview.sky[0]);
   setFieldValue("v-sg", preview.sky[1]);
   setFieldValue("v-sb", preview.sky[2]);
@@ -3217,6 +3246,10 @@ function applyGradePreset(style, syncInputs = true) {
   preview.volumeShadowTint = lighting.volumeShadowTint.slice();
   preview.directLightBlend = lighting.directLightBlend;
   preview.directLightBoost = lighting.directLightBoost;
+  const fog = fogProfileForGrade(style);
+  preview.fogDensity = fog.fogDensity;
+  preview.fogHorizon = fog.fogHorizon;
+  preview.fogSun = fog.fogSun;
   preview.cloudLitTint = preset.cloudLitTint.slice();
   preview.cloudShadowTint = preset.cloudShadowTint.slice();
   preview.edgeTint = preset.edgeTint.slice();
@@ -3386,6 +3419,7 @@ function readTuning() {
     raySmoothDens: +($("t-raySmoothDens")?.value || 0.40),
     raySmoothSun: +($("t-raySmoothSun")?.value || 0.40),
     fluffFactor: +($("t-fluffFactor")?.value || 4.0),
+    anvilLift: num("t-anvilLift", 0.6),
     alphaCutoff: +($("t-alphaCutoff")?.value || 0.98),
     verticalStepBoost: +($("t-verticalStepBoost")?.value || 3.0),
     verticalTextureHomogeneity: +($("t-verticalTextureHomogeneity")?.value || 0.0),
@@ -3756,6 +3790,9 @@ function readPreview() {
   preview.edgeTint[2] = clamp01(num("v-edge-b", preview.edgeTint[2]));
   preview.styleShadowStrength = Math.max(0, Math.min(5.0, num("v-shadow-strength", preview.styleShadowStrength ?? 0.88)));
   preview.styleShadowEdge = Math.max(0, Math.min(2.2, num("v-shadow-edge", preview.styleShadowEdge ?? 0.0)));
+  preview.fogDensity = Math.max(0, Math.min(2.0, num("v-fog-density", preview.fogDensity ?? DEFAULT_FOG_PROFILE.fogDensity)));
+  preview.fogHorizon = Math.max(0, Math.min(2.0, num("v-fog-horizon", preview.fogHorizon ?? DEFAULT_FOG_PROFILE.fogHorizon)));
+  preview.fogSun = Math.max(0, Math.min(2.0, num("v-fog-sun", preview.fogSun ?? DEFAULT_FOG_PROFILE.fogSun)));
   preview.styleShadowDarkness = Math.max(0, Math.min(6.0, num("v-shadow-darkness", preview.styleShadowDarkness ?? 0.0)));
   preview.styleColorLift = Math.max(0, Math.min(2.2, num("v-color-lift", preview.styleColorLift ?? 1.12)));
   preview.styleSaturation = Math.max(0, Math.min(2.2, num("v-saturation", preview.styleSaturation ?? 1.10)));
@@ -4385,6 +4422,7 @@ async function wireUI() {
   });
 
   $("v-grade")?.addEventListener("change", () => {
+    readPreview();
     const style = u32("v-grade", preview.gradeStyle);
     applyGradePreset(style, true);
   });
@@ -5263,9 +5301,13 @@ async function init() {
 
   const anvilLiftInput = $("t-anvilLift");
   if (anvilLiftInput) {
-    anvilLiftInput.disabled = true;
+    anvilLiftInput.disabled = false;
+    anvilLiftInput.min = "0";
+    anvilLiftInput.max = "3";
+    anvilLiftInput.step = "0.05";
+    anvilLiftInput.title = "Anvil exaggeration multiplier. 0.6 preserves the default storm profile; lower values dampen the cap and higher values overdrive lift and spread.";
     const wrap = anvilLiftInput.closest("label") || anvilLiftInput.parentElement;
-    if (wrap) wrap.style.display = "none";
+    if (wrap) wrap.style.display = "";
   }
 
   syncPreviewLookInputs();

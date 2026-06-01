@@ -42,6 +42,8 @@ struct RenderParams {
   styleControls:vec4<f32>,
   godRayControls:vec4<f32>,
   reservedControls:vec4<f32>,
+  boxCenter:vec3<f32>, _p16:f32,
+  boxHalf:vec3<f32>, _p17:f32,
 };
 @group(0) @binding(0) var samp : sampler;
 @group(0) @binding(1) var tex  : texture_2d_array<f32>;
@@ -79,6 +81,16 @@ fn toneMapFilmic(c:vec3<f32>)->vec3<f32> {
 
 fn luma(c:vec3<f32>)->f32 {
   return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+fn hash12(p: vec2<f32>) -> f32 {
+  return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453123);
+}
+
+fn previewFogJitter(uv: vec2<f32>) -> f32 {
+  let dims = vec2<f32>(textureDimensions(tex, 0));
+  let pix = floor(uv * dims + vec2<f32>(f32(R.layerIndex) * 0.37, f32(R.compositeQuality) * 1.91));
+  return hash12(pix);
 }
 
 fn sampleCloudRaw(uv:vec2<f32>, layer:i32)->vec4<f32> {
@@ -152,10 +164,10 @@ fn alphaColorResponse(alpha: f32) -> f32 {
 
 fn alphaDisplayResponse(alpha: f32) -> f32 {
   let a = clamp(alpha, 0.0, 1.0);
-  let lowGate = smoothstep(0.002, 0.105, a);
-  let highGate = 1.0 - smoothstep(0.34, 0.82, a);
+  let lowGate = smoothstep(0.006, 0.115, a);
+  let highGate = 1.0 - smoothstep(0.24, 0.62, a);
   let responseGate = lowGate * highGate;
-  let liftedA = min(pow(max(a, 0.00001), 0.38) * 0.78, a + 0.42);
+  let liftedA = min(pow(max(a, 0.00001), 0.52) * 0.66, a + 0.24);
   return mix(a, max(a, liftedA), responseGate);
 }
 
@@ -270,6 +282,176 @@ fn rayDirFromUV(uv:vec2<f32>)->vec3<f32> {
   let tanHalfX = tanHalfY * max(R.aspect, 0.000001);
   let dir = R.fwd + R.right * (ndc.x * tanHalfX) + R.up * (ndc.y * tanHalfY);
   return normalize(dir);
+}
+
+fn previewBoxInterval(ro: vec3<f32>, rd: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> vec2<f32> {
+  let safeRd = vec3<f32>(
+    select(1e-6, rd.x, abs(rd.x) > 1e-6),
+    select(1e-6, rd.y, abs(rd.y) > 1e-6),
+    select(1e-6, rd.z, abs(rd.z) > 1e-6)
+  );
+  let tA = (bmin - ro) / safeRd;
+  let tB = (bmax - ro) / safeRd;
+  let tNear3 = min(tA, tB);
+  let tFar3 = max(tA, tB);
+  return vec2<f32>(
+    max(max(tNear3.x, tNear3.y), tNear3.z),
+    min(min(tFar3.x, tFar3.y), tFar3.z)
+  );
+}
+
+fn previewBoxHit(ro: vec3<f32>, rd: vec3<f32>) -> vec2<f32> {
+  let half = max(R.boxHalf, vec3<f32>(0.001, 0.001, 0.001));
+  let bmin = R.boxCenter - half;
+  let bmax = R.boxCenter + vec3<f32>(half.x, half.y * 1.55 + 0.25, half.z);
+  return previewBoxInterval(ro, rd, bmin, bmax);
+}
+
+fn previewFogBoxHit(ro: vec3<f32>, rd: vec3<f32>, fogHorizon: f32) -> vec2<f32> {
+  let half = max(R.boxHalf, vec3<f32>(0.001, 0.001, 0.001));
+  let h = clamp(fogHorizon * 0.50, 0.0, 1.0);
+  let lower = half.y * mix(3.80, 6.20, h) + 0.55;
+  let upper = half.y * mix(2.20, 3.80, h) + 0.35;
+  let side = vec3<f32>(half.x * 1.05, lower, half.z * 1.05);
+  let top = vec3<f32>(half.x * 1.05, upper, half.z * 1.05);
+  let bmin = R.boxCenter - side;
+  let bmax = R.boxCenter + top;
+  return previewBoxInterval(ro, rd, bmin, bmax);
+}
+
+fn previewAtmosScale() -> f32 {
+  let half = max(R.boxHalf, vec3<f32>(0.001, 0.001, 0.001));
+  return max(max(half.x, half.z), max(half.y * 2.0, 1.0));
+}
+
+fn previewHorizonBand(rayDir: vec3<f32>, fogHorizon: f32) -> f32 {
+  let h = clamp(fogHorizon * 0.50, 0.0, 1.0);
+  let width = mix(3.15, 8.75, h);
+  return pow(clamp(1.0 - abs(rayDir.y) * width, 0.0, 1.0), mix(1.55, 0.92, h));
+}
+
+fn previewAerosolDensityAtY(y: f32, fogHorizon: f32) -> f32 {
+  let half = max(R.boxHalf, vec3<f32>(0.001, 0.001, 0.001));
+  let scale = previewAtmosScale();
+  let h = clamp(fogHorizon * 0.50, 0.0, 1.0);
+  let baseY = R.boxCenter.y - half.y * mix(1.15, 2.25, h) - 0.08;
+  let scaleHeight = max(half.y * mix(0.95, 2.65, h) + scale * mix(0.010, 0.022, h), 0.045);
+  let rel = (y - baseY) / scaleHeight;
+  let belowLayer = 1.0 / (1.0 + max(-rel, 0.0) * 0.16);
+  let aboveLayer = exp(-max(rel, 0.0));
+  let layerDensity = select(aboveLayer, belowLayer, rel < 0.0);
+  let highMist = mix(0.028, 0.070, h) * exp(-max(rel, 0.0) * mix(0.15, 0.08, h));
+  return clamp(layerDensity + highMist, 0.0, 1.16);
+}
+
+fn previewAerosolPathDistance(distance: f32, rayDir: vec3<f32>, fogHorizon: f32, jitter: f32) -> f32 {
+  let d = max(distance, 0.0);
+  if (d <= 0.0001) {
+    return 0.0;
+  }
+
+  let scale = previewAtmosScale();
+  let h = clamp(fogHorizon * 0.50, 0.0, 1.0);
+  let shallow = 1.0 - smoothstep(0.05, 0.38, abs(rayDir.y));
+  let longPath = smoothstep(scale * 0.40, scale * 6.00, d);
+  let adaptive = clamp(shallow * 0.78 + longPath * shallow * 0.22, 0.0, 1.0);
+  let sampleCount = 10u + u32(round(adaptive * 8.0));
+  let invCount = 1.0 / max(f32(sampleCount), 1.0);
+  let jitter01 = fract(jitter);
+  let y0 = R.camPos.y;
+  let dy = rayDir.y * d;
+
+  var accum = 0.0;
+  var i: u32 = 0u;
+  loop {
+    if (i >= sampleCount || i >= 18u) {
+      break;
+    }
+    let t = min((f32(i) + jitter01) * invCount, 1.0);
+    accum += previewAerosolDensityAtY(y0 + dy * t, fogHorizon);
+    i = i + 1u;
+  }
+
+  let avgDensity = accum * invCount;
+  let horizonBand = previewHorizonBand(rayDir, fogHorizon);
+  let horizonReservoir = horizonBand * mix(0.035, 0.12, h);
+  return d * clamp(avgDensity * mix(0.82, 1.18, h) + horizonReservoir, 0.0, 1.30);
+}
+
+fn previewSkyAerialDistance(rayDir: vec3<f32>, fogHorizon: f32) -> f32 {
+  let scale = previewAtmosScale();
+  let h = clamp(fogHorizon * 0.50, 0.0, 1.0);
+  let horizonBand = previewHorizonBand(rayDir, fogHorizon);
+  let verticalEscape = scale * mix(0.92, 2.70, h) / max(abs(rayDir.y) + 0.05, 0.08);
+  let horizonReach = scale * mix(2.80, 28.0, horizonBand) * (0.74 + 0.34 * clamp(fogHorizon, 0.0, 1.0));
+  let downReach = scale * mix(1.60, 5.80, h) / max(max(-rayDir.y, 0.0) + 0.22, 0.22);
+  let skyReach = mix(verticalEscape, horizonReach, horizonBand);
+  let directionalReach = select(skyReach, max(skyReach, downReach), rayDir.y < -0.02);
+  return max(directionalReach, scale * mix(0.62, 1.35, h));
+}
+
+fn previewCloudAerialDistance(rayDir: vec3<f32>, cloudDisplayA: f32, fogHorizon: f32) -> f32 {
+  let hit = previewBoxHit(R.camPos, rayDir);
+  let hasHit = hit.x <= hit.y && hit.y > 0.0;
+  let entry = max(hit.x, 0.0);
+  let span = max(hit.y - entry, 0.0);
+  let a = smoothstep(0.02, 0.98, clamp(cloudDisplayA, 0.0, 1.0));
+  let thinThrough = pow(max(1.0 - a, 0.0), 0.58);
+  let surfaceDepth = mix(0.28, 0.86, thinThrough);
+  let hitDistance = entry + span * surfaceDepth;
+  let fallbackDistance = previewSkyAerialDistance(rayDir, fogHorizon) * mix(0.42, 0.86, thinThrough);
+  return select(fallbackDistance, max(hitDistance, fallbackDistance * 0.16), hasHit);
+}
+
+fn previewCloudBoxImmersion(fogHorizon: f32) -> f32 {
+  let half = max(R.boxHalf, vec3<f32>(0.001, 0.001, 0.001));
+  let ext = vec3<f32>(half.x, half.y * 1.55 + 0.25, half.z);
+  let q = abs(R.camPos - R.boxCenter) / max(ext, vec3<f32>(0.001, 0.001, 0.001));
+  let maxQ = max(max(q.x, q.y), q.z);
+  let inside = select(0.0, 1.0, maxQ <= 1.0);
+  let edgeEase = 1.0 - smoothstep(0.70, 1.0, maxQ);
+  let altitudeDensity = previewAerosolDensityAtY(R.camPos.y, fogHorizon);
+  return inside * max(edgeEase, 0.32) * altitudeDensity;
+}
+
+fn previewAerialFogAmount(distance: f32, rayDir: vec3<f32>, fogDensity: f32, fogHorizon: f32, fogSun: f32, lowSun: f32, towardSun: f32, jitter: f32) -> f32 {
+  if (fogDensity <= 0.0001) {
+    return 0.0;
+  }
+
+  let scale = previewAtmosScale();
+  let h = clamp(fogHorizon * 0.50, 0.0, 1.0);
+  let horizonBand = previewHorizonBand(rayDir, fogHorizon);
+  let grazing = min(1.0 / max(abs(rayDir.y) * 2.00 + 0.22, 0.22), 4.55);
+  let pathBoost = mix(1.0, grazing, horizonBand * clamp(fogHorizon * 0.48, 0.0, 0.92));
+  let lowAltitudeBoost = mix(0.92, 1.22, lowSun);
+  let aerosolDistance = previewAerosolPathDistance(distance, rayDir, fogHorizon, jitter);
+  let extinction = fogDensity * mix(1.10, 2.05, h) * lowAltitudeBoost;
+  let opticalDepth = aerosolDistance / max(scale, 0.001) * extinction * pathBoost;
+  let rayleighMie = 1.0 - exp(-opticalDepth);
+  let sunForward = pow(clamp(towardSun, 0.0, 1.0), mix(10.0, 2.45, clamp(fogSun * 0.50, 0.0, 1.0)));
+  let forwardScatter = (1.0 - exp(-opticalDepth * 0.72)) * sunForward * fogSun * mix(0.08, 0.42, lowSun);
+  return clamp(rayleighMie + forwardScatter, 0.0, 0.92);
+}
+
+fn previewAerialFogColor(
+  horizonSky: vec3<f32>,
+  zenithSky: vec3<f32>,
+  sunWash: vec3<f32>,
+  shadowCool: vec3<f32>,
+  rayDir: vec3<f32>,
+  towardSun: f32,
+  fogHorizon: f32,
+  fogSun: f32,
+  lowSun: f32
+) -> vec3<f32> {
+  let horizonBand = previewHorizonBand(rayDir, fogHorizon);
+  let hMix = clamp(horizonBand * (0.68 + 0.24 * clamp(fogHorizon, 0.0, 1.0)) + 0.10, 0.0, 1.0);
+  let base = mix(zenithSky, horizonSky, hMix);
+  let sunForward = pow(clamp(towardSun, 0.0, 1.0), mix(9.0, 2.2, clamp(fogSun * 0.50, 0.0, 1.0)));
+  let sunMix = clamp(sunForward * fogSun * mix(0.12, 0.72, lowSun), 0.0, 0.86);
+  let coolMix = clamp((1.0 - towardSun) * 0.10 + (1.0 - lowSun) * 0.05, 0.0, 0.20);
+  return max(mix(mix(base, shadowCool, coolMix), sunWash, sunMix), vec3<f32>(0.0));
 }
 
 // ---- faster alpha gather: fewer samples, lower LOD, and early-out ----
@@ -396,8 +578,8 @@ fn alphaReliefStatsFast(centerAlpha:f32, occ:f32, gradLen:f32)->vec2<f32> {
 }
 
 fn silverEdgeBand(alpha: f32) -> f32 {
-  let enter = smoothstep(0.035, 0.180, alpha);
-  let leave = 1.0 - smoothstep(0.30, 0.62, alpha);
+  let enter = smoothstep(0.07, 0.20, alpha);
+  let leave = 1.0 - smoothstep(0.20, 0.44, alpha);
   return enter * leave;
 }
 
@@ -410,10 +592,6 @@ fn cloudCoreMask(alpha: f32, occ: f32, edge: f32) -> f32 {
 
 fn inside01(uv:vec2<f32>)->f32 {
   return select(0.0, 1.0, all(uv >= vec2<f32>(0.0, 0.0)) && all(uv <= vec2<f32>(1.0, 1.0)));
-}
-
-fn hash12(p: vec2<f32>) -> f32 {
-  return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453123);
 }
 
 fn sampleAlphaWide(
@@ -800,12 +978,21 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   let godRays = godRayFog.x;
   let godRayShadow = godRayFog.y;
   let godRayColor = mix(sunWash, sunColor, 0.72);
+  let fogJitter = previewFogJitter(in.uv);
 
   if (cloudA < 0.003) {
-    let clearLinear =
+    var clearLinear =
       sky * (1.0 - godRayShadow * (0.16 + 0.34 * lowSun)) +
       sunColor * (1.18 * sunDisk + 0.22 * sunGlow) +
       godRayColor * godRays * (0.40 + 0.86 * lowSun);
+
+    let fogDensity = clamp(R.reservedControls.y, 0.0, 2.0);
+    let fogHorizon = clamp(R.reservedControls.z, 0.0, 2.0);
+    let fogSun = clamp(R.reservedControls.w, 0.0, 2.0);
+    let skyFogDistance = previewSkyAerialDistance(rayDir, fogHorizon);
+    let skyFogAmount = previewAerialFogAmount(skyFogDistance, rayDir, fogDensity, fogHorizon, fogSun, lowSun, towardSunSky, fogJitter);
+    let skyFogColor = previewAerialFogColor(horizonSky, zenithSky, sunWash, shadowCool, rayDir, towardSunSky, fogHorizon, fogSun, lowSun);
+    clearLinear = mix(clearLinear, skyFogColor, skyFogAmount);
 
     let clearMapped = toneMapFilmic(clearLinear * max(R.exposure * 0.80, 0.0));
     let clearStyled = applyStyleGrade(clearMapped, style, 0.0);
@@ -1065,6 +1252,13 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   let shadowBand = mix(shadowSoftBand, shadowHardBand, shadowEdgeAmt);
   let midBand = clamp((1.0 - lightBand * 0.62) * (1.0 - shadowBand * 0.36) * (0.46 + 0.54 * opticalDepth), 0.0, 1.0);
   let highlightBand = clamp(lightBand * (1.0 - shadowBand * 0.42) + rimBand * 0.24, 0.0, 1.0);
+  let shadowedEdgeSuppression = clamp(
+    mix(0.12, 1.0, highlightBand) *
+    mix(0.16, 1.0, 1.0 - shadowBand) *
+    mix(0.44, 1.0, 1.0 - cavity),
+    0.0,
+    1.0
+  );
   let alphaEdgeColorBand =
     smoothstep(0.006, 0.15, cloudA) *
     (1.0 - smoothstep(0.34, 0.78, cloudA)) *
@@ -1080,26 +1274,27 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   var cloudShaded = mix(cloudRGB * vec3<f32>(0.10), bodyTint * retainedShape * detailTint, min(styleBaseMix + 0.03, 0.98));
   cloudShaded += litCloudTint * cloudColorA * highlightBand * (0.085 + 0.095 * styleLightBoost) * (1.0 - shadowBand * 0.52);
   cloudShaded += midCloudTint * cloudColorA * midBand * styleMidLift * userMidLift * 0.82 * select(1.0, 0.78, style == 1u);
-  cloudShaded += rimTint * rimBand * (0.40 + 0.30 * R.sunBloom) * styleRimBoost * userRimStrength;
+  cloudShaded += rimTint * rimBand * shadowedEdgeSuppression * (0.22 + 0.18 * R.sunBloom) * styleRimBoost * userRimStrength;
 
   let alphaColorTint = max(mix(edgeWarm, userEdgeTint, 0.84), vec3<f32>(0.02, 0.02, 0.02));
   let alphaColorMix = clamp(
     alphaEdgeColorBand *
-    (0.14 + 0.36 * edgeChroma + 0.10 * userRimStrength) *
-    (0.70 + 0.30 * (1.0 - shadowBand)) *
+    mix(0.16, 1.0, shadowedEdgeSuppression) *
+    (0.10 + 0.20 * edgeChroma + 0.05 * userRimStrength) *
+    (0.55 + 0.45 * (1.0 - shadowBand)) *
     (0.72 + 0.28 * userColorLift),
     0.0,
-    0.64
+    0.34
   );
   let alphaColorLum = max(luma(cloudShaded), max(baseBodyLum * 0.42, 0.035));
   cloudShaded = mix(cloudShaded, alphaColorTint * alphaColorLum * (1.02 + 0.14 * userColorLift), alphaColorMix);
-  cloudShaded += alphaColorTint * cloudColorLift * alphaEdgeColorBand * (0.12 + 0.26 * edgeChroma + 0.07 * userRimStrength) * (1.0 - shadowBand * 0.36);
+  cloudShaded += alphaColorTint * cloudColorLift * alphaEdgeColorBand * shadowedEdgeSuppression * (0.05 + 0.12 * edgeChroma + 0.03 * userRimStrength) * (1.0 - shadowBand * 0.58);
 
   cloudShaded += sunColor * cloudColorA * (fluffyLight * 0.026 + ridgeLift * 0.034 + softWrap * 0.014) * (1.0 - shadowBand * 0.90) * userSunBleed;
   cloudShaded = mix(cloudShaded, shadowBody * baseBodyLum, clamp(shadowBand * 0.14 + imageCavity * 0.06, 0.0, 0.28));
 
   let liftBand = clamp(midBand * 0.60 + highlightBand * 0.36 + (1.0 - shadowBand) * 0.12, 0.0, 1.0);
-  cloudShaded = mix(cloudShaded, max(cloudShaded, vec3<f32>(baseBodyLum) * vec3<f32>(0.98, 0.99, 1.0)), highlightBand * 0.10 + rimBand * 0.06);
+  cloudShaded = mix(cloudShaded, max(cloudShaded, vec3<f32>(baseBodyLum) * vec3<f32>(0.98, 0.99, 1.0)), highlightBand * 0.10 + rimBand * 0.02 * shadowedEdgeSuppression);
   let liftTint = mix(midCloudTint, litCloudTint, clamp(highlightBand * 0.58 + softWrap * 0.20, 0.0, 1.0));
   cloudShaded += liftTint * cloudColorA * liftBand * (0.040 + 0.075 * userColorLift);
   let shadedLum = luma(cloudShaded);
@@ -1116,14 +1311,14 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   }
 
   let sunLeak = (1.0 - shadowBand * 0.92) * (0.42 + 0.58 * (1.0 - bodyCore)) * userSunBleed;
-  cloudShaded += sunWash * sunGlow * (0.008 + 0.014 * R.sunBloom) * sunLeak;
+  cloudShaded += sunWash * sunGlow * (0.008 + 0.014 * R.sunBloom) * sunLeak * mix(0.75, 1.0, shadowedEdgeSuppression);
 
   let cloudDisplayA = alphaDisplayResponse(cloudA);
   let wispyDisplayBand =
     smoothstep(0.004, 0.13, cloudA) *
     (1.0 - smoothstep(0.28, 0.74, cloudA));
-  let displayColorBoost = clamp(cloudDisplayA / max(cloudA, 0.045), 1.0, 3.60);
-  cloudShaded *= mix(1.0, displayColorBoost, wispyDisplayBand * 0.68);
+  let displayColorBoost = clamp(cloudDisplayA / max(cloudA, 0.045), 1.0, 2.10);
+  cloudShaded *= mix(1.0, displayColorBoost, wispyDisplayBand * 0.28);
 
   let shadowDarknessNorm = clamp(userShadowDarkness / 6.0, 0.0, 1.0);
   let shadowDarknessBase = clamp(shadowBand * (0.58 + 0.42 * opticalDepth) + imageCavity * 0.24 + cavity * 0.18, 0.0, 1.0);
@@ -1143,14 +1338,22 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
     (1.0 - 0.72 * edgeAlphaBand) *
     mix(1.0, 0.72, shadowBand);
 
+  let fogDensity = clamp(R.reservedControls.y, 0.0, 2.0);
+  let fogHorizon = clamp(R.reservedControls.z, 0.0, 2.0);
+  let fogSun = clamp(R.reservedControls.w, 0.0, 2.0);
+  let skyFogDistance = previewSkyAerialDistance(rayDir, fogHorizon);
+  let skyFogAmount = previewAerialFogAmount(skyFogDistance, rayDir, fogDensity, fogHorizon, fogSun, lowSun, towardSunSky, fogJitter);
+  let fogColor = previewAerialFogColor(horizonSky, zenithSky, sunWash, shadowCool, rayDir, towardSunSky, fogHorizon, fogSun, lowSun);
+  let foggedSky = mix(sky, fogColor, skyFogAmount);
+
   var linear =
-    sky * skyMask * (1.0 - godRayShadow * (0.13 + 0.30 * lowSun) * skyFogMask) +
+    foggedSky * skyMask * (1.0 - godRayShadow * (0.13 + 0.30 * lowSun) * skyFogMask) +
     cloudShaded;
 
   linear += sunColor * (
     1.04 * sunDisk +
     (0.095 + 0.085 * R.sunBloom) * sunGlow * userSunBleed +
-    (0.18 + 0.06 * R.sunBloom) * rimBand * sunLeak
+    (0.10 + 0.04 * R.sunBloom) * rimBand * sunLeak * shadowedEdgeSuppression
   );
 
   linear +=
@@ -1159,6 +1362,22 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
     (0.32 + 0.68 * lowSun) *
     lightingSkyFogMask *
     rayBodyMask;
+
+  let cloudFogDistance = previewCloudAerialDistance(rayDir, cloudDisplayA, fogHorizon);
+  let aerialFogRaw = previewAerialFogAmount(cloudFogDistance, rayDir, fogDensity, fogHorizon, fogSun, lowSun, towardSunSky, fogJitter);
+  let cloudMatterResponse = mix(1.10, 0.88, smoothstep(0.54, 1.0, bodyCore)) * mix(1.08, 0.94, smoothstep(0.72, 1.0, cloudDisplayA));
+  let skyBehindMix = pow(max(1.0 - cloudDisplayA, 0.0), 0.70);
+  let edgeMistLift = 1.0 + 0.24 * skyBehindMix + 0.16 * edgeAlphaBand;
+  let matterFogGate = smoothstep(0.006, 0.24, cloudDisplayA);
+  let immersedFog =
+    previewCloudBoxImmersion(fogHorizon) *
+    matterFogGate *
+    fogDensity *
+    mix(0.020, 0.095, clamp(fogHorizon * 0.50, 0.0, 1.0)) *
+    (1.0 - 0.42 * bodyCore) *
+    (0.70 + 0.30 * skyBehindMix);
+  let fogAmount = clamp(aerialFogRaw * cloudMatterResponse * edgeMistLift * matterFogGate + immersedFog, 0.0, 0.92);
+  linear = mix(linear, fogColor, fogAmount);
 
   let mapped = toneMapFilmic(linear * max(R.exposure * 0.82, 0.0));
   let styled = applyStyleGrade(mapped, style, clamp(cloudA * 1.15 + bodyCore * 0.35, 0.0, 1.0));

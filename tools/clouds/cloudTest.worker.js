@@ -1365,6 +1365,9 @@ function renderUniformSignature(preview, aspect, layerIndex) {
     godRayLength: signatureScalar(preview?.godRayLength ?? 1.0),
     godRayFalloff: signatureScalar(preview?.godRayFalloff ?? 1.55),
     alphaFloor: signatureScalar(preview?.alphaFloor ?? 0.20),
+    fogDensity: signatureScalar(preview?.fogDensity ?? 0.34),
+    fogHorizon: signatureScalar(preview?.fogHorizon ?? 0.30),
+    fogSun: signatureScalar(preview?.fogSun ?? 1.50),
   });
 }
 
@@ -1975,6 +1978,9 @@ async function runFrame({
       godRayLength: (preview?.godRayLength ?? 1.0) * (renderFastPreview ? 0.90 : 1.0),
       godRayFalloff: preview?.godRayFalloff ?? 1.55,
       alphaFloor: preview?.alphaFloor ?? 0.20,
+      fogDensity: preview?.fogDensity ?? 0.34,
+      fogHorizon: preview?.fogHorizon ?? 0.30,
+      fogSun: preview?.fogSun ?? 1.50,
     });
     lastRenderUniformSignature = renderSig;
   }

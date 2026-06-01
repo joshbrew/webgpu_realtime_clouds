@@ -111,7 +111,7 @@ export class CloudComputeBuilder {
 
 
     // Preview render params: 256 bytes
-    this._abRender = new ArrayBuffer(256);
+    this._abRender = new ArrayBuffer(288);
     this._dvRender = new DataView(this._abRender);
 
     // Upsample params: 32 bytes
@@ -2714,6 +2714,12 @@ export class CloudComputeBuilder {
     const godRayStrength = opts.godRayStrength ?? 0.0;
     const godRayLength = opts.godRayLength ?? 1.0;
     const godRayFalloff = opts.godRayFalloff ?? 1.55;
+    const fogDensity = Math.max(0, Math.min(2.0, opts.fogDensity ?? 0.34));
+    const fogHorizon = Math.max(0, Math.min(2.0, opts.fogHorizon ?? 0.30));
+    const fogSun = Math.max(0, Math.min(2.0, opts.fogSun ?? 1.50));
+    const renderBox = opts.box ?? this._state.box ?? { center: [0, 0, 0], half: [18, 0.6, 18] };
+    const boxCenter = renderBox.center ?? [0, 0, 0];
+    const boxHalf = renderBox.half ?? [18, 0.6, 18];
 
     const rad = (d) => (d * Math.PI) / 180;
     const cross = (a, b) => [
@@ -2806,9 +2812,11 @@ export class CloudComputeBuilder {
     dv.setFloat32(232, godRayLength, true);
     dv.setFloat32(236, godRayFalloff, true);
     dv.setFloat32(240, alphaFloor, true);
-    dv.setFloat32(244, 0.0, true);
-    dv.setFloat32(248, 0.0, true);
-    dv.setFloat32(252, 0.0, true);
+    dv.setFloat32(244, fogDensity, true);
+    dv.setFloat32(248, fogHorizon, true);
+    dv.setFloat32(252, fogSun, true);
+    wv3(256, boxCenter);
+    wv3(272, boxHalf);
 
     this._writeIfChanged("render", this.renderParams, this._abRender);
   }
