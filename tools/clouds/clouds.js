@@ -110,8 +110,8 @@ export class CloudComputeBuilder {
     this._dvTuning = new DataView(this._abTuning);
 
 
-    // Preview render params: 256 bytes
-    this._abRender = new ArrayBuffer(288);
+    // Preview render params: 304 bytes
+    this._abRender = new ArrayBuffer(304);
     this._dvRender = new DataView(this._abRender);
 
     // Upsample params: 32 bytes
@@ -195,8 +195,8 @@ export class CloudComputeBuilder {
         cloudBeer: 6.0,
         attenuationClamp: 0.015,
         inScatterG: 0.55,
-        silverIntensity: 12.0,
-        silverExponent: 12.0,
+        silverIntensity: 1.5,
+        silverExponent: 1.0,
         outScatterG: 0.08,
         inVsOut: 0.55,
         outScatterAmbientAmt: 0.08,
@@ -2710,6 +2710,8 @@ export class CloudComputeBuilder {
     const styleRimStrength = opts.styleRimStrength ?? 1.08;
     const styleSunBleed = opts.styleSunBleed ?? 0.96;
     const styleMidLift = opts.styleMidLift ?? 0.94;
+    const silverIntensity = opts.silverIntensity ?? 1.5;
+    const silverExponent = opts.silverExponent ?? 1.0;
     const godRaysEnabled = opts.godRaysEnabled ?? false;
     const godRayStrength = opts.godRayStrength ?? 0.0;
     const godRayLength = opts.godRayLength ?? 1.0;
@@ -2815,8 +2817,12 @@ export class CloudComputeBuilder {
     dv.setFloat32(244, fogDensity, true);
     dv.setFloat32(248, fogHorizon, true);
     dv.setFloat32(252, fogSun, true);
-    wv3(256, boxCenter);
-    wv3(272, boxHalf);
+    dv.setFloat32(256, silverIntensity, true);
+    dv.setFloat32(260, silverExponent, true);
+    dv.setFloat32(264, 0.0, true);
+    dv.setFloat32(268, 0.0, true);
+    wv3(272, boxCenter);
+    wv3(288, boxHalf);
 
     this._writeIfChanged("render", this.renderParams, this._abRender);
   }

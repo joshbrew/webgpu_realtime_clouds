@@ -42,6 +42,7 @@ struct RenderParams {
   styleControls:vec4<f32>,
   godRayControls:vec4<f32>,
   reservedControls:vec4<f32>,
+  silverControls:vec4<f32>,
   boxCenter:vec3<f32>, _p16:f32,
   boxHalf:vec3<f32>, _p17:f32,
 };
@@ -578,8 +579,29 @@ fn alphaReliefStatsFast(centerAlpha:f32, occ:f32, gradLen:f32)->vec2<f32> {
 }
 
 fn silverEdgeBand(alpha: f32) -> f32 {
-  let enter = smoothstep(0.07, 0.20, alpha);
-  let leave = 1.0 - smoothstep(0.20, 0.44, alpha);
+  let enter = smoothstep(0.04, 0.18, alpha);
+  let leave = 1.0 - smoothstep(0.18, 0.52, alpha);
+  return enter * leave;
+}
+
+fn renderSilverControl() -> f32 {
+  let x = max(R.silverControls.x, 0.0);
+  let normalized = x / 12.0;
+  return clamp(pow(max(normalized, 0.0), 0.46) * 2.80, 0.0, 12.0);
+}
+
+fn renderSilverSharp01() -> f32 {
+  let normalized = clamp((max(R.silverControls.y, 0.5) - 0.5) / 47.5, 0.0, 1.0);
+  return pow(normalized, 0.38);
+}
+
+fn silverEdgeBandShaped(alpha: f32, sharp01: f32) -> f32 {
+  let enterLo = mix(0.008, 0.052, sharp01);
+  let enterHi = mix(0.155, 0.235, sharp01);
+  let leaveLo = mix(0.72, 0.22, sharp01);
+  let leaveHi = mix(1.06, 0.46, sharp01);
+  let enter = smoothstep(enterLo, enterHi, alpha);
+  let leave = 1.0 - smoothstep(leaveLo, max(leaveLo + 0.035, leaveHi), alpha);
   return enter * leave;
 }
 
@@ -1101,6 +1123,12 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   let userShadowEdge = clamp(R.styleControls.z, 0.0, 2.20);
   let userMidLift = clamp(R.styleControls.w, 0.0, 2.20);
   let userShadowDarkness = clamp(R.shadowDarkness, 0.0, 6.00);
+  let rimDrive = pow(clamp(userRimStrength / 1.60, 0.0, 1.0), 0.34);
+  let bleedDrive = pow(clamp(userSunBleed / 1.60, 0.0, 1.0), 0.30);
+  let rimGain = userRimStrength * mix(1.35, 4.80, rimDrive);
+  let bleedGain = userSunBleed * mix(1.35, 5.10, bleedDrive);
+  let userSilverIntensity = renderSilverControl();
+  let userSilverSharp01 = renderSilverSharp01();
 
   var styleLightBoost = 1.10;
   var styleShadowDarkness = 0.14;
@@ -1240,9 +1268,14 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   let detailTint = mix(vec3<f32>(1.0, 1.0, 1.0), clamp(unpremulCloud / max(vec3<f32>(unpremulLum), vec3<f32>(0.001)), vec3<f32>(0.92), vec3<f32>(1.08)), 0.18);
 
   let directSurface = clamp(surfaceLit * (0.72 + 0.28 * bodyMask) + ridgeLift * 0.64 + softWrap * 0.18, 0.0, 1.0);
-  let rimBand = clamp(sunEdgeSilver * (0.62 + 0.38 * (1.0 - bodyCore)), 0.0, 1.0);
-  let lightBand = clamp(directSurface * (1.0 - cavity * 0.42) + ridgeLift * 0.48 + rimBand * 0.16, 0.0, 1.0);
-  let lightBlock = clamp(1.0 - lightBand * 0.88 - rimBand * 0.36, 0.0, 1.0);
+  let rimBandBase = clamp(sunEdgeSilver * (0.62 + 0.38 * (1.0 - bodyCore)), 0.0, 1.0);
+  let rimBand = clamp(pow(rimBandBase, mix(0.64, 0.22, rimDrive)) * rimGain * 1.95, 0.0, 1.0);
+  let shapedSilverEdge = silverEdgeBandShaped(cloudA, userSilverSharp01);
+  let defaultSilverEdge = max(silverEdgeBand(cloudA), 0.06);
+  let silverRamp = pow(clamp(rimBandBase * (shapedSilverEdge / defaultSilverEdge), 0.0, 1.0), mix(0.54, 0.18, userSilverSharp01));
+  let silverBand = clamp(silverRamp * userSilverIntensity * mix(1.80, 3.60, userSilverSharp01), 0.0, 1.0);
+  let lightBand = clamp(directSurface * (1.0 - cavity * 0.42) + ridgeLift * 0.48 + rimBand * 0.22 + silverBand * 0.30, 0.0, 1.0);
+  let lightBlock = clamp(1.0 - lightBand * 0.92 - rimBand * 0.48 - silverBand * 0.16, 0.0, 1.0);
   let shadowRaw = (finalShadow * 0.68 + cavity * 0.24 + imageCavity * 0.30 + opticalDepth * lightBlock * 0.26) * (0.60 + 0.16 * bodyCore);
   let shadowSoftBand = clamp(shadowRaw * userShadowStrength, 0.0, 1.0);
   let shadowEdgeAmt = clamp(userShadowEdge / 2.20, 0.0, 1.0);
@@ -1251,7 +1284,7 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   let shadowHardBand = smoothstep(shadowHardLo, max(shadowHardLo + 0.05, shadowHardHi), shadowSoftBand);
   let shadowBand = mix(shadowSoftBand, shadowHardBand, shadowEdgeAmt);
   let midBand = clamp((1.0 - lightBand * 0.62) * (1.0 - shadowBand * 0.36) * (0.46 + 0.54 * opticalDepth), 0.0, 1.0);
-  let highlightBand = clamp(lightBand * (1.0 - shadowBand * 0.42) + rimBand * 0.24, 0.0, 1.0);
+  let highlightBand = clamp(lightBand * (1.0 - shadowBand * 0.42) + rimBand * 0.34 + silverBand * 0.30, 0.0, 1.0);
   let shadowedEdgeSuppression = clamp(
     mix(0.12, 1.0, highlightBand) *
     mix(0.16, 1.0, 1.0 - shadowBand) *
@@ -1274,13 +1307,18 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   var cloudShaded = mix(cloudRGB * vec3<f32>(0.10), bodyTint * retainedShape * detailTint, min(styleBaseMix + 0.03, 0.98));
   cloudShaded += litCloudTint * cloudColorA * highlightBand * (0.085 + 0.095 * styleLightBoost) * (1.0 - shadowBand * 0.52);
   cloudShaded += midCloudTint * cloudColorA * midBand * styleMidLift * userMidLift * 0.82 * select(1.0, 0.78, style == 1u);
-  cloudShaded += rimTint * rimBand * shadowedEdgeSuppression * (0.22 + 0.18 * R.sunBloom) * styleRimBoost * userRimStrength;
+  cloudShaded += rimTint * rimBand * shadowedEdgeSuppression * (0.66 + 0.56 * R.sunBloom) * styleRimBoost;
+
+  let silverTint = mix(vec3<f32>(0.96, 1.00, 1.14), max(rimTint, vec3<f32>(0.02, 0.02, 0.02)), 0.12) * mix(vec3<f32>(1.0, 1.0, 1.0), sunColor, 0.06);
+  let silverGate = silverBand * shadowedEdgeSuppression * (1.0 - shadowBand * 0.34) * mix(0.62, 1.0, 1.0 - bodyCore);
+  cloudShaded += silverTint * cloudColorA * silverGate * (0.76 + 0.56 * R.sunBloom);
+  cloudShaded = mix(cloudShaded, max(cloudShaded, silverTint * max(baseBodyLum, 0.08) * (1.16 + userSilverIntensity * 0.92)), clamp(silverGate * 0.60, 0.0, 0.88));
 
   let alphaColorTint = max(mix(edgeWarm, userEdgeTint, 0.84), vec3<f32>(0.02, 0.02, 0.02));
   let alphaColorMix = clamp(
     alphaEdgeColorBand *
     mix(0.16, 1.0, shadowedEdgeSuppression) *
-    (0.10 + 0.20 * edgeChroma + 0.05 * userRimStrength) *
+    (0.13 + 0.27 * edgeChroma + 0.075 * rimGain) *
     (0.55 + 0.45 * (1.0 - shadowBand)) *
     (0.72 + 0.28 * userColorLift),
     0.0,
@@ -1288,13 +1326,15 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   );
   let alphaColorLum = max(luma(cloudShaded), max(baseBodyLum * 0.42, 0.035));
   cloudShaded = mix(cloudShaded, alphaColorTint * alphaColorLum * (1.02 + 0.14 * userColorLift), alphaColorMix);
-  cloudShaded += alphaColorTint * cloudColorLift * alphaEdgeColorBand * shadowedEdgeSuppression * (0.05 + 0.12 * edgeChroma + 0.03 * userRimStrength) * (1.0 - shadowBand * 0.58);
+  cloudShaded += alphaColorTint * cloudColorLift * alphaEdgeColorBand * shadowedEdgeSuppression * (0.07 + 0.18 * edgeChroma + 0.045 * rimGain) * (1.0 - shadowBand * 0.50);
 
-  cloudShaded += sunColor * cloudColorA * (fluffyLight * 0.026 + ridgeLift * 0.034 + softWrap * 0.014) * (1.0 - shadowBand * 0.90) * userSunBleed;
+  let bleedEdgeRaw = clamp(rimBandBase * (0.70 + 0.30 * (1.0 - bodyCore)) + directSurface * 0.46 + softWrap * 0.22, 0.0, 1.0);
+  let bleedEdge = clamp(pow(bleedEdgeRaw, mix(0.64, 0.24, bleedDrive)) * bleedGain, 0.0, 1.0);
+  cloudShaded += sunColor * cloudColorA * (fluffyLight * 0.068 + ridgeLift * 0.094 + softWrap * 0.046 + bleedEdge * 0.165) * (1.0 - shadowBand * 0.72) * bleedGain;
   cloudShaded = mix(cloudShaded, shadowBody * baseBodyLum, clamp(shadowBand * 0.14 + imageCavity * 0.06, 0.0, 0.28));
 
   let liftBand = clamp(midBand * 0.60 + highlightBand * 0.36 + (1.0 - shadowBand) * 0.12, 0.0, 1.0);
-  cloudShaded = mix(cloudShaded, max(cloudShaded, vec3<f32>(baseBodyLum) * vec3<f32>(0.98, 0.99, 1.0)), highlightBand * 0.10 + rimBand * 0.02 * shadowedEdgeSuppression);
+  cloudShaded = mix(cloudShaded, max(cloudShaded, vec3<f32>(baseBodyLum) * vec3<f32>(0.98, 0.99, 1.0)), highlightBand * 0.14 + rimBand * 0.045 * shadowedEdgeSuppression + silverBand * 0.035);
   let liftTint = mix(midCloudTint, litCloudTint, clamp(highlightBand * 0.58 + softWrap * 0.20, 0.0, 1.0));
   cloudShaded += liftTint * cloudColorA * liftBand * (0.040 + 0.075 * userColorLift);
   let shadedLum = luma(cloudShaded);
@@ -1305,12 +1345,12 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
     let charTint = mix(vec3<f32>(0.075, 0.042, 0.034), shadowTintTarget, 0.44);
     cloudShaded = mix(cloudShaded, cloudShaded * charTint, charMix * 0.36 * userShadowStrength);
 
-    let litRecover = clamp(highlightBand * (1.0 - shadowBand * 0.78) * (0.32 + 0.68 * bodyMask) + rimBand * 0.18, 0.0, 1.0);
+    let litRecover = clamp(highlightBand * (1.0 - shadowBand * 0.78) * (0.32 + 0.68 * bodyMask) + rimBand * 0.28 + silverBand * 0.12, 0.0, 1.0);
     let emberTint = mix(vec3<f32>(0.90, 0.24, 0.05), vec3<f32>(1.12, 0.54, 0.14), clamp(highlightBand + rimBand, 0.0, 1.0));
     cloudShaded += emberTint * cloudColorA * litRecover * 0.056 * userColorLift;
   }
 
-  let sunLeak = (1.0 - shadowBand * 0.92) * (0.42 + 0.58 * (1.0 - bodyCore)) * userSunBleed;
+  let sunLeak = (1.0 - shadowBand * 0.86) * (0.36 + 0.64 * (1.0 - bodyCore)) * bleedGain;
   cloudShaded += sunWash * sunGlow * (0.008 + 0.014 * R.sunBloom) * sunLeak * mix(0.75, 1.0, shadowedEdgeSuppression);
 
   let cloudDisplayA = alphaDisplayResponse(cloudA);
@@ -1352,8 +1392,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
 
   linear += sunColor * (
     1.04 * sunDisk +
-    (0.095 + 0.085 * R.sunBloom) * sunGlow * userSunBleed +
-    (0.10 + 0.04 * R.sunBloom) * rimBand * sunLeak * shadowedEdgeSuppression
+    (0.24 + 0.22 * R.sunBloom) * sunGlow * bleedGain +
+    (0.34 + 0.18 * R.sunBloom) * (rimBand + silverBand * 1.00) * sunLeak * shadowedEdgeSuppression
   );
 
   linear +=

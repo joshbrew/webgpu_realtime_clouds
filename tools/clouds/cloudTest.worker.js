@@ -1339,7 +1339,7 @@ function cloudViewSignature(preview, box, aspect) {
   });
 }
 
-function renderUniformSignature(preview, aspect, layerIndex) {
+function renderUniformSignature(preview, aspect, layerIndex, cloudParams = {}) {
   return JSON.stringify({
     layerIndex,
     cam: signatureValue(preview?.cam || {}),
@@ -1368,6 +1368,8 @@ function renderUniformSignature(preview, aspect, layerIndex) {
     fogDensity: signatureScalar(preview?.fogDensity ?? 0.34),
     fogHorizon: signatureScalar(preview?.fogHorizon ?? 0.30),
     fogSun: signatureScalar(preview?.fogSun ?? 1.50),
+    silverIntensity: signatureScalar(cloudParams?.silverIntensity ?? 1.5),
+    silverExponent: signatureScalar(cloudParams?.silverExponent ?? 1.0),
   });
 }
 
@@ -1404,10 +1406,10 @@ function autoThickBoxTuning(box) {
   const reachF = Math.max(thickF, horizonF * 0.85);
 
   return {
-    thickBoxPerf: +(0.52 + reachF * 1.22).toFixed(4),
-    thickStepBoost: +(1.32 + reachF * 1.68).toFixed(4),
-    thickDetailSkip: +(0.060 + thickF * 0.14).toFixed(4),
-    thickLightSkip: +(0.56 + reachF * 1.20).toFixed(4),
+    thickBoxPerf: +(0.60 + reachF * 1.90).toFixed(4),
+    thickStepBoost: +(1.50 + reachF * 2.45).toFixed(4),
+    thickDetailSkip: +(0.090 + thickF * 0.26).toFixed(4),
+    thickLightSkip: +(0.72 + reachF * 1.85).toFixed(4),
   };
 }
 
@@ -1489,7 +1491,7 @@ function mergeTuningPatch(patch) {
 function applyWorkerTuning(cloudBox = null) {
   const base = workerTuning && typeof workerTuning === "object" ? workerTuning : {};
   const autoThick = autoThickBoxTuning(cloudBox || previewCloudBox(lastRunPayload?.preview || {}));
-  const appliedTuning = Object.assign({}, base, autoThick);
+  const appliedTuning = Object.assign({}, autoThick, base);
   const tuningSignature = JSON.stringify([
     workerTuningVersion,
     autoThick.thickBoxPerf,
@@ -1943,7 +1945,7 @@ async function runFrame({
   const { pipe, bgl, samp, format } = cb._ensureRenderPipeline("bgra8unorm");
 
   const layerIndex = Math.max(0, Math.min((cb?.layers || 1) - 1, preview?.layer || 0));
-  const renderSig = renderUniformSignature(preview, aspect, layerIndex);
+  const renderSig = renderUniformSignature(preview, aspect, layerIndex, cloudParams || {});
   if (renderSig !== lastRenderUniformSignature) {
     cb._writeRenderUniforms({
       layerIndex,
@@ -1973,6 +1975,8 @@ async function runFrame({
       styleRimStrength: preview?.styleRimStrength ?? 1.0,
       styleSunBleed: preview?.styleSunBleed ?? 0.85,
       styleMidLift: preview?.styleMidLift ?? 1.10,
+      silverIntensity: cloudParams?.silverIntensity ?? 1.5,
+      silverExponent: cloudParams?.silverExponent ?? 1.0,
       godRaysEnabled: !!preview?.godRaysEnabled,
       godRayStrength: (preview?.godRayStrength ?? 0.0) * (renderFastPreview ? 0.78 : 1.0),
       godRayLength: (preview?.godRayLength ?? 1.0) * (renderFastPreview ? 0.90 : 1.0),

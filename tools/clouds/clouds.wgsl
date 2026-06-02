@@ -1319,7 +1319,7 @@ fn SilverSharpness() -> f32 {
 
 fn SilverControl() -> f32 {
   let x = max(C.silverIntensity, 0.0);
-  return saturate(x / (x + 6.0));
+  return clamp(pow(max(x, 0.0) / 12.0, 0.46) * 2.80, 0.0, 12.0);
 }
 
 fn BeerPowderBand(occlusion: f32) -> f32 {
@@ -1343,7 +1343,7 @@ fn SilverPhase(
 
   let sharpness = SilverSharpness();
   let sharp01 = saturate((sharpness - 0.5) / 47.5);
-  let lobeExp = mix_f(1.6, 18.0, sharp01);
+  let lobeExp = mix_f(1.15, 22.0, pow(sharp01, 0.72));
   let towardLobe = pow(max(towardSun, 0.02), lobeExp);
   let awayLobe = pow(max(awaySun, 0.02), lobeExp);
   let directional = mix_f(awayLobe, towardLobe, bias01);
@@ -1353,19 +1353,19 @@ fn SilverPhase(
   let upperExposure = smoothstep(0.52, 0.92, upness);
   let exposedSun = mix_f(0.30, 1.0, pow(saturate(sunVisibility), 0.30));
 
-  let viewEdge = smoothstep(0.10, 0.98, pow(saturate(viewRim), mix_f(0.72, 0.24, sharp01)));
-  let lightEdge = smoothstep(0.08, 0.98, pow(saturate(sunRim), mix_f(0.88, 0.28, sharp01)));
-  let edge = viewEdge * mix_f(0.18, 1.0, lightEdge) * mix_f(0.18, 1.0, upperExposure);
+  let viewEdge = smoothstep(0.018, 0.84, pow(saturate(viewRim), mix_f(0.44, 0.08, sharp01)));
+  let lightEdge = smoothstep(0.015, 0.84, pow(saturate(sunRim), mix_f(0.54, 0.10, sharp01)));
+  let edge = viewEdge * mix_f(0.42, 1.0, lightEdge) * mix_f(0.40, 1.0, upperExposure);
 
-  let thin = pow(saturate(1.0 - sampleAlpha), mix_f(0.80, 0.22, sharp01));
-  let thinGate = smoothstep(0.05, 0.88, thin);
+  let thin = pow(saturate(1.0 - sampleAlpha), mix_f(0.48, 0.08, sharp01));
+  let thinGate = smoothstep(0.010, 0.88, thin);
   let sunOcc = 1.0 - saturate(sunVisibility);
   let powder = mix_f(0.42, 1.0, BeerPowderBand(sunOcc));
   let heightGate = smoothstep(0.06, 0.96, saturate(percent_height));
   let horizonMix = saturate(C.silverHorizonBoost);
   let horizon = mix_f(1.0, pow(1.0 - abs(cos_angle), 0.75), horizonMix);
 
-  let strength = SilverControl() * 1.85;
+  let strength = SilverControl() * 5.80;
   return strength * angular * edge * thinGate * powder * heightGate * horizon * exposedSun;
 }
 
@@ -1479,12 +1479,12 @@ fn CalculateLight(
   let sunEdge = pow(saturate(rimBoost * sunRim), 0.42);
 
   let silverCrest = silverBase
-    * mix_f(0.78, 1.12, edgeThin)
-    * mix_f(0.78, 1.04, lightSideRaw)
-    * mix_f(0.55, 1.0, sunEdge);
+    * mix_f(1.10, 2.05, edgeThin)
+    * mix_f(1.00, 1.54, lightSideRaw)
+    * mix_f(0.82, 1.28, sunEdge);
 
   let throughSunGlint = SilverControl()
-    * 0.26
+    * 1.05
     * exposedShell
     * alphaCoherence
     * pow(max(towardSun, 0.05), 1.25 + silverSharpness * 0.20)
@@ -1506,7 +1506,7 @@ fn CalculateLight(
   let shadowCol = mix_v3(shadowLightCol, transLightCol * vec3<f32>(0.60, 0.66, 0.76), lowSun * 0.18);
 
   let directEnergy = direct + multiScatter + forwardWrap + backWrap;
-  let silverEnergy = silver + bodyLift * mix_f(0.72, 1.02, pow(towardSun, 1.10));
+  let silverEnergy = silver + bodyLift * mix_f(1.06, 1.62, pow(towardSun, 1.10));
   let ambientEnergy = ambient;
 
   // Keep the current stormy through-light palette for transmissive/backlit views,
@@ -2142,7 +2142,7 @@ fn computeCloud(
     let screenFarF = saturate(remap(stepPixelWorld / max(wg_finestWorld, EPS), 2.0, 18.0, 0.0, 1.0));
     let coverageStep = max(
       rayBudgetStep,
-      baseStep * mix_f(1.0, min(TUNE.farStepMult, 2.05), screenFarF)
+      baseStep * mix_f(1.0, max(TUNE.farStepMult, 1.0), screenFarF)
     );
     let nearStepF = 1.0 - smoothstep(0.0, nearFineDist, stepRayDistance);
     let fineStep = baseStep * mix_f(1.0, clamp(TUNE.nearStepScale, 0.12, 1.0), nearStepF);
@@ -2164,7 +2164,7 @@ fn computeCloud(
     let samplePixelWorld = max(sampleRayDistance * rayPixelWorldScale, wg_finestWorld * 0.50);
 
     let thickLodExtra = thickPerfF * saturate(TUNE.thickDetailSkip) * smoothstep(0.28, 0.96, sampleRayDistance);
-    let weatherLOD = clamp(weatherLOD_base + min(TUNE.farLodPush * farF, 0.18), 0.0, wg_maxMipW);
+    let weatherLOD = clamp(weatherLOD_base + TUNE.farLodPush * farF * 0.65, 0.0, wg_maxMipW);
     let nearHorizontalRayF = rayShallowF
       * (1.0 - smoothstep(effectiveNearFluffDist * 0.85, effectiveNearFluffDist * 4.25, sampleRayDistance));
     let straightThroughViewF = rayShallowF * (1.0 - smoothstep(0.74, 1.0, farF));
@@ -2236,21 +2236,21 @@ fn computeCloud(
 
     let lodBias = mix_f(0.0, TUNE.nearLodBias, nearSmooth);
     let nearDetailSoftLod = smoothstep(max(effectiveNearFluffDist * 0.72, 0.10), 0.0, sampleRayDistance) * 0.55;
-    let farLodExtra = min(TUNE.farLodPush * farF, 0.18);
+    let farLodExtra = TUNE.farLodPush * farF * 0.60;
     let thickShapeLodExtra = thickLodExtra * 0.10;
     let thickDetailLodExtra = thickLodExtra * 0.28;
     let lodShapeLighting = clamp(baseLOD + lodBias + farLodExtra + thickShapeLodExtra, 0.0, wg_maxMipS);
     let lodDetailLighting = clamp(baseLOD + lodBias + farLodExtra + nearDetailSoftLod + thickDetailLodExtra, 0.0, wg_maxMipD);
-    let lodShapeBase = min(lodShapeLighting, min(wg_maxMipS, 1.0));
-    let lodDetailBase = min(lodDetailLighting, min(wg_maxMipD, 1.0));
+    let lodShapeBase = min(lodShapeLighting, min(wg_maxMipS, 2.25));
+    let lodDetailBase = min(lodDetailLighting, min(wg_maxMipD, 2.75));
 
     let wm = wm_primary;
     let ph = ph_coarse;
     let stepWarp = worldWarpXZ(p.xz, max(ph, 0.0), wg_boxMaxXZ);
 
     let visibleLodEase = smoothstep(0.08, 0.98, max(farF, screenFarF));
-    let lodShapeVisible = clamp(min(lodShapeLighting + screenInterleaveF * 0.65, mix_f(1.05, 1.55, visibleLodEase + screenInterleaveF * 0.20)), 0.0, wg_maxMipS);
-    let lodDetailVisibleBase = clamp(min(lodDetailLighting + screenInterleaveF * 0.95, mix_f(1.10, 1.95, visibleLodEase + screenInterleaveF * 0.25)), 0.0, wg_maxMipD);
+    let lodShapeVisible = clamp(min(lodShapeLighting + screenInterleaveF * 0.90, mix_f(1.20, 2.65, visibleLodEase + screenInterleaveF * 0.22)), 0.0, wg_maxMipS);
+    let lodDetailVisibleBase = clamp(min(lodDetailLighting + screenInterleaveF * 1.25, mix_f(1.30, 3.15, visibleLodEase + screenInterleaveF * 0.28)), 0.0, wg_maxMipD);
 
     let faceFade = insideFaceFade(p, bmin, bmax);
     let nearDense = mix_f(TUNE.nearDensityMult, 1.0, saturate(nearDepth / effectiveNearDensityRange));
@@ -2307,7 +2307,7 @@ fn computeCloud(
     let detailProxy = detailProxyFromShape(max(ph, 0.0), s);
     let denseInteriorF = smoothstep(0.12, 0.34, densMacro);
     let thickInteriorFilterF = thickPerfF * smoothstep(0.14, 0.52, densMacro) * smoothstep(0.14, 0.94, sampleRayDistance);
-    let lodDetailVisible = clamp(lodDetailVisibleBase + thickInteriorFilterF * 0.55 + farProxySafeF * 0.70, 0.0, wg_maxMipD);
+    let lodDetailVisible = clamp(lodDetailVisibleBase + thickInteriorFilterF * 0.90 + farProxySafeF * 1.05, 0.0, wg_maxMipD);
     var detailRaw = detailProxy;
     if (farProxySafeF < 0.62 && usedWeatherProxy < 0.52 && screenInterleaveF < 0.5) {
       detailRaw = sampleDetailRGBWarp(p, max(ph, 0.0), lodDetailVisible, stepWarp);
