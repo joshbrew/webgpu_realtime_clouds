@@ -195,15 +195,15 @@ export class CloudComputeBuilder {
         cloudBeer: 6.0,
         attenuationClamp: 0.015,
         inScatterG: 0.55,
-        silverIntensity: 1.5,
-        silverExponent: 1.0,
+        silverIntensity: 1.15,
+        silverExponent: 1.65,
         outScatterG: 0.08,
         inVsOut: 0.55,
-        outScatterAmbientAmt: 0.08,
+        outScatterAmbientAmt: 0.06,
         ambientMinimum: 0.04,
         sunColor: [1.0, 0.985, 0.95],
         frontLightColor: [1.10, 1.12, 1.16],
-        shadowLightColor: [0.62, 0.68, 0.78],
+        shadowLightColor: [0.58, 0.63, 0.72],
         densityDivMin: 0.001,
         silverDirectionBias: 0.9,
         silverHorizonBoost: 0.35,
@@ -211,11 +211,11 @@ export class CloudComputeBuilder {
       ntransform: {
         shapeOffsetWorld: [0, 0, 0],
         detailOffsetWorld: [0, 0, 0],
-        shapeScale: 0.1,
-        detailScale: 1.0,
+        shapeScale: 0.13,
+        detailScale: 1.35,
         weatherScale: 1.0,
-        shapeAxisScale: [1, 1, 1],
-        detailAxisScale: [1, 1, 1],
+        shapeAxisScale: [1, 1.22, 1],
+        detailAxisScale: [1, 1.48, 1],
         weatherOffsetWorld: [0, 0, 0],
         weatherAxisScale: [1, 1, 1],
         shapeBias: 0.0,
@@ -251,7 +251,7 @@ export class CloudComputeBuilder {
         uvScale: 1.0,
       },
       tuning: {
-        maxSteps: 256,
+        maxSteps: 224,
         minStep: 0.003,
         maxStep: 0.16,
         sunSteps: 5,
@@ -265,11 +265,11 @@ export class CloudComputeBuilder {
         aabbFaceOffset: 0.0015,
         weatherRejectGate: 0.985,
         weatherRejectMip: 1.0,
-        emptySkipMult: 4.25,
+        emptySkipMult: 4.75,
         nearFluffDist: 60.0,
         nearStepScale: 0.3,
         nearLodBias: -1.5,
-        nearDensityMult: 2.5,
+        nearDensityMult: 2.9,
         nearDensityRange: 45.0,
         lodBlendThreshold: 0.46,
         sunDensityGate: 0.0025,
@@ -285,29 +285,31 @@ export class CloudComputeBuilder {
         farStepMult: 2.05,
         bnFarScale: 0.28,
         farTaaHistoryBoost: 1.8,
-        raySmoothDens: 0.40,
-        raySmoothSun: 0.40,
-        fluffFactor: 2.0,
+        raySmoothDens: 0.26,
+        raySmoothSun: 0.34,
+        fluffFactor: 3.4,
         anvilLift: 0.6,
         alphaCutoff: 0.98,
         thickBoxPerf: 0.65,
-        thickStepBoost: 1.28,
+        thickStepBoost: 1.46,
         thickDetailSkip: 0.18,
-        thickLightSkip: 0.42,
+        thickLightSkip: 0.34,
         verticalStepBoost: 3.0,
-        verticalTextureHomogeneity: 0.0,
+        verticalTextureHomogeneity: 0.46,
         verticalLightingStepBoost: 1.35,
         frontOcclusionStrength: 0.82,
         frontOcclusionAlpha: 0.58,
-        frontOcclusionStepBoost: 3.6,
+        frontOcclusionStepBoost: 4.2,
         sliceJitterStrength: 0.08,
         verticalLayerDecorrelation: 0.35,
         directLightBlend: 0.78,
         directLightBoost: 0.58,
-        alphaBoostThreshold: 0.22,
-        alphaBoostAmount: 0.16,
-        minOutputAlpha: 0.10,
-        outputAlphaFeather: 0.0,
+        alphaBoostThreshold: 0.20,
+        alphaBoostAmount: 0.14,
+        minOutputAlpha: 0.12,
+        outputAlphaFeather: 0.50,
+        sparsity: 0.42,
+        definition: 0.62,
       },
     };
 
@@ -1403,10 +1405,12 @@ export class CloudComputeBuilder {
 
     putF(208, s.directLightBlend ?? 0.78);
     putF(212, s.directLightBoost ?? 0.58);
-    putF(216, s.alphaBoostThreshold ?? 0.22);
-    putF(220, s.alphaBoostAmount ?? 0.16);
-    putF(224, s.minOutputAlpha ?? 0.10);
-    putF(228, s.outputAlphaFeather ?? 0.0);
+    putF(216, s.alphaBoostThreshold ?? 0.20);
+    putF(220, s.alphaBoostAmount ?? 0.14);
+    putF(224, s.minOutputAlpha ?? 0.12);
+    putF(228, s.outputAlphaFeather ?? 0.50);
+    putF(232, s.sparsity ?? 0.42);
+    putF(236, s.definition ?? 0.62);
 
     for (let i = 232; i < this._abTuning.byteLength; i += 4)
       dv.setUint32(i, 0, true);
@@ -2224,7 +2228,7 @@ export class CloudComputeBuilder {
     pass.end();
   }
 
-  encodeDispatchPasses(enc, { coarseFactor = 1, skipUpsampleForPreview = false } = {}) {
+  encodeDispatchPasses(enc, { coarseFactor = 1, reconstructAtPresentation = false } = {}) {
     if (!enc) throw new Error("encodeDispatchPasses: command encoder required.");
     if (!this.outView)
       throw new Error("encodeDispatchPasses: createOutputTexture/setOutputView first.");
@@ -2251,8 +2255,8 @@ export class CloudComputeBuilder {
       const cH = Math.max(1, Math.ceil(this.height / cf));
       this._ensureCoarseTexture(cW, cH, this.layers);
 
-      // Coarse compute keeps temporal history in coarse space, then upsamples
-      // the finished cloud buffer to the full presentation target.
+      // Coarse compute keeps temporal history in coarse space. Presentation
+      // reconstructs onto the full-resolution canvas without displaying the coarse target.
       const savedFullW = cW;
       const savedFullH = cH;
       const savedOutTexture = this.outTexture;
@@ -2299,10 +2303,10 @@ export class CloudComputeBuilder {
       this.outFormat = savedFormat;
       this._bg0Dirty = true;
 
-      var usedDirectPreview = false;
-      if (false && skipUpsampleForPreview) {
+      var usedPresentationReconstruction = false;
+      if (reconstructAtPresentation) {
         this._renderSourceView = this._coarseView;
-        usedDirectPreview = true;
+        usedPresentationReconstruction = true;
       } else {
         const preparedUpsample = this._prepareUpsamplePass({
           srcW: cW,
@@ -2319,7 +2323,8 @@ export class CloudComputeBuilder {
 
       return {
         coarseFactor: cf,
-        directPreview: usedDirectPreview,
+        directFullResReconstruction: usedPresentationReconstruction,
+        directPreview: usedPresentationReconstruction,
         previewView: this._renderSourceView,
         interleaveStats: this._lastInterleaveStats,
         restoreAfterSubmit: () => {
@@ -2702,16 +2707,18 @@ export class CloudComputeBuilder {
     const lightTint = opts.lightTint ?? [1.0, 1.0, 1.0];
     const shadowTint = opts.shadowTint ?? [0.0, 0.0, 0.0];
     const edgeTint = opts.edgeTint ?? [1.0, 1.0, 1.0];
-    const styleShadowStrength = opts.styleShadowStrength ?? 0.74;
+    const styleShadowStrength = opts.styleShadowStrength ?? 0.96;
     const styleShadowEdge = opts.styleShadowEdge ?? 0.0;
-    const styleShadowDarkness = opts.styleShadowDarkness ?? 0.0;
-    const styleColorLift = opts.styleColorLift ?? 1.18;
-    const styleSaturation = opts.styleSaturation ?? 1.04;
-    const styleRimStrength = opts.styleRimStrength ?? 1.08;
-    const styleSunBleed = opts.styleSunBleed ?? 0.96;
-    const styleMidLift = opts.styleMidLift ?? 0.94;
-    const silverIntensity = opts.silverIntensity ?? 1.5;
-    const silverExponent = opts.silverExponent ?? 1.0;
+    const styleShadowDarkness = opts.styleShadowDarkness ?? 0.06;
+    const styleColorLift = opts.styleColorLift ?? 1.08;
+    const styleSaturation = opts.styleSaturation ?? 1.02;
+    const styleRimStrength = opts.styleRimStrength ?? 0.86;
+    const styleSunBleed = opts.styleSunBleed ?? 0.82;
+    const styleMidLift = opts.styleMidLift ?? 0.88;
+    const silverIntensity = opts.silverIntensity ?? 1.15;
+    const silverExponent = opts.silverExponent ?? 1.65;
+    const outputWidth = Math.max(1, opts.outputWidth ?? this.width ?? 1);
+    const outputHeight = Math.max(1, opts.outputHeight ?? this.height ?? 1);
     const godRaysEnabled = opts.godRaysEnabled ?? false;
     const godRayStrength = opts.godRayStrength ?? 0.0;
     const godRayLength = opts.godRayLength ?? 1.0;
@@ -2781,7 +2788,7 @@ export class CloudComputeBuilder {
     }
 
     const compositeQuality = Math.max(0, Math.min(2, opts.compositeQuality ?? 2)) >>> 0;
-    const alphaFloor = Math.max(0, Math.min(1.0, opts.alphaFloor ?? 0.20));
+    const alphaFloor = Math.max(0, Math.min(1.0, opts.alphaFloor ?? 0.12));
 
     dv.setUint32(0, layerIndex, true);
     dv.setUint32(4, compositeQuality, true);
@@ -2819,8 +2826,8 @@ export class CloudComputeBuilder {
     dv.setFloat32(252, fogSun, true);
     dv.setFloat32(256, silverIntensity, true);
     dv.setFloat32(260, silverExponent, true);
-    dv.setFloat32(264, 0.0, true);
-    dv.setFloat32(268, 0.0, true);
+    dv.setFloat32(264, outputWidth, true);
+    dv.setFloat32(268, outputHeight, true);
     wv3(272, boxCenter);
     wv3(288, boxHalf);
 

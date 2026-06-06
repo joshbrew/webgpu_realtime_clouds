@@ -80,8 +80,8 @@ struct CloudTuning {
 
   minOutputAlpha: f32,
   outputAlphaFeather: f32,
-  _pad1: f32,
-  _pad2: f32
+  sparsity: f32,
+  definition: f32
 };
 @group(0) @binding(10) var<uniform> TUNE: CloudTuning;
 
@@ -611,6 +611,14 @@ fn verticalStretchFactor() -> f32 {
   return saturate(max(texStretch, tower * 0.72 + overdrive));
 }
 
+fn cloudSparsity01() -> f32 {
+  return saturate(TUNE.sparsity);
+}
+
+fn cloudDefinition01() -> f32 {
+  return saturate(TUNE.definition);
+}
+
 fn verticalResampledPhase(pos: vec3<f32>, ph: f32, boxMaxXZ: f32) -> f32 {
   let stretchF = verticalStretchFactor();
   let tower = anvilTowerStrength();
@@ -984,9 +992,62 @@ fn detailProxyFromShape(ph: f32, s: vec4<f32>) -> vec3<f32> {
   );
 }
 
+
+fn puffCellSignal(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>) -> f32 {
+  let dHi = saturate(max(det.r, max(det.g, det.b)));
+  let dLo = saturate(min(det.r, min(det.g, det.b)));
+  let dMid = saturate((det.r + det.g + det.b) * 0.3333333333);
+  let sMid = saturate(s.g * 0.47 + s.b * 0.34 + s.a * 0.19);
+  let sEdge = saturate(mix_f(sMid, 1.0 - min(s.g, min(s.b, s.a)), 0.34));
+  let dEdge = saturate(mix_f(dHi, 1.0 - dLo, 0.45));
+  let phBand = ridge01(contrast01(saturate(ph), 1.36));
+  return saturate(s.r * 0.20 + sEdge * 0.34 + dMid * 0.23 + dEdge * 0.17 + wm.g * 0.06 + phBand * 0.035);
+}
+
+fn puffLobeSupport(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>, core: f32) -> f32 {
+  let phs = saturate(ph);
+  let fluff = max(TUNE.fluffFactor, 0.0);
+  let fluff01 = saturate(fluff / (fluff + 1.18));
+  let sparse = cloudSparsity01();
+  let definition = cloudDefinition01();
+  let bodyBand = smoothstep(0.045, 0.28, phs) * (1.0 - smoothstep(0.82, 1.0, phs));
+  let shell = pow(saturate(1.0 - core), mix_f(2.15, 1.03, fluff01));
+  let coreGate = 1.0 - smoothstep(0.58, 0.96, core);
+  let weatherBody = smoothstep(0.45, 0.88, saturate(max(wm.r, wm.g * 0.92)));
+  let shapeBody = smoothstep(0.30, 0.84, saturate(max(s.r, s.g * 0.86)));
+  let cell = puffCellSignal(phs, wm, s, det);
+  let lobe = pow(saturate(ridge01(contrast01(cell, 2.55 + definition * 0.72))), mix_f(1.36, 0.70, fluff01));
+  let lift = lobe * shell * coreGate * bodyBand * weatherBody * shapeBody;
+  return lift * mix_f(0.014, 0.084, fluff01) * mix_f(0.98, 1.18, definition) * mix_f(1.04, 0.90, sparse);
+}
+
+fn puffValleyErosion(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>, core: f32) -> f32 {
+  let phs = saturate(ph);
+  let fluff = max(TUNE.fluffFactor, 0.0);
+  let fluff01 = saturate(fluff / (fluff + 1.10));
+  let sparse = cloudSparsity01();
+  let definition = cloudDefinition01();
+  let bodyBand = smoothstep(0.055, 0.34, phs) * (1.0 - smoothstep(0.86, 1.0, phs));
+  let shell = pow(saturate(1.0 - core), mix_f(1.45, 0.58, fluff01));
+  let midCore = smoothstep(0.025, 0.20, core) * (1.0 - smoothstep(0.58, 0.94, core));
+  let edgeBody = max(shell * 0.82, midCore * 0.58);
+  let cell = puffCellSignal(phs, wm, s, det);
+  let lobe = pow(saturate(ridge01(contrast01(cell, 2.75 + definition * 0.86))), mix_f(1.46, 0.78, fluff01));
+  let valley = pow(saturate(1.0 - lobe), mix_f(1.72, 0.92, fluff01));
+  let creaseSignal = saturate(det.r * 0.36 + (1.0 - det.g) * 0.34 + det.b * 0.20 + (1.0 - s.r) * 0.10);
+  let crease = pow(saturate(ridge01(contrast01(creaseSignal, 2.35 + definition * 0.65))), mix_f(1.12, 0.92, definition));
+  let weatherEdge = 1.0 - smoothstep(0.62, 0.94, saturate(max(wm.r, wm.g * 0.92)));
+  let carveSignal = saturate(valley * 0.66 + crease * 0.34);
+  return carveSignal * edgeBody * bodyBand * mix_f(0.030, 0.215, fluff01) * mix_f(0.86, 1.18, weatherEdge) * mix_f(0.92, 1.44, sparse) * mix_f(0.94, 1.22, definition);
+}
+
 fn densityHeight(ph: f32) -> f32 {
   var ret = ph;
   ret *= saturate(remap(ph, 0.0, 0.2, 0.0, 1.0));
+
+  let bodySupport = smoothstep(0.08, 0.30, saturate(ph)) * (1.0 - smoothstep(0.70, 0.94, saturate(ph)));
+  let towerSupport = smoothstep(0.22, 0.54, saturate(ph)) * (1.0 - smoothstep(0.84, 0.98, saturate(ph)));
+  ret *= 1.0 + bodySupport * 0.32 + towerSupport * 0.18;
 
   let anvil = anvilStrength();
   let tower = anvilTowerStrength();
@@ -1018,10 +1079,12 @@ fn densityFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>) -> f
   if (wm.b > 1.0) { return 0.0; }
 
   let phD = phLayerBreakup(ph, wm, s, det);
+  let sparse = cloudSparsity01();
+  let definition = cloudDefinition01();
 
   // base shape
   var shape = saturate(s.r);
-  shape = contrast01(shape, 1.35);
+  shape = contrast01(shape, 1.24 + definition * 0.38 + sparse * 0.16);
 
   // "fbm" from the other channels if present, otherwise still sane
   let fbm_s = saturate(s.g * 0.625 + s.b * 0.25 + s.a * 0.125);
@@ -1051,29 +1114,43 @@ fn densityFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>) -> f
   let stretchErode = verticalStretchErosion(phD, det, s, wm);
   let DN = saturate(detailMod(phD, det) + stretchErode);
 
-  var core = saturate(remap(SNnd, DN, 1.0, 0.0, 1.0));
+  var core = saturate(remap(SNnd, DN * mix_f(0.84, 1.10, sparse), 1.0, 0.0, 1.0));
 
   let midBodyBand = smoothstep(0.16, 0.40, phD) * (1.0 - smoothstep(0.64, 0.90, phD));
   let weatherBody = smoothstep(0.50, 0.90, saturate(max(wm.r, wm.g * 0.92)));
   let shapeBodyCore = saturate(s.r * 0.74 + s.g * 0.18 + s.b * 0.08);
   let shapeBody = smoothstep(0.42, 0.82, shapeBodyCore);
   let stretchBodySupport = verticalStretchFactor() * midBodyBand * weatherBody * shapeBody;
-  core = max(core, stretchBodySupport * mix_f(0.06, 0.20, anvilTowerStrength()));
+  core = max(core, stretchBodySupport * mix_f(0.09, 0.25, anvilTowerStrength()));
   core = max(core, anvilLowerBodySupport(phD, wm, shapeBodyCore));
+  core = saturate(core + puffLobeSupport(phD, wm, s, det, core));
+
+  let depthBodyBand = smoothstep(0.12, 0.38, phD) * (1.0 - smoothstep(0.76, 0.96, phD));
+  let depthWeather = smoothstep(0.42, 0.90, saturate(max(wm.r, wm.g * 0.94)));
+  let depthShape = smoothstep(0.38, 0.84, shapeBodyCore);
+  let depthSupport = depthBodyBand * depthWeather * depthShape;
+  core = max(core, depthSupport * mix_f(0.13, 0.30, saturate(TUNE.fluffFactor / (TUNE.fluffFactor + 1.45))) * mix_f(1.0, 0.78, sparse));
 
   let fluff = max(TUNE.fluffFactor, 0.0);
   let fluff01 = saturate(fluff / (fluff + 1.45));
+  let midClosure = midBodyBand * weatherBody * shapeBody * smoothstep(0.08, 0.34, core) * mix_f(0.05, 0.16, fluff01) * mix_f(1.0, 0.58, sparse);
+  let lowerClosureBand = smoothstep(0.05, 0.22, phD) * (1.0 - smoothstep(0.38, 0.68, phD));
+  let lowerClosure = lowerClosureBand * weatherBody * smoothstep(0.46, 0.82, shapeBodyCore) * mix_f(0.04, 0.11, fluff01) * mix_f(1.0, 0.64, sparse);
+  core = max(core, midClosure);
+  core = max(core, lowerClosure);
   let dHi = saturate(max(det.r, max(det.g, det.b)));
   let dLo = saturate(min(det.r, min(det.g, det.b)));
   let dMid = saturate((det.r + det.g + det.b) * 0.3333333333);
   let scallopSignal = saturate(mix_f(dHi, 1.0 - dLo, 0.42) * 0.72 + ridge01(contrast01(dMid, 2.35)) * 0.28);
-  let scallop = pow(saturate(ridge01(contrast01(scallopSignal, 2.75))), mix_f(1.25, 0.62, fluff01));
+  let scallop = pow(saturate(ridge01(contrast01(scallopSignal, 2.75 + definition * 0.72))), mix_f(1.25, 0.58, fluff01));
   let shellMask = pow(saturate(1.0 - core), mix_f(1.35, 0.58, fluff01));
   let bodyMask = mix_f(0.76, 1.0, saturate(remap(phD, 0.0, 0.95, 0.0, 1.0)));
   let denseMidPreserve = stretchBodySupport * smoothstep(0.08, 0.22, core);
-  let stretchCoreCarve = stretchErode * mix_f(0.14, 0.56, fluff01) * (1.0 - denseMidPreserve * 0.80);
-  core = saturate(core - scallop * shellMask * bodyMask * (0.015 + 0.145 * fluff01) - stretchCoreCarve * shellMask);
-  core = pow(core, mix_f(1.35, 1.58, fluff01));
+  let stretchCoreCarve = stretchErode * mix_f(0.08, 0.34, fluff01) * mix_f(1.0, 1.28, sparse) * (1.0 - denseMidPreserve * 0.90);
+  let puffCarve = puffValleyErosion(phD, wm, s, det, core) * 0.78;
+  core = saturate(core - scallop * shellMask * bodyMask * (0.008 + 0.088 * fluff01) * mix_f(0.92, 1.32, max(sparse, definition)) - stretchCoreCarve * shellMask - puffCarve);
+  core = max(core, depthSupport * mix_f(0.07, 0.18, fluff01) * mix_f(1.0, 0.72, sparse));
+  core = pow(core, mix_f(1.08, 1.22, fluff01) * mix_f(1.0, 1.30, sparse) * mix_f(1.0, 1.12, definition));
 
   return max(core * densityHeight(phD) * weatherBCutoutWeight(phD, wm), 0.0);
 }
@@ -1083,12 +1160,14 @@ fn densityMacroFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>) -> f32 {
   if (wm.b > 1.0) { return 0.0; }
 
   let phD = phLayerBreakupMacro(ph, wm, s);
+  let sparse = cloudSparsity01();
+  let definition = cloudDefinition01();
 
   var shape = saturate(s.r);
-  shape = contrast01(shape, 1.18);
+  shape = contrast01(shape, 1.10 + definition * 0.26 + sparse * 0.12);
 
   let fbm_s = saturate(s.g * 0.625 + s.b * 0.25 + s.a * 0.125);
-  let SNsample = saturate(remap(shape, fbm_s * 0.68, 1.0, 0.0, 1.0));
+  let SNsample = saturate(remap(shape, fbm_s * 0.60, 1.0, 0.0, 1.0));
 
   var SA = saturate(heightShape(phD, 1.0));
   let tallLayerBreak = tallBoxBlend();
@@ -1101,25 +1180,36 @@ fn densityMacroFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>) -> f32 {
 
   let detProxy = detailProxyFromShape(max(phD, 0.0), s);
   let macroStretchErode = verticalStretchErosion(phD, detProxy, s, wm);
-  let breakup = saturate(detailMod(phD, detProxy) + macroStretchErode * 0.54);
+  let breakup = saturate(detailMod(phD, detProxy) + macroStretchErode * 0.42);
 
   // Keep far/proxy LODs scalloped, but do not let the proxy become a solid
   // filler that erases detail erosion from the real detail volume.
-  var core = saturate(remap(SNnd, 0.12 + breakup * 0.14, 1.0, 0.0, 1.0));
+  var core = saturate(remap(SNnd, 0.09 + breakup * mix_f(0.10, 0.18, sparse), 1.0, 0.0, 1.0));
   let macroShapeBodyCore = saturate(s.r * 0.72 + s.g * 0.20 + s.b * 0.08);
   let macroMidBody = verticalStretchFactor()
     * smoothstep(0.16, 0.42, phD)
     * (1.0 - smoothstep(0.64, 0.90, phD))
     * smoothstep(0.48, 0.88, saturate(max(wm.r, wm.g * 0.92)))
     * smoothstep(0.42, 0.82, macroShapeBodyCore);
-  core = max(core, macroMidBody * mix_f(0.045, 0.16, anvilTowerStrength()));
+  core = max(core, macroMidBody * mix_f(0.08, 0.22, anvilTowerStrength()));
   core = max(core, anvilLowerBodySupport(phD, wm, macroShapeBodyCore) * 0.82);
-  core = pow(core, 1.16);
+  let macroDepthBodyBand = smoothstep(0.12, 0.38, phD) * (1.0 - smoothstep(0.76, 0.96, phD));
+  let macroDepthWeather = smoothstep(0.42, 0.90, saturate(max(wm.r, wm.g * 0.94)));
+  let macroDepthShape = smoothstep(0.38, 0.84, macroShapeBodyCore);
+  let macroDepthSupport = macroDepthBodyBand * macroDepthWeather * macroDepthShape;
+  let macroPocket = ridge01(contrast01(saturate(shape * 0.54 + fbm_s * 0.46), 2.05));
+  core = max(core, macroDepthSupport * (0.20 + 0.06 * macroPocket) * mix_f(1.0, 0.76, sparse));
+  let macroClosure = macroMidBody * smoothstep(0.06, 0.30, core) * 0.13 * mix_f(1.0, 0.58, sparse);
+  let macroLowerClosure = smoothstep(0.05, 0.22, phD) * (1.0 - smoothstep(0.36, 0.66, phD)) * smoothstep(0.48, 0.84, macroShapeBodyCore) * 0.08 * mix_f(1.0, 0.64, sparse);
+  core = max(core, macroClosure);
+  core = max(core, macroLowerClosure);
+  core = pow(core, mix_f(1.04, 1.24, max(sparse, definition * 0.72)));
 
   let contour = ridge01(contrast01(saturate(shape * 0.64 + fbm_s * 0.36), 2.10));
   let carveMask = mix_f(0.48, 1.0, saturate(remap(phD, 0.0, 0.96, 0.0, 1.0)));
-  let carve = 1.0 - (0.18 * saturate(breakup) + 0.10 * contour) * carveMask;
-  core *= saturate(carve);
+  let pocketCarve = pow(saturate(1.0 - macroPocket), mix_f(1.28, 1.02, definition)) * (0.020 + 0.038 * saturate(TUNE.fluffFactor / (TUNE.fluffFactor + 1.45))) * mix_f(0.92, 1.42, sparse);
+  let carve = 1.0 - (0.08 * saturate(breakup) * mix_f(1.0, 1.32, sparse) + 0.04 * contour * mix_f(1.0, 1.28, definition) + pocketCarve) * carveMask;
+  core = max(saturate(core * saturate(carve)), macroDepthSupport * 0.13 * mix_f(1.0, 0.62, sparse));
   return max(core * densityHeight(phD) * weatherBCutoutWeight(phD, wm), 0.0);
 }
 
@@ -1413,10 +1503,12 @@ fn CalculateLight(
   let thin = pow(saturate(1.0 - sampleAlpha), 0.86);
   let edgeThin = pow(saturate(1.0 - sampleAlpha), 0.34);
   let rim = pow(saturate(rimBoost), 0.58);
+  let densityBody = smoothstep(0.08, 0.46, lightDensity);
 
   let frontShell = pow(saturate(viewTransmittance), 0.42);
   let exposedToSun = saturate(sunExposure);
   let upperGate = saturate(upperExposure);
+  let sunOcc = 1.0 - rawSunVisibility;
 
   let phaseGlow = phase * mix_f(0.15, 0.42, pow(towardSun, 1.10));
   let broadDirect = 0.22 + 0.38 * lightDensity * mix_f(0.84, 1.10, lightSideRaw);
@@ -1429,15 +1521,20 @@ fn CalculateLight(
 
   let silhouetteCore = pow(body, 1.18) * pow(towardSun, 1.05);
   let reliefShadow = silhouetteCore
-    * mix_f(0.28, 0.90, 1.0 - lightSideRaw)
+    * mix_f(0.34, 1.02, 1.0 - lightSideRaw)
     * mix_f(0.48, 0.96, 1.0 - rim)
-    * mix_f(0.48, 0.92, 1.0 - rawSunVisibility);
+    * mix_f(0.58, 1.04, sunOcc);
 
   let cavityShadow = pow(1.0 - lightSideRaw, 1.45)
-    * mix_f(0.035, 0.22, body)
+    * mix_f(0.050, 0.28, body)
     * mix_f(0.52, 0.90, 1.0 - exposedToSun);
+  let powderShadow = pow(sunOcc, 0.72)
+    * smoothstep(0.16, 0.86, body)
+    * mix_f(0.32, 1.0, densityBody)
+    * mix_f(0.38, 1.0, 1.0 - lightSideRaw)
+    * mix_f(0.56, 1.0, 1.0 - rim);
 
-  let bodyShadow = clamp(mix_f(0.0, 0.44, reliefShadow) + cavityShadow, 0.0, 0.74);
+  let bodyShadow = clamp(mix_f(0.0, 0.50, reliefShadow) + cavityShadow + powderShadow * 0.22, 0.0, 0.86);
 
   let direct = sunVisibility * lightSide * (broadDirect + phaseGlow + reliefDiffuse) * (1.0 - bodyShadow * 0.90);
 
@@ -1457,14 +1554,15 @@ fn CalculateLight(
 
   let ambientBase = 0.09 + max(C.ambientMinimum, 0.0) * 0.72;
   let ambientEdgeFill = max(C.outScatterAmbientAmt, 0.0)
-    * mix_f(0.14, 0.82, edgeThin)
+    * mix_f(0.10, 0.68, edgeThin)
     * mix_f(0.48, 1.0, 1.0 - bodyShadow);
+  let ambientEdgeCoherence = smoothstep(0.035, 0.18, sampleAlpha);
 
   let ambientRelief = mix_f(0.0, 0.04, exposedToSun) * mix_f(1.0, 0.80, bodyShadow);
   let ambientHeight = mix_f(0.86, 1.05, saturate(percent_height));
   let ambientVis = AmbientVisibility(density, rawSunVisibility, lightSide, dist_along_ray);
-  let ambientOcclusion = 1.0 - bodyShadow * 0.50;
-  let ambient = (ambientBase + ambientEdgeFill + ambientRelief) * ambientHeight * ambientVis * ambientOcclusion;
+  let ambientOcclusion = clamp(1.0 - bodyShadow * 0.62 - powderShadow * 0.14, 0.42, 1.0);
+  let ambient = (ambientBase + ambientEdgeFill * ambientEdgeCoherence + ambientRelief) * ambientHeight * ambientVis * ambientOcclusion;
 
   let bodyLift = 0.052
     * pow(lightSideRaw, 1.02)
@@ -1474,12 +1572,12 @@ fn CalculateLight(
 
   let silverSharpness = SilverSharpness();
   let exposedShell = smoothstep(0.05, 0.82, exposedToSun) * pow(frontShell, 0.48) * mix_f(0.42, 1.0, upperGate);
-  let alphaCoherence = smoothstep(0.006, 0.055, sampleAlpha);
+  let alphaCoherence = smoothstep(0.020, 0.120, sampleAlpha);
   let silverBase = SilverPhase(ca, rawSunVisibility, sampleAlpha, rimBoost, sunRim, percent_height, upperGate * 2.0 - 1.0) * exposedShell * alphaCoherence;
   let sunEdge = pow(saturate(rimBoost * sunRim), 0.42);
 
   let silverCrest = silverBase
-    * mix_f(1.10, 2.05, edgeThin)
+    * mix_f(1.00, 1.55, edgeThin)
     * mix_f(1.00, 1.54, lightSideRaw)
     * mix_f(0.82, 1.28, sunEdge);
 
@@ -1511,7 +1609,7 @@ fn CalculateLight(
 
   // Keep the current stormy through-light palette for transmissive/backlit views,
   // but add a second profile-controlled top-lit path for directly sunlit cloud surfaces.
-  let shadowTint = shadowCol * (bodyShadow * 0.055 + reliefShadow * 0.024 + cavityShadow * 0.055);
+  let shadowTint = shadowCol * (bodyShadow * 0.070 + reliefShadow * 0.030 + cavityShadow * 0.070 + powderShadow * 0.026);
   let transSoftLift = transLightCol * bodyLift * mix_f(0.08, 0.18, exposedShell) + skyCol * ambientEnergy * 0.10;
   let transRadiance = sunCol * directEnergy + silverCol * silverEnergy + skyCol * ambientEnergy + transSoftLift - shadowTint;
 
@@ -1533,7 +1631,7 @@ fn CalculateLight(
     + ambientEnergy * mix_f(0.34, 0.78, max(exposedToSun, topSurface))
     + bodyLift * mix_f(0.28, 0.92, max(exposedToSun, topSurface));
 
-  let directShadowTint = directShadowCol * (bodyShadow * 0.045 + reliefShadow * 0.025 + cavityShadow * 0.03);
+  let directShadowTint = directShadowCol * (bodyShadow * 0.058 + reliefShadow * 0.032 + cavityShadow * 0.040 + powderShadow * 0.018);
   let directRadiance = directSunCol * directSurfaceEnergy + directSkyCol * (ambientEnergy * 0.55) - directShadowTint;
 
   let directBlend = saturate(TUNE.directLightBlend) * directView;
@@ -2249,15 +2347,18 @@ fn computeCloud(
     let stepWarp = worldWarpXZ(p.xz, max(ph, 0.0), wg_boxMaxXZ);
 
     let visibleLodEase = smoothstep(0.08, 0.98, max(farF, screenFarF));
-    let lodShapeVisible = clamp(min(lodShapeLighting + screenInterleaveF * 0.90, mix_f(1.20, 2.65, visibleLodEase + screenInterleaveF * 0.22)), 0.0, wg_maxMipS);
-    let lodDetailVisibleBase = clamp(min(lodDetailLighting + screenInterleaveF * 1.25, mix_f(1.30, 3.15, visibleLodEase + screenInterleaveF * 0.28)), 0.0, wg_maxMipD);
+    let definitionHold = cloudDefinition01();
+    let sparseHold = cloudSparsity01();
+    let visibleLodEaseDefined = visibleLodEase * mix_f(1.0, 0.74, definitionHold);
+    let lodShapeVisible = clamp(min(lodShapeLighting + screenInterleaveF * mix_f(0.90, 0.62, definitionHold), mix_f(1.10, 2.38, visibleLodEaseDefined + screenInterleaveF * 0.18)), 0.0, wg_maxMipS);
+    let lodDetailVisibleBase = clamp(min(lodDetailLighting + screenInterleaveF * mix_f(1.25, 0.82, definitionHold), mix_f(1.12, 2.72, visibleLodEaseDefined + screenInterleaveF * 0.22)), 0.0, wg_maxMipD);
 
     let faceFade = insideFaceFade(p, bmin, bmax);
     let nearDense = mix_f(TUNE.nearDensityMult, 1.0, saturate(nearDepth / effectiveNearDensityRange));
 
     let verticalInteriorF = smoothstep(0.10, 0.28, ph) * (1.0 - smoothstep(0.78, 0.98, ph));
     let weatherFilledF = 1.0 - smoothstep(TUNE.weatherRejectGate * 0.54, TUNE.weatherRejectGate * 0.94, weatherGateFast);
-    let noShapeFarF = smoothstep(0.76, 1.0, max(farF, screenFarF))
+    let noShapeFarF = smoothstep(mix_f(0.76, 0.88, definitionHold), 1.0, max(farF, screenFarF))
       * smoothstep(nearFineDist * 5.0, nearFineDist * 12.0, sampleRayDistance)
       * verticalInteriorF
       * weatherFilledF
@@ -2281,11 +2382,11 @@ fn computeCloud(
     // field, so when the macro field is genuinely absent there is no useful
     // detail/lighting work to do. Keep the threshold tiny and only use a short
     // jump so silhouettes and wisps survive.
-    let macroEmptyThreshold = max(TUNE.sunDensityGate * mix_f(0.38, 0.82, thickPerfF), 0.00005);
+    let macroEmptyThreshold = max(TUNE.sunDensityGate * mix_f(0.46, 0.94, thickPerfF), 0.00006);
     let macroMissF = smoothstep(macroEmptyThreshold * 2.5, macroEmptyThreshold * 0.45, max(densMacro, prevMacroDens));
     let macroMissAllowed = macroMissF * smoothstep(nearFineDist * 1.25, nearFineDist * 3.0, sampleRayDistance) * max(thickPerfF, screenFarF * 0.55) * (1.0 - nearHorizontalRayF * 0.90);
     if (macroMissAllowed > 0.72 && densMacro < macroEmptyThreshold) {
-      let missBoost = mix_f(1.25, min(max(TUNE.emptySkipMult, 1.0), 3.55), macroMissAllowed);
+      let missBoost = mix_f(1.35, min(max(TUNE.emptySkipMult, 1.0), 4.10), macroMissAllowed);
       let missStep = clamp(stepLen * missBoost, TUNE.minStep, effectiveMaxStep * 2.80);
       prevDens = 0.0;
       prevMacroDens = max(densMacro, 0.0);
@@ -2299,7 +2400,7 @@ fn computeCloud(
     let denseLightingFastF = saturate(remap(max(densMacro, prevMacroDens), 0.15, 0.35, 0.0, 1.0));
     let macroOnly = (farLightingFastF * denseLightingFastF) > 0.72;
 
-    let farProxyRawF = smoothstep(0.66, 1.0, max(farF, screenFarF)) * smoothstep(nearFineDist * 2.0, nearFineDist * 6.0, sampleRayDistance) * (1.0 - nearHorizontalRayF * 0.75) * (1.0 - straightThroughViewF * 0.88);
+    let farProxyRawF = smoothstep(mix_f(0.66, 0.78, definitionHold), 1.0, max(farF, screenFarF)) * smoothstep(nearFineDist * 2.0, nearFineDist * 6.0, sampleRayDistance) * (1.0 - nearHorizontalRayF * 0.75) * (1.0 - straightThroughViewF * 0.88);
     let farProxyEdgeProtect = 1.0 - smoothstep(0.025, 0.16, densMacro);
     let farProxySafeF = max(farProxyRawF * (1.0 - farProxyEdgeProtect * 0.65), usedWeatherProxy * 0.86);
     let proxyOnlyF = farProxySafeF;
@@ -2307,29 +2408,35 @@ fn computeCloud(
     let detailProxy = detailProxyFromShape(max(ph, 0.0), s);
     let denseInteriorF = smoothstep(0.12, 0.34, densMacro);
     let thickInteriorFilterF = thickPerfF * smoothstep(0.14, 0.52, densMacro) * smoothstep(0.14, 0.94, sampleRayDistance);
-    let lodDetailVisible = clamp(lodDetailVisibleBase + thickInteriorFilterF * 0.90 + farProxySafeF * 1.05, 0.0, wg_maxMipD);
+    let lodDetailVisible = clamp(lodDetailVisibleBase + thickInteriorFilterF * mix_f(0.90, 0.54, definitionHold) + farProxySafeF * mix_f(1.05, 0.58, definitionHold), 0.0, wg_maxMipD);
     var detailRaw = detailProxy;
-    if (farProxySafeF < 0.62 && usedWeatherProxy < 0.52 && screenInterleaveF < 0.5) {
+    if (!macroOnly && farProxySafeF < 0.62 && usedWeatherProxy < 0.52 && screenInterleaveF < 0.5) {
       detailRaw = sampleDetailRGBWarp(p, max(ph, 0.0), lodDetailVisible, stepWarp);
     }
     let thickDetailProxyF = thickPerfF * saturate(TUNE.thickDetailSkip) * smoothstep(0.18, 0.96, sampleRayDistance) * denseInteriorF;
-    let detailProxyMixF = max(max(min(thickDetailProxyF, 0.24) * (1.0 - straightThroughViewF * 0.72), farProxySafeF * 0.64), screenInterleaveF * 0.86);
-    var det = mix_v3(detailRaw, detailProxy, min(detailProxyMixF, 0.90));
+    let detailProxyMixF = max(max(min(thickDetailProxyF, 0.16) * (1.0 - straightThroughViewF * 0.78), farProxySafeF * mix_f(0.42, 0.24, definitionHold)), screenInterleaveF * mix_f(0.72, 0.50, definitionHold));
+    var det = mix_v3(detailRaw, detailProxy, min(detailProxyMixF, mix_f(0.72, 0.54, definitionHold)));
 
     let detailMean = (det.r + det.g + det.b) * 0.3333333333;
-    let thickDetailFilterF = thickPerfF * smoothstep(0.12, 0.82, sampleRayDistance) * smoothstep(0.05, 0.32, densMacro) * 0.34;
-    det = mix_v3(det, vec3<f32>(detailMean), max(thickDetailFilterF * (1.0 - straightThroughViewF * 0.68), farProxySafeF * 0.28));
+    let thickDetailFilterF = thickPerfF * smoothstep(0.12, 0.82, sampleRayDistance) * smoothstep(0.05, 0.32, densMacro) * mix_f(0.18, 0.08, definitionHold);
+    det = mix_v3(det, vec3<f32>(detailMean), max(thickDetailFilterF * (1.0 - straightThroughViewF * 0.72), farProxySafeF * mix_f(0.18, 0.08, definitionHold)));
 
-    var dens: f32 = densityFromSamples(ph, wm, s, det) * faceFade * nearDense;
+    var dens: f32 = densMacro;
+    if (!macroOnly) {
+      dens = densityFromSamples(ph, wm, s, det) * faceFade * nearDense;
+    } else {
+      let macroBodyF = smoothstep(0.10, 0.34, densMacro) * smoothstep(0.16, 0.84, ph);
+      dens = densMacro * mix_f(0.88, 1.02, macroBodyF);
+    }
 
-    let thickBodySmoothF = thickPerfF * smoothstep(0.10, 0.42, densMacro) * smoothstep(0.10, 0.90, sampleRayDistance) * 0.30;
+    let thickBodySmoothF = thickPerfF * smoothstep(0.10, 0.42, densMacro) * smoothstep(0.10, 0.90, sampleRayDistance) * mix_f(0.16, 0.08, max(definitionHold, sparseHold * 0.65));
     dens = mix_f(dens, densMacro, thickBodySmoothF);
 
     let farSilhouetteKeep = smoothstep(0.36, 1.0, screenFarF) * saturate(remap(densMacro, 0.025, 0.20, 0.0, 1.0));
-    dens = max(dens, densMacro * farSilhouetteKeep * 0.30);
+    dens = max(dens, densMacro * farSilhouetteKeep * 0.22);
 
     let bodySmooth = smoothstep(0.08, 0.42, max(densMacro, prevMacroDens));
-    let raySmoothDensAdaptive = saturate(mix_f(TUNE.raySmoothDens * 0.30, TUNE.raySmoothDens, bodySmooth));
+    let raySmoothDensAdaptive = saturate(mix_f(TUNE.raySmoothDens * 0.18, TUNE.raySmoothDens, bodySmooth) * mix_f(1.0, 0.58, definitionHold));
     let densSmoothed = mix_f(dens, prevDens, raySmoothDensAdaptive);
     let densMacroSmoothed = mix_f(densMacro, prevMacroDens, saturate(raySmoothDensAdaptive * 0.90));
     let denseInteriorStepF = thickPerfF * smoothstep(0.22, 0.62, densMacroSmoothed) * smoothstep(0.20, 0.90, sampleRayDistance);
@@ -2508,19 +2615,37 @@ fn computeCloud(
   }
 
   // compose
-  let aRaw = select(1.0 - Tr, 1.0, (1.0 - Tr) >= clamp(TUNE.alphaCutoff, 0.0, 0.999));
+  let aMarch = saturate(1.0 - Tr);
+  let alphaCutoff = clamp(TUNE.alphaCutoff, 0.0, 0.999);
+  let opaqueSoftLo = max(0.0, alphaCutoff - 0.10);
+  let opaqueSoftHi = alphaCutoff;
+  let opaqueClosure = smoothstep(opaqueSoftLo, opaqueSoftHi, aMarch);
+  let aRaw = mix_f(aMarch, min(1.0, aMarch + (1.0 - aMarch) * 0.82), opaqueClosure);
+  let surfaceOpacity = clamp(TUNE.outputAlphaFeather, 0.0, 1.0);
+  let surfaceGate =
+    smoothstep(0.055, 0.34, aRaw) *
+    (1.0 - smoothstep(0.76, 0.97, aRaw));
+  let surfaceCurve = mix_f(1.0, 0.50, surfaceOpacity);
+  let surfaceAlpha = saturate(pow(max(aRaw, 1e-5), surfaceCurve) * mix_f(1.0, 1.08, surfaceOpacity));
+  let aLifted = mix_f(aRaw, max(aRaw, surfaceAlpha), surfaceGate * surfaceOpacity);
+
   let alphaBoostThreshold = clamp(TUNE.alphaBoostThreshold, 0.0, 0.995);
   let alphaBoostAmount = max(TUNE.alphaBoostAmount, 0.0);
   let alphaBoostRamp = select(
     0.0,
-    saturate((aRaw - alphaBoostThreshold) / max(1.0 - alphaBoostThreshold, 1e-5)),
-    aRaw > alphaBoostThreshold
+    saturate((aLifted - alphaBoostThreshold) / max(1.0 - alphaBoostThreshold, 1e-5)),
+    aLifted > alphaBoostThreshold
   );
-  let aBoosted = min(1.0, aRaw + alphaBoostAmount * alphaBoostRamp);
+  let aBoosted = min(1.0, aLifted + alphaBoostAmount * alphaBoostRamp);
   let minOutputAlpha = clamp(TUNE.minOutputAlpha, 0.0, 0.45);
   let outputAlphaGate = select(1.0, 0.0, aBoosted < minOutputAlpha);
   let outputAlpha = aBoosted * outputAlphaGate;
-  let outputRGB = rgb * outputAlphaGate;
+  let premulLift = mix_f(
+    1.0,
+    clamp(aBoosted / max(aRaw, 0.08), 1.0, 1.36),
+    surfaceOpacity * surfaceGate * 0.42
+  );
+  let outputRGB = rgb * outputAlphaGate * premulLift;
 
   var newCol: vec4<f32>;
   if (opt.writeRGB == 1u) {
