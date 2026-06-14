@@ -87,7 +87,6 @@ let workerReproj = null,
 // tuning
 let workerTuning = null;
 let workerTuningVersion = 0;
-let lastAppliedTuningVersion = -1;
 let lastAppliedTuningSignature = "";
 
 // loop and transform state
@@ -134,7 +133,6 @@ const LOOP_TARGET_MS = 1000 / 60;
 const FRAME_LOG_EVERY = 240;
 const LOOP_MAX_GPU_FRAMES_IN_FLIGHT = 3;
 const CAMERA_RESET_FRAMES = 1;
-const CAMERA_SIG_EPS = 1e-4;
 let submittedFrameCount = 0;
 let loopGpuFences = [];
 let lastViewSignature = null;
@@ -151,9 +149,7 @@ let reprojResetFrames = 0;
 // -----------------------------------------------------------------------------
 // startup deferral helpers
 // -----------------------------------------------------------------------------
-const STARTUP_DEFER_MS = 0;
-
-function deferToBrowser(ms = STARTUP_DEFER_MS) {
+function deferToBrowser(ms = 0) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -1238,11 +1234,6 @@ function normalizeReproj(r) {
   return out;
 }
 
-function getReprojCoarseFactor(r, fallback = 1) {
-  const rp = r && typeof r === "object" ? r : null;
-  return Math.max(1, (rp?.coarseFactor || rp?.subsample || fallback || 1) | 0);
-}
-
 function normalizeRenderScaleDivider(value, fallback = 3) {
   const v = Number.isFinite(+value) ? Math.floor(+value) : fallback;
   return Math.max(1, Math.min(8, v));
@@ -1250,10 +1241,6 @@ function normalizeRenderScaleDivider(value, fallback = 3) {
 
 function previewRenderScaleDivider(preview) {
   return normalizeRenderScaleDivider(preview?.renderScaleDivider, 3);
-}
-
-function renderScaleDividerCoarseFactor(preview) {
-  return previewRenderScaleDivider(preview);
 }
 
 function finiteNumber(v, fallback) {
@@ -1497,7 +1484,6 @@ function applyWorkerTuning(cloudBox = null) {
   try {
     if (cb && typeof cb.setTuning === "function") {
       cb.setTuning(appliedTuning);
-      lastAppliedTuningVersion = workerTuningVersion;
       lastAppliedTuningSignature = tuningSignature;
 
       if (typeof appliedTuning.lodBiasWeather === "number" && typeof cb?.setPerfParams === "function") {
@@ -1718,7 +1704,7 @@ async function runFrame({
   syncBaseInputMaps();
 
   const workerTemporalCellRate = normalizeTemporalCellRate(workerReproj?.temporalCellRate);
-  let effectiveCoarseFactor = Math.max(1, coarseFactor | 0, renderScaleDividerCoarseFactor(preview));
+  let effectiveCoarseFactor = Math.max(1, coarseFactor | 0, previewRenderScaleDivider(preview));
   const coarseComputeMode = effectiveCoarseFactor >= 2;
   const useReproj = !!(workerReproj && workerReproj.enabled && !coarseComputeMode);
   const useTemporalCells = workerTemporalCellRate > 1;
@@ -1912,7 +1898,7 @@ async function runFrame({
   const shouldWaitForGpu = !!waitForGpu;
   const tP0 = performance.now();
   if (typeof cb.ensureComputePipelineReady === "function") {
-    await cb.ensureComputePipelineReady();
+    cb.ensureComputePipelineReady();
   }
   const tP1 = performance.now();
   const tAll0 = performance.now();
@@ -1933,10 +1919,7 @@ async function runFrame({
   }
   const tC1 = performance.now();
 
-  const presentDivider = 1;
-  const presentW = MAIN_W;
-  const presentH = MAIN_H;
-  ensureMainPresentSize(presentW, presentH);
+  ensureMainPresentSize(MAIN_W, MAIN_H);
 
   const { pipe, bgl, samp, format } = cb._ensureRenderPipeline("bgra8unorm");
 
@@ -2051,10 +2034,9 @@ async function runFrame({
     waitedForGpu: shouldWaitForGpu,
     coarseFactor: cf,
     directFullResReconstruction: !!encodedDispatch.directFullResReconstruction,
-    directPreview: !!encodedDispatch.directPreview,
-    presentDivider,
-    presentWidth: presentW,
-    presentHeight: presentH,
+    presentDivider: 1,
+    presentWidth: MAIN_W,
+    presentHeight: MAIN_H,
     resetReprojection: resetReprojThisFrame,
     temporalCellRate: workerTemporalCellRate,
     temporalCellPhase: workerReproj?.temporalCellPhase ?? 0,
@@ -2188,7 +2170,7 @@ function startLoop() {
         if (lastRunPayload) {
           lastRunPayload.tileTransforms = null;
           lastRunPayload.noiseTransforms = null;
-          const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload.preview);
+          const qCoarse = previewRenderScaleDivider(lastRunPayload.preview);
           if (workerReproj) {
             lastRunPayload.reproj = Object.assign({}, workerReproj, { resetHistory: false });
             lastRunPayload.coarseFactor = Math.max(1, qCoarse | 0);
@@ -2530,7 +2512,7 @@ async function _handleMessage(ev) {
         lastRunPayload.reproj = workerReproj
           ? Object.assign({}, workerReproj, { resetHistory: false })
           : workerReproj;
-        const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload.preview);
+        const qCoarse = previewRenderScaleDivider(lastRunPayload.preview);
         if (workerReproj) {
           lastRunPayload.coarseFactor = Math.max(1, qCoarse | 0);
           lastRunPayload.reproj.coarseFactor = lastRunPayload.coarseFactor;
@@ -2543,7 +2525,7 @@ async function _handleMessage(ev) {
       if (cb) {
         if (workerPerf) cb.setPerfParams(workerPerf);
         if (workerReproj) {
-          const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload?.preview);
+          const qCoarse = previewRenderScaleDivider(lastRunPayload?.preview);
           const cf = Math.max(1, qCoarse | 0);
           workerReproj.coarseFactor = cf;
           workerReproj.scale = 1 / Math.max(1, cf * cf);
@@ -2573,7 +2555,7 @@ async function _handleMessage(ev) {
             cloudParams: incomingCloudParams || {},
             tileTransforms: incomingTransforms || null,
             reproj: incomingReproj || workerReproj || null,
-            coarseFactor: renderScaleDividerCoarseFactor(incomingPreview || {}),
+            coarseFactor: previewRenderScaleDivider(incomingPreview || {}),
           };
         }
 
@@ -2621,7 +2603,7 @@ async function _handleMessage(ev) {
         }
 
         const previewForCoarse = lastRunPayload.preview || incomingPreview || {};
-        const qCoarse = renderScaleDividerCoarseFactor(previewForCoarse);
+        const qCoarse = previewRenderScaleDivider(previewForCoarse);
         lastRunPayload.coarseFactor = Math.max(1, qCoarse);
         if (workerReproj) {
           workerReproj.coarseFactor = lastRunPayload.coarseFactor;

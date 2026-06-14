@@ -76,6 +76,7 @@ export class CloudComputeBuilder {
     // GPU objects filled in _init*
     this.module = null;
     this.pipeline = null;
+    this._computePipelineKey = -1;
     this._computePipelineLayout = null;
     this._computePipelines = new Map();
     this._historyCopy = null;
@@ -143,7 +144,6 @@ export class CloudComputeBuilder {
     this.optionsBuffer = null;
     this.paramsBuffer = null;
     this.nTransformBuffer = null;
-    this.dummyBuffer = null;
     this.posBuffer = null;
     this.frameBuffer = null;
     this.lightBuffer = null;
@@ -427,7 +427,9 @@ export class CloudComputeBuilder {
       this.bgl0 = cachedCompute.bgl0;
       this._computePipelineLayout = cachedCompute.layout;
       this._computePipelines = cachedCompute.pipelines || new Map();
-      this.pipeline = this._computePipelines.get(this._currentComputeVariantKey()) || null;
+      this._computePipelineKey = this._currentComputeVariantKey();
+      this.pipeline = this._computePipelines.get(this._computePipelineKey) || null;
+      if (!this.pipeline) this._computePipelineKey = -1;
 
       this._destroyDummyHistory();
       this._createDummyHistory();
@@ -438,7 +440,7 @@ export class CloudComputeBuilder {
     }
 
     // group(0) bindings must match updated shader:
-    // 0 opt, 1 C, 2 unused storage, 3 NTransform, 4 outTex, 5 posBuf, 6 frame, 7 historyOut, 8 reproj, 9 perf, 10 TUNE
+    // 0 opt, 1 C, 3 NTransform, 4 outTex, 5 posBuf, 6 frame, 7 historyOut, 8 reproj, 9 perf, 10 TUNE
     this.bgl0 = d.createBindGroupLayout({
       entries: [
         {
@@ -450,11 +452,6 @@ export class CloudComputeBuilder {
           binding: 1,
           visibility: GPUShaderStage.COMPUTE,
           buffer: { type: "uniform" },
-        },
-        {
-          binding: 2,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "read-only-storage" },
         },
         {
           binding: 3,
@@ -512,6 +509,7 @@ export class CloudComputeBuilder {
     });
     this._computePipelines = new Map();
     this.pipeline = null;
+    this._computePipelineKey = -1;
 
     deviceCache.computeByFormat.set(this.outFormat, {
       bgl0: this.bgl0,
@@ -563,7 +561,10 @@ export class CloudComputeBuilder {
   }
 
   ensureComputePipelineReady() {
-    this.pipeline = this._ensureComputePipelineForKey(this._currentComputeVariantKey());
+    const key = this._currentComputeVariantKey();
+    if (this.pipeline && this._computePipelineKey === key) return this.pipeline;
+    this.pipeline = this._ensureComputePipelineForKey(key);
+    this._computePipelineKey = key;
     return this.pipeline;
   }
 
@@ -629,7 +630,7 @@ export class CloudComputeBuilder {
 
     // group(1) must match updated shader:
     // 0 weather2D, 1 samp2D, 2 shape3D, 3 sampShape, 4 blueTex, 5 sampBN, 6 detail3D, 7 sampDetail,
-    // 8 L, 9 V, 10 B, 11 historyPrev, 12 sampHistory, 13 motionTex, 14 sampMotion, 15 depthPrev, 16 sampDepth
+    // 8 L, 9 V, 10 B, 11 historyPrev, 13 motionTex, 15 depthPrev
     if (!deviceCache.bgl1) {
       deviceCache.bgl1 = d.createBindGroupLayout({
         entries: [
@@ -694,29 +695,14 @@ export class CloudComputeBuilder {
             texture: { sampleType: "float", viewDimension: "2d-array" },
           },
           {
-            binding: 12,
-            visibility: GPUShaderStage.COMPUTE,
-            sampler: { type: "filtering" },
-          },
-          {
             binding: 13,
             visibility: GPUShaderStage.COMPUTE,
             texture: { sampleType: "float", viewDimension: "2d" },
           },
           {
-            binding: 14,
-            visibility: GPUShaderStage.COMPUTE,
-            sampler: { type: "filtering" },
-          },
-          {
             binding: 15,
             visibility: GPUShaderStage.COMPUTE,
             texture: { sampleType: "float", viewDimension: "2d" },
-          },
-          {
-            binding: 16,
-            visibility: GPUShaderStage.COMPUTE,
-            sampler: { type: "filtering" },
           },
         ],
       });
@@ -797,28 +783,17 @@ export class CloudComputeBuilder {
 
     this.optionsBuffer = d.createBuffer({
       size: 32,
-      usage:
-        GPUBufferUsage.UNIFORM |
-        GPUBufferUsage.COPY_DST |
-        GPUBufferUsage.COPY_SRC,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
     this.paramsBuffer = d.createBuffer({
       size: this._abParams.byteLength,
-      usage:
-        GPUBufferUsage.UNIFORM |
-        GPUBufferUsage.COPY_DST |
-        GPUBufferUsage.COPY_SRC,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
     this.nTransformBuffer = d.createBuffer({
       size: 128,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-
-    this.dummyBuffer = d.createBuffer({
-      size: 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
     this.posBuffer = d.createBuffer({
@@ -833,10 +808,7 @@ export class CloudComputeBuilder {
 
     this.lightBuffer = d.createBuffer({
       size: 32,
-      usage:
-        GPUBufferUsage.UNIFORM |
-        GPUBufferUsage.COPY_DST |
-        GPUBufferUsage.COPY_SRC,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
     this.viewBuffer = d.createBuffer({
@@ -874,8 +846,6 @@ export class CloudComputeBuilder {
       size: 32,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-
-    this.queue.writeBuffer(this.dummyBuffer, 0, new Uint8Array(4));
   }
 
   // -------------------- UBO setters --------------------
@@ -1738,7 +1708,6 @@ export class CloudComputeBuilder {
       this._getResId(this.outView),
       this._getResId(this.optionsBuffer),
       this._getResId(this.paramsBuffer),
-      this._getResId(this.dummyBuffer),
       this._getResId(this.nTransformBuffer),
       this._getResId(this.posBuffer),
       this._getResId(this.frameBuffer),
@@ -1766,11 +1735,8 @@ export class CloudComputeBuilder {
       this._getResId(this.viewBuffer),
       this._getResId(this.boxBuffer),
       this._getResId(this.historyPrevView || this._dummyHistoryPrevView),
-      this._getResId(this._samp2D),
       this._getResId(this.motionView || this._dummy2DMotionView),
-      this._getResId(this._samp2D),
       this._getResId(this.depthPrevView || this._dummy2DDepthView),
-      this._getResId(this._samp2D),
     ];
     return ids.join("|");
   }
@@ -1819,7 +1785,6 @@ export class CloudComputeBuilder {
       entries: [
         { binding: 0, resource: { buffer: this.optionsBuffer } },
         { binding: 1, resource: { buffer: this.paramsBuffer } },
-        { binding: 2, resource: { buffer: this.dummyBuffer } },
         { binding: 3, resource: { buffer: this.nTransformBuffer } },
         { binding: 4, resource: this.outView },
         { binding: 5, resource: { buffer: this.posBuffer } },
@@ -1866,11 +1831,8 @@ export class CloudComputeBuilder {
         { binding: 9, resource: { buffer: this.viewBuffer } },
         { binding: 10, resource: { buffer: this.boxBuffer } },
         { binding: 11, resource: historyPrev },
-        { binding: 12, resource: this._samp2D },
         { binding: 13, resource: motionView },
-        { binding: 14, resource: this._samp2D },
         { binding: 15, resource: depthView },
-        { binding: 16, resource: this._samp2D },
       ],
     });
   }
@@ -1925,7 +1887,7 @@ export class CloudComputeBuilder {
 
     const cf = Math.max(1, coarseFactor | 0);
     if (cf < 2 || !this.outTexture)
-      return await this.dispatchRectNoCoarse({
+      return this.dispatchRectNoCoarse({
         x: baseX,
         y: baseY,
         w: tw,
@@ -1936,9 +1898,6 @@ export class CloudComputeBuilder {
     const cW = Math.max(1, Math.ceil(tw / cf));
     const cH = Math.max(1, Math.ceil(th / cf));
     this._ensureCoarseTexture(cW, cH, this.layers);
-
-    const savedFullW = cW;
-    const savedFullH = cH;
 
     const savedOutTexture = this.outTexture;
     const savedOutView = this.outView;
@@ -1968,9 +1927,9 @@ export class CloudComputeBuilder {
 
     const curFW = this._dvReproj.getUint32(32, true) || 0;
     const curFH = this._dvReproj.getUint32(36, true) || 0;
-    if (curFW !== savedFullW >>> 0 || curFH !== savedFullH >>> 0) {
-      this._dvReproj.setUint32(32, savedFullW >>> 0, true);
-      this._dvReproj.setUint32(36, savedFullH >>> 0, true);
+    if (curFW !== cW >>> 0 || curFH !== cH >>> 0) {
+      this._dvReproj.setUint32(32, cW >>> 0, true);
+      this._dvReproj.setUint32(36, cH >>> 0, true);
       this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
       this._bg0Dirty = true;
     }
@@ -2119,7 +2078,7 @@ export class CloudComputeBuilder {
       pass.setPipeline(pipeline);
       pass.setBindGroup(0, this._currentBg0);
       pass.setBindGroup(1, this._currentBg1);
-        pass.dispatchWorkgroups(this._wgX, this._wgY, 1);
+      pass.dispatchWorkgroups(this._wgX, this._wgY, 1);
       pass.end();
     }
     this.queue.submit([enc.finish()]);
@@ -2196,10 +2155,7 @@ export class CloudComputeBuilder {
     if (this._historyCopy && this._historyCopy.format === "rgba16float") return this._historyCopy;
     const deviceCache = getCloudGpuCache(this.device);
     if (deviceCache.historyCopy) {
-      this._historyCopy = {
-        ...deviceCache.historyCopy,
-        bgCache: new Map(),
-      };
+      this._historyCopy = deviceCache.historyCopy;
       this._historyCopyBgCache.clear();
       this._historyCopyBgKeys.length = 0;
       return this._historyCopy;
@@ -2266,7 +2222,7 @@ export class CloudComputeBuilder {
       compute: { module, entryPoint: "main" },
     });
     deviceCache.historyCopy = { format: "rgba16float", bgl, pipe };
-    this._historyCopy = { ...deviceCache.historyCopy, bgCache: new Map() };
+    this._historyCopy = deviceCache.historyCopy;
     this._historyCopyBgCache.clear();
     this._historyCopyBgKeys.length = 0;
     return this._historyCopy;
@@ -2369,8 +2325,6 @@ export class CloudComputeBuilder {
 
       // Coarse compute keeps temporal history in coarse space. Presentation
       // reconstructs onto the full-resolution canvas without displaying the coarse target.
-      const savedFullW = cW;
-      const savedFullH = cH;
       const savedOutTexture = this.outTexture;
       const savedOutView = this.outView;
       const savedWidth = this.width;
@@ -2400,9 +2354,9 @@ export class CloudComputeBuilder {
 
       const curFW = this._dvReproj.getUint32(32, true) || 0;
       const curFH = this._dvReproj.getUint32(36, true) || 0;
-      if (curFW !== savedFullW >>> 0 || curFH !== savedFullH >>> 0) {
-        this._dvReproj.setUint32(32, savedFullW >>> 0, true);
-        this._dvReproj.setUint32(36, savedFullH >>> 0, true);
+      if (curFW !== cW >>> 0 || curFH !== cH >>> 0) {
+        this._dvReproj.setUint32(32, cW >>> 0, true);
+        this._dvReproj.setUint32(36, cH >>> 0, true);
         this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
       }
 
@@ -2415,10 +2369,8 @@ export class CloudComputeBuilder {
       this.outFormat = savedFormat;
       this._bg0Dirty = true;
 
-      var usedPresentationReconstruction = false;
       if (reconstructAtPresentation) {
         this._renderSourceView = this._coarseView;
-        usedPresentationReconstruction = true;
       } else {
         const preparedUpsample = this._prepareUpsamplePass({
           srcW: cW,
@@ -2435,8 +2387,7 @@ export class CloudComputeBuilder {
 
       return {
         coarseFactor: cf,
-        directFullResReconstruction: usedPresentationReconstruction,
-        directPreview: usedPresentationReconstruction,
+        directFullResReconstruction: !!reconstructAtPresentation,
         previewView: this._renderSourceView,
         interleaveStats: this._lastInterleaveStats,
         restoreAfterSubmit: () => {
@@ -2685,26 +2636,6 @@ export class CloudComputeBuilder {
     pass.setBindGroup(0, prepared.bg);
     pass.dispatchWorkgroups(prepared.wgX, prepared.wgY, 1);
     pass.end();
-  }
-
-  async _upsampleCoarseToOut({
-    srcW,
-    srcH,
-    dstX,
-    dstY,
-    dstW,
-    dstH,
-    wait = false,
-  } = {}) {
-    const prepared = this._prepareUpsamplePass({ srcW, srcH, dstX, dstY, dstW, dstH });
-    if (!prepared) return;
-
-    const enc = this.device.createCommandEncoder();
-    this._encodeUpsamplePass(enc, prepared);
-    this.queue.submit([enc.finish()]);
-
-    if (wait && typeof this.queue.onSubmittedWorkDone === "function")
-      await this.queue.onSubmittedWorkDone();
   }
 
   // -------------------- preview render --------------------
