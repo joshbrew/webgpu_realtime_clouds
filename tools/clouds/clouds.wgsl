@@ -6,10 +6,11 @@ const VIEW_EXTINCTION_SCALE: f32 = 0.075;
 const SUN_EXTINCTION_SCALE: f32 = 0.014;
 const DENSITY_LIGHT_SCALE: f32 = 0.01;
 
-// 0 = local AABB clouds, 1 = spherical planet clouds, 2 = aurora shell.
-// The JavaScript side builds one full-detail pipeline per active mode. This is
-// compile-time specialization only; it does not change the visual quality path.
-override CLOUD_RENDER_MODE: u32 = 0u;
+// The JavaScript side builds one full-detail pipeline entry point per active
+// mode. This is compile-time specialization only; it does not change the visual
+// quality path.
+override CLOUD_IS_SPHERICAL: u32 = 0u;
+override CLOUD_IS_AURORA: u32 = 0u;
 override CLOUD_USE_CUSTOM_POS: u32 = 0u;
 override CLOUD_WRITE_RGB: u32 = 1u;
 
@@ -500,20 +501,20 @@ fn intersectAABB_robust(ro: vec3<f32>, rd: vec3<f32>, bmin: vec3<f32>, bmax: vec
 }
 
 fn sphericalCloudMode() -> bool {
-  return CLOUD_RENDER_MODE != 0u;
+  return CLOUD_IS_SPHERICAL != 0u;
 }
 
 
 fn auroraLayerMode() -> bool {
-  return CLOUD_RENDER_MODE == 2u;
+  return CLOUD_IS_AURORA != 0u;
 }
 
 fn cloudModeF32(boxVal: f32, sphereVal: f32, auroraVal: f32) -> f32 {
-  return select(select(boxVal, sphereVal, CLOUD_RENDER_MODE != 0u), auroraVal, CLOUD_RENDER_MODE == 2u);
+  return select(select(boxVal, sphereVal, CLOUD_IS_SPHERICAL != 0u), auroraVal, CLOUD_IS_AURORA != 0u);
 }
 
 fn auroraModeF32(baseVal: f32, auroraVal: f32) -> f32 {
-  return select(baseVal, auroraVal, CLOUD_RENDER_MODE == 2u);
+  return select(baseVal, auroraVal, CLOUD_IS_AURORA != 0u);
 }
 
 fn normalizeOr(v: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
@@ -1201,20 +1202,15 @@ fn activeColumnYRange(wm: vec4<f32>) -> vec2<f32> {
 }
 
 fn activeColumnGuard() -> f32 {
-  var boxH = max(B.half.y * 2.0, EPS);
-  if (sphericalCloudMode()) {
-    boxH = shellHeight();
-  }
+  let boxH = select(max(B.half.y * 2.0, EPS), shellHeight(), sphericalCloudMode());
   let jitterRoom = abs(TUNE.baseJitterFrac) + abs(TUNE.topJitterFrac) * 0.75;
   return clamp(boxH * (0.055 + jitterRoom) + wg_finestWorld * 2.0, 0.02, max(boxH * 0.48, 0.03));
 }
 
 fn globalActiveYRange() -> vec2<f32> {
-  if (sphericalCloudMode()) {
-    return vec2<f32>(-1.0e9, 1.0e9);
-  }
   let guard = activeColumnGuard();
-  return vec2<f32>(B.center.y - B.half.y - guard, B.center.y + B.half.y + anvilLiftWorld() + guard);
+  let boxRange = vec2<f32>(B.center.y - B.half.y - guard, B.center.y + B.half.y + anvilLiftWorld() + guard);
+  return select(boxRange, vec2<f32>(-1.0e9, 1.0e9), sphericalCloudMode());
 }
 
 fn verticalColumnSkipDistance(
@@ -2447,11 +2443,7 @@ fn weatherProbeEmpty(
 
 // ---------------------- Main compute
 
-@compute @workgroup_size(8, 8, 1)
-fn computeCloud(
-  @builtin(global_invocation_id) gid_in: vec3<u32>,
-  @builtin(local_invocation_id) local_id: vec3<u32>
-) {
+fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
   // workgroup cache
   if (local_id.x == 0u && local_id.y == 0u) {
     let wd = textureDimensions(weather2D, 0);
@@ -2636,13 +2628,13 @@ fn computeCloud(
   let wAxis = axisOrOne3(NTransform.weatherAxisScale);
 
   let weatherTileInvWorld = 0.5 * max(B.uvScale, EPS);
-  var texelsPerWorld_u = wg_weatherDim.x * abs(wAxis.x) * wScale * weatherTileInvWorld;
-  var texelsPerWorld_v = wg_weatherDim.y * abs(wAxis.z) * wScale * weatherTileInvWorld;
-  if (sphericalCloudMode()) {
-    let rMid = max(sphereRadiusBase() + (V.cloudBottom + V.cloudTop) * 0.5, 1.0);
-    texelsPerWorld_u = wg_weatherDim.x * abs(wAxis.x) * wScale / max(2.0 * PI * rMid, EPS);
-    texelsPerWorld_v = wg_weatherDim.y * abs(wAxis.z) * wScale / max(PI * rMid, EPS);
-  }
+  let boxTexelsPerWorldU = wg_weatherDim.x * abs(wAxis.x) * wScale * weatherTileInvWorld;
+  let boxTexelsPerWorldV = wg_weatherDim.y * abs(wAxis.z) * wScale * weatherTileInvWorld;
+  let rMid = max(sphereRadiusBase() + (V.cloudBottom + V.cloudTop) * 0.5, 1.0);
+  let sphereTexelsPerWorldU = wg_weatherDim.x * abs(wAxis.x) * wScale / max(2.0 * PI * rMid, EPS);
+  let sphereTexelsPerWorldV = wg_weatherDim.y * abs(wAxis.z) * wScale / max(PI * rMid, EPS);
+  let texelsPerWorld_u = select(boxTexelsPerWorldU, sphereTexelsPerWorldU, sphericalCloudMode());
+  let texelsPerWorld_v = select(boxTexelsPerWorldV, sphereTexelsPerWorldV, sphericalCloudMode());
   let fp = max(texelsPerWorld_u, texelsPerWorld_v);
 
   let weatherLOD_base = clamp(
@@ -2778,12 +2770,11 @@ fn computeCloud(
     );
     let nearStepF = 1.0 - smoothstep(0.0, nearFineDist, stepRayDistance);
     let fineStep = baseStep * mix_f(1.0, clamp(TUNE.nearStepScale, 0.12, 1.0), nearStepF);
-    var stepLen = clamp(mix_f(coverageStep, fineStep, nearStepF), TUNE.minStep, effectiveMaxStep);
-    if (auroraLayerMode()) {
-      let auroraTargetStep = raySegmentLength / 42.0;
-      let auroraStepMax = max(effectiveMaxStep, raySegmentLength / 28.0);
-      stepLen = clamp(max(stepLen, auroraTargetStep), TUNE.minStep * 3.0, auroraStepMax);
-    }
+    let baseStepLen = clamp(mix_f(coverageStep, fineStep, nearStepF), TUNE.minStep, effectiveMaxStep);
+    let auroraTargetStep = raySegmentLength / 42.0;
+    let auroraStepMax = max(effectiveMaxStep, raySegmentLength / 28.0);
+    let auroraStepLen = clamp(max(baseStepLen, auroraTargetStep), TUNE.minStep * 3.0, auroraStepMax);
+    let stepLen = select(baseStepLen, auroraStepLen, auroraLayerMode());
 
     var sliceHash = sliceHashScreen;
     if (sphericalCloudMode()) {
@@ -3444,4 +3435,28 @@ fn computeCloud(
       store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);
     }
   }
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeCloudBox(
+  @builtin(global_invocation_id) gid_in: vec3<u32>,
+  @builtin(local_invocation_id) local_id: vec3<u32>
+) {
+  computeCloudCore(gid_in, local_id);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeCloudSphere(
+  @builtin(global_invocation_id) gid_in: vec3<u32>,
+  @builtin(local_invocation_id) local_id: vec3<u32>
+) {
+  computeCloudCore(gid_in, local_id);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeCloudAurora(
+  @builtin(global_invocation_id) gid_in: vec3<u32>,
+  @builtin(local_invocation_id) local_id: vec3<u32>
+) {
+  computeCloudCore(gid_in, local_id);
 }

@@ -24,6 +24,25 @@ function getCloudGpuCache(device) {
 }
 
 const _has = (o, k) => Object.prototype.hasOwnProperty.call(o || {}, k);
+const DEG_TO_RAD = Math.PI / 180;
+const radDeg = (d) => d * DEG_TO_RAD;
+const cross3 = (a, b) => [
+  a[1] * b[2] - a[2] * b[1],
+  a[2] * b[0] - a[0] * b[2],
+  a[0] * b[1] - a[1] * b[0],
+];
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const norm3 = (a) => {
+  const l = Math.hypot(a[0], a[1], a[2]) || 1;
+  return [a[0] / l, a[1] / l, a[2] / l];
+};
+function writeVec3Padded(dv, ofs, v) {
+  dv.setFloat32(ofs, v[0], true);
+  dv.setFloat32(ofs + 4, v[1], true);
+  dv.setFloat32(ofs + 8, v[2], true);
+  dv.setFloat32(ofs + 12, 0.0, true);
+}
+
 const normalizeTemporalRate = (value) => {
   const n = Math.max(1, Number(value) | 0);
   if (n >= 64) return 64;
@@ -544,13 +563,17 @@ export class CloudComputeBuilder {
     if (cached) return cached;
 
     const mode = key & 3;
+    const isSpherical = mode !== 0;
+    const isAurora = mode === 2;
+    const entryPoint = isAurora ? "computeCloudAurora" : isSpherical ? "computeCloudSphere" : "computeCloudBox";
     const pipeline = this.device.createComputePipeline({
       layout: this._computePipelineLayout,
       compute: {
         module: this.module,
-        entryPoint: "computeCloud",
+        entryPoint,
         constants: {
-          CLOUD_RENDER_MODE: mode,
+          CLOUD_IS_SPHERICAL: isSpherical ? 1 : 0,
+          CLOUD_IS_AURORA: isAurora ? 1 : 0,
           CLOUD_USE_CUSTOM_POS: (key & 4) ? 1 : 0,
           CLOUD_WRITE_RGB: (key & 8) ? 1 : 0,
         },
@@ -2789,25 +2812,6 @@ export class CloudComputeBuilder {
     const boxCenter = renderBox.center ?? [0, 0, 0];
     const boxHalf = renderBox.half ?? [18, 0.6, 18];
 
-    const rad = (d) => (d * Math.PI) / 180;
-    const cross = (a, b) => [
-      a[1] * b[2] - a[2] * b[1],
-      a[2] * b[0] - a[0] * b[2],
-      a[0] * b[1] - a[1] * b[0],
-    ];
-    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-    const len = (a) => Math.hypot(a[0], a[1], a[2]) || 1;
-    const norm = (a) => {
-      const L = len(a);
-      return [a[0] / L, a[1] / L, a[2] / L];
-    };
-    const wv3 = (ofs, v) => {
-      dv.setFloat32(ofs, v[0], true);
-      dv.setFloat32(ofs + 4, v[1], true);
-      dv.setFloat32(ofs + 8, v[2], true);
-      dv.setFloat32(ofs + 12, 0.0, true);
-    };
-
     let camPos, right, up, fwd, fovYRad, aspect, sunDir;
 
     if (
@@ -2821,29 +2825,29 @@ export class CloudComputeBuilder {
       right = opts.cam.right;
       up = opts.cam.up;
       fwd = opts.cam.fwd;
-      fovYRad = ((opts.cam.fovYDeg ?? 60) * Math.PI) / 180;
+      fovYRad = radDeg(opts.cam.fovYDeg ?? 60);
       aspect = opts.cam.aspect ?? 1.0;
       sunDir = opts.sunDir ?? [0, 1, 0];
     } else {
-      const yaw = rad(opts.yawDeg ?? 0);
-      const pitch = rad(opts.pitchDeg ?? 0);
+      const yaw = radDeg(opts.yawDeg ?? 0);
+      const pitch = radDeg(opts.pitchDeg ?? 0);
       const cp = Math.cos(pitch),
         sp = Math.sin(pitch);
       const cy = Math.cos(yaw),
         sy = Math.sin(yaw);
-      fwd = norm([sy * cp, sp, cy * cp]);
+      fwd = norm3([sy * cp, sp, cy * cp]);
       const upRef =
-        Math.abs(dot(fwd, [0, 1, 0])) > 0.999 ? [0, 0, 1] : [0, 1, 0];
-      right = norm(cross(upRef, fwd));
-      up = cross(fwd, right);
+        Math.abs(dot3(fwd, [0, 1, 0])) > 0.999 ? [0, 0, 1] : [0, 1, 0];
+      right = norm3(cross3(upRef, fwd));
+      up = cross3(fwd, right);
       const zoom = opts.zoom ?? 3.0;
       camPos = [-fwd[0] * zoom, -fwd[1] * zoom, -fwd[2] * zoom];
-      fovYRad = rad(opts.fovYDeg ?? 60);
+      fovYRad = radDeg(opts.fovYDeg ?? 60);
       aspect = opts.aspect ?? 1.0;
-      const sAz = rad(opts.sunAzimuthDeg ?? 45);
-      const sEl = rad(opts.sunElevationDeg ?? 20);
+      const sAz = radDeg(opts.sunAzimuthDeg ?? 45);
+      const sEl = radDeg(opts.sunElevationDeg ?? 20);
       const cel = Math.cos(sEl);
-      sunDir = norm([cel * Math.sin(sAz), Math.sin(sEl), cel * Math.cos(sAz)]);
+      sunDir = norm3([cel * Math.sin(sAz), Math.sin(sEl), cel * Math.cos(sAz)]);
     }
 
     const compositeQuality = Math.max(0, Math.min(2, opts.compositeQuality ?? 2)) >>> 0;
@@ -2853,24 +2857,24 @@ export class CloudComputeBuilder {
     dv.setUint32(4, compositeQuality, true);
     dv.setFloat32(8, styleShadowDarkness, true);
     dv.setFloat32(12, 0.0, true);
-    wv3(16, camPos);
-    wv3(32, right);
-    wv3(48, up);
-    wv3(64, fwd);
+    writeVec3Padded(dv, 16, camPos);
+    writeVec3Padded(dv, 32, right);
+    writeVec3Padded(dv, 48, up);
+    writeVec3Padded(dv, 64, fwd);
     dv.setFloat32(80, fovYRad, true);
     dv.setFloat32(84, aspect, true);
     dv.setFloat32(88, exposure, true);
     dv.setFloat32(92, sunBloom, true);
-    wv3(96, sunDir);
-    wv3(112, skyColor);
+    writeVec3Padded(dv, 96, sunDir);
+    writeVec3Padded(dv, 112, skyColor);
     dv.setUint32(128, gradeStyle, true);
     dv.setFloat32(132, styleShadowStrength, true);
     dv.setFloat32(136, styleColorLift, true);
     dv.setFloat32(140, styleSaturation, true);
-    wv3(144, sunColorTint);
-    wv3(160, lightTint);
-    wv3(176, shadowTint);
-    wv3(192, edgeTint);
+    writeVec3Padded(dv, 144, sunColorTint);
+    writeVec3Padded(dv, 160, lightTint);
+    writeVec3Padded(dv, 176, shadowTint);
+    writeVec3Padded(dv, 192, edgeTint);
     dv.setFloat32(208, styleRimStrength, true);
     dv.setFloat32(212, styleSunBleed, true);
     dv.setFloat32(216, styleShadowEdge, true);
@@ -2887,8 +2891,8 @@ export class CloudComputeBuilder {
     dv.setFloat32(260, silverExponent, true);
     dv.setFloat32(264, outputWidth, true);
     dv.setFloat32(268, outputHeight, true);
-    wv3(272, boxCenter);
-    wv3(288, boxHalf);
+    writeVec3Padded(dv, 272, boxCenter);
+    writeVec3Padded(dv, 288, boxHalf);
 
     this._writeIfChanged("render", this.renderParams, this._abRender);
   }
