@@ -22,6 +22,11 @@ The tuning playground uses `NoiseComputeBuilder` from [`webgpu_noise_compute_tex
 - [5/6 demo](https://www.youtube.com/watch?v=ShBe7HvlEb8)
 
 # Screenshots
+
+| Planets with volumetric clouds and aurora |  |  |
+|---|---|---|
+| <img width="1586" height="1168" alt="Screenshot 2026-06-13 233532" src="https://github.com/user-attachments/assets/8872720b-8710-4fa7-a28c-decf422edd21" /> | <img width="1338" height="1094" alt="Screenshot 2026-06-13 231303" src="https://github.com/user-attachments/assets/b4e74511-71bb-4db9-ab86-5d5d60ddcdd2" /> | <img width="1636" height="1252" alt="Screenshot 2026-06-13 124342" src="https://github.com/user-attachments/assets/155f60ce-0dd5-416a-9adc-f30a32d427c5" /> |
+
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/85a8a9e9-8cc8-41e1-bd49-d9fa5681ba0b" />
 <img width="800" alt="Screenshot 2026-06-06 172156" src="https://github.com/user-attachments/assets/36306a95-fda1-4f0a-8a09-7c8dc0115241" />
 <img width="800" alt="Screenshot 2026-05-29 105041" src="https://github.com/user-attachments/assets/96fae4fd-ba58-42bb-a2a0-728086c8c8b5" />
