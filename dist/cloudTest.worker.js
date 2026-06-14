@@ -12808,6 +12808,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       });
     }
     pushTransformsToCloudBuilder();
+    const renderingFirstFrame = !cb.outTexture || !ctxMain;
+    if (renderingFirstFrame) await progressiveYield(true, "Rendering first frame...");
     const cameraChanged = updateViewInvalidation(preview);
     if (reproj) {
       const nextReproj = normalizeReproj(reproj);

@@ -3173,6 +3173,7 @@ async function applyCloudLayerPreset(key, render = true) {
     useFreshFullFrameReproj(payload);
     ensureCoarseInPayload(payload);
     payload.skipFinalDebug = true;
+    await setBusyAndPaint("Rendering first frame...");
     await runFrameLatest(payload);
     await refreshDebugPreviews();
   } finally {
@@ -4219,6 +4220,7 @@ async function runBakeJobsAndFrame(jobs) {
 
     useFreshFullFrameReproj(payload);
     ensureCoarseInPayload(payload);
+    await setBusyAndPaint("Rendering first frame...");
     await runFrameLatest(payload);
   } finally {
     if (wasAnimating) {
@@ -4278,6 +4280,11 @@ function setBusy(on, msg = "Working...") {
     const b = $(id);
     if (b) b.disabled = on;
   });
+}
+
+async function setBusyAndPaint(msg) {
+  setBusy(true, msg);
+  await nextPaint();
 }
 
 // ---- seeds, slice helpers ----
@@ -4518,6 +4525,7 @@ async function wireUI() {
         };
         ensureCoarseInPayload(payload);
         payload.skipFinalDebug = true;
+        await setBusyAndPaint("Rendering first frame...");
         await runFrameLatest(payload);
         const loopReproj = getReprojPayload();
         await rpc("setReproj", { reproj: loopReproj, perf: null });
@@ -4594,6 +4602,7 @@ async function wireUI() {
 
       payload.waitForGpu = true;
       payload.logFrame = true;
+      await setBusyAndPaint("Rendering frame...");
       const { timings } = await rpc("runFrame", payload);
       console.log(
         timings.waitedForGpu ? "[BENCH waited] compute(ms):" : "[BENCH submitted] compute(ms):",
@@ -5004,6 +5013,7 @@ async function wireUI() {
 
       useFreshFullFrameReproj(payload);
       ensureCoarseInPayload(payload);
+      await setBusyAndPaint("Rendering first frame...");
       await runFrameLatest(payload);
     } finally {
       setBusy(false);
@@ -5148,6 +5158,7 @@ function scheduleInitialBakeAndRender() {
       useFreshFullFrameReproj(payload);
       ensureCoarseInPayload(payload);
 
+      await setBusyAndPaint("Rendering first frame...");
       const { timings } = await rpc("runFrame", payload);
       setTimeout(() => {
         refreshDebugPreviews().catch((e) => console.warn("startup debug refresh failed", e));

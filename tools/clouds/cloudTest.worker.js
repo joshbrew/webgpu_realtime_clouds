@@ -1718,6 +1718,9 @@ async function runFrame({
 
   pushTransformsToCloudBuilder();
 
+  const renderingFirstFrame = !cb.outTexture || !ctxMain;
+  if (renderingFirstFrame) await progressiveYield(true, "Rendering first frame...");
+
   const cameraChanged = updateViewInvalidation(preview);
 
   if (reproj) {
