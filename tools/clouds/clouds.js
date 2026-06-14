@@ -4,6 +4,25 @@
 import cloudWGSL from "./clouds.wgsl";
 import previewWGSL from "./cloudsRender.wgsl";
 
+const CLOUD_GPU_CACHE = new WeakMap();
+
+function getCloudGpuCache(device) {
+  let cache = CLOUD_GPU_CACHE.get(device);
+  if (!cache) {
+    cache = {
+      module: null,
+      bgl1: null,
+      samplers: null,
+      computeByFormat: new Map(),
+      previewByFormat: new Map(),
+      upsampleByFormat: new Map(),
+      historyCopy: null,
+    };
+    CLOUD_GPU_CACHE.set(device, cache);
+  }
+  return cache;
+}
+
 const _has = (o, k) => Object.prototype.hasOwnProperty.call(o || {}, k);
 const normalizeTemporalRate = (value) => {
   const n = Math.max(1, Number(value) | 0);
@@ -400,6 +419,19 @@ export class CloudComputeBuilder {
     this.outFormat = fmt;
 
     const d = this.device;
+    const deviceCache = getCloudGpuCache(d);
+    const cachedCompute = deviceCache.computeByFormat.get(this.outFormat);
+    if (cachedCompute) {
+      this.bgl0 = cachedCompute.bgl0;
+      this.pipeline = cachedCompute.pipeline;
+
+      this._destroyDummyHistory();
+      this._createDummyHistory();
+
+      this._clearBindGroupCaches();
+      this._ensureUpsamplePipeline(this.outFormat);
+      return;
+    }
 
     // group(0) bindings must match updated shader:
     // 0 opt, 1 C, 2 unused storage, 3 NTransform, 4 outTex, 5 posBuf, 6 frame, 7 historyOut, 8 reproj, 9 perf, 10 TUNE
@@ -478,6 +510,10 @@ export class CloudComputeBuilder {
       compute: { module: this.module, entryPoint: "computeCloud" },
     });
 
+    deviceCache.computeByFormat.set(this.outFormat, {
+      bgl0: this.bgl0,
+      pipeline: this.pipeline,
+    });
 
     this._destroyDummyHistory();
     this._createDummyHistory();
@@ -541,133 +577,148 @@ export class CloudComputeBuilder {
   // -------------------- init compute + resources --------------------
   _initCompute() {
     const d = this.device;
-    this.module = d.createShaderModule({ code: cloudWGSL });
+    const deviceCache = getCloudGpuCache(d);
+    if (!deviceCache.module) {
+      deviceCache.module = d.createShaderModule({ code: cloudWGSL });
+    }
+    this.module = deviceCache.module;
 
     // group(1) must match updated shader:
     // 0 weather2D, 1 samp2D, 2 shape3D, 3 sampShape, 4 blueTex, 5 sampBN, 6 detail3D, 7 sampDetail,
     // 8 L, 9 V, 10 B, 11 historyPrev, 12 sampHistory, 13 motionTex, 14 sampMotion, 15 depthPrev, 16 sampDepth
-    this.bgl1 = d.createBindGroupLayout({
-      entries: [
-        {
-          binding: 0,
-          visibility: GPUShaderStage.COMPUTE,
-          texture: { sampleType: "float", viewDimension: "2d-array" },
-        },
-        {
-          binding: 1,
-          visibility: GPUShaderStage.COMPUTE,
-          sampler: { type: "filtering" },
-        },
-        {
-          binding: 2,
-          visibility: GPUShaderStage.COMPUTE,
-          texture: { sampleType: "float", viewDimension: "3d" },
-        },
-        {
-          binding: 3,
-          visibility: GPUShaderStage.COMPUTE,
-          sampler: { type: "filtering" },
-        },
-        {
-          binding: 4,
-          visibility: GPUShaderStage.COMPUTE,
-          texture: { sampleType: "float", viewDimension: "2d-array" },
-        },
-        {
-          binding: 5,
-          visibility: GPUShaderStage.COMPUTE,
-          sampler: { type: "filtering" },
-        },
-        {
-          binding: 6,
-          visibility: GPUShaderStage.COMPUTE,
-          texture: { sampleType: "float", viewDimension: "3d" },
-        },
-        {
-          binding: 7,
-          visibility: GPUShaderStage.COMPUTE,
-          sampler: { type: "filtering" },
-        },
-        {
-          binding: 8,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "uniform" },
-        },
-        {
-          binding: 9,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "uniform" },
-        },
-        {
-          binding: 10,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "uniform" },
-        },
-        {
-          binding: 11,
-          visibility: GPUShaderStage.COMPUTE,
-          texture: { sampleType: "float", viewDimension: "2d-array" },
-        },
-        {
-          binding: 12,
-          visibility: GPUShaderStage.COMPUTE,
-          sampler: { type: "filtering" },
-        },
-        {
-          binding: 13,
-          visibility: GPUShaderStage.COMPUTE,
-          texture: { sampleType: "float", viewDimension: "2d" },
-        },
-        {
-          binding: 14,
-          visibility: GPUShaderStage.COMPUTE,
-          sampler: { type: "filtering" },
-        },
-        {
-          binding: 15,
-          visibility: GPUShaderStage.COMPUTE,
-          texture: { sampleType: "float", viewDimension: "2d" },
-        },
-        {
-          binding: 16,
-          visibility: GPUShaderStage.COMPUTE,
-          sampler: { type: "filtering" },
-        },
-      ],
-    });
+    if (!deviceCache.bgl1) {
+      deviceCache.bgl1 = d.createBindGroupLayout({
+        entries: [
+          {
+            binding: 0,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d-array" },
+          },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" },
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "3d" },
+          },
+          {
+            binding: 3,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" },
+          },
+          {
+            binding: 4,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d-array" },
+          },
+          {
+            binding: 5,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" },
+          },
+          {
+            binding: 6,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "3d" },
+          },
+          {
+            binding: 7,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" },
+          },
+          {
+            binding: 8,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" },
+          },
+          {
+            binding: 9,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" },
+          },
+          {
+            binding: 10,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" },
+          },
+          {
+            binding: 11,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d-array" },
+          },
+          {
+            binding: 12,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" },
+          },
+          {
+            binding: 13,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d" },
+          },
+          {
+            binding: 14,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" },
+          },
+          {
+            binding: 15,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d" },
+          },
+          {
+            binding: 16,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" },
+          },
+        ],
+      });
+    }
+    this.bgl1 = deviceCache.bgl1;
 
 
     // samplers (shader uses manual wrap helpers anyway, keep repeat for maps)
-    this._samp2D = d.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-      mipmapFilter: "linear",
-      addressModeU: "repeat",
-      addressModeV: "repeat",
-    });
-    this._sampShape = d.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-      mipmapFilter: "linear",
-      addressModeU: "repeat",
-      addressModeV: "repeat",
-      addressModeW: "repeat",
-    });
-    this._sampDetail = d.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-      mipmapFilter: "linear",
-      addressModeU: "repeat",
-      addressModeV: "repeat",
-      addressModeW: "repeat",
-    });
-    this._sampBN = d.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-      mipmapFilter: "linear",
-      addressModeU: "repeat",
-      addressModeV: "repeat",
-    });
+    if (!deviceCache.samplers) {
+      deviceCache.samplers = {
+        samp2D: d.createSampler({
+          magFilter: "linear",
+          minFilter: "linear",
+          mipmapFilter: "linear",
+          addressModeU: "repeat",
+          addressModeV: "repeat",
+        }),
+        sampShape: d.createSampler({
+          magFilter: "linear",
+          minFilter: "linear",
+          mipmapFilter: "linear",
+          addressModeU: "repeat",
+          addressModeV: "repeat",
+          addressModeW: "repeat",
+        }),
+        sampDetail: d.createSampler({
+          magFilter: "linear",
+          minFilter: "linear",
+          mipmapFilter: "linear",
+          addressModeU: "repeat",
+          addressModeV: "repeat",
+          addressModeW: "repeat",
+        }),
+        sampBN: d.createSampler({
+          magFilter: "linear",
+          minFilter: "linear",
+          mipmapFilter: "linear",
+          addressModeU: "repeat",
+          addressModeV: "repeat",
+        }),
+      };
+    }
+    this._samp2D = deviceCache.samplers.samp2D;
+    this._sampShape = deviceCache.samplers.sampShape;
+    this._sampDetail = deviceCache.samplers.sampDetail;
+    this._sampBN = deviceCache.samplers.sampBN;
 
     // dummy motion/depth textures
     const tex2Desc = {
@@ -792,8 +843,10 @@ export class CloudComputeBuilder {
       s.outputChannel = opts.outputChannel >>> 0 || 0;
     if (_has(opts, "writeRGB")) s.writeRGB = !!opts.writeRGB;
 
-    // Accept either r0..r3, or legacy names mapped into _r0.._r3
-    if (_has(opts, "r0")) s.r0 = +opts.r0 || 0.0;
+    // Accept either r0..r3, or legacy names mapped into _r0.._r3.
+    // r0 >= 0.5 enables spherical shell marching in clouds.wgsl.
+    if (_has(opts, "sphericalMode")) s.r0 = opts.sphericalMode ? 1.0 : 0.0;
+    else if (_has(opts, "r0")) s.r0 = +opts.r0 || 0.0;
     else if (_has(opts, "debugForceFog")) s.r0 = +opts.debugForceFog || 0.0;
 
     if (_has(opts, "r1")) s.r1 = +opts.r1 || 0.0;
@@ -1259,6 +1312,9 @@ export class CloudComputeBuilder {
       stepBase = 0.02,
       stepInc = 0.04,
       volumeLayers = 1,
+      viewExtraA = 0.0,
+      viewExtraB = 0.0,
+      viewExtraC = 0.0,
     } = opts;
 
     const dv = this._dvView;
@@ -1314,9 +1370,9 @@ export class CloudComputeBuilder {
       cloudTop,
       volumeLayers,
       worldToUV,
-      0,
-      0,
-      0,
+      viewExtraA,
+      viewExtraB,
+      viewExtraC,
       0,
       0,
       0,
@@ -1412,7 +1468,7 @@ export class CloudComputeBuilder {
     putF(232, s.sparsity ?? 0.42);
     putF(236, s.definition ?? 0.62);
 
-    for (let i = 232; i < this._abTuning.byteLength; i += 4)
+    for (let i = 240; i < this._abTuning.byteLength; i += 4)
       dv.setUint32(i, 0, true);
 
     this._writeIfChanged("tuning", this.tuningBuffer, this._abTuning);
@@ -2093,6 +2149,16 @@ export class CloudComputeBuilder {
 
   _ensureHistoryCopyPipeline() {
     if (this._historyCopy && this._historyCopy.format === "rgba16float") return this._historyCopy;
+    const deviceCache = getCloudGpuCache(this.device);
+    if (deviceCache.historyCopy) {
+      this._historyCopy = {
+        ...deviceCache.historyCopy,
+        bgCache: new Map(),
+      };
+      this._historyCopyBgCache.clear();
+      this._historyCopyBgKeys.length = 0;
+      return this._historyCopy;
+    }
 
     const wgsl = `
       struct Frame {
@@ -2154,7 +2220,8 @@ export class CloudComputeBuilder {
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
       compute: { module, entryPoint: "main" },
     });
-    this._historyCopy = { format: "rgba16float", bgl, pipe };
+    deviceCache.historyCopy = { format: "rgba16float", bgl, pipe };
+    this._historyCopy = { ...deviceCache.historyCopy, bgCache: new Map() };
     this._historyCopyBgCache.clear();
     this._historyCopyBgKeys.length = 0;
     return this._historyCopy;
@@ -2402,6 +2469,13 @@ export class CloudComputeBuilder {
       return this._upsample;
 
     const fmt = format || "rgba16float";
+    const deviceCache = getCloudGpuCache(this.device);
+    const cachedUpsample = deviceCache.upsampleByFormat.get(fmt);
+    if (cachedUpsample) {
+      this._upsample = { ...cachedUpsample, bgCache: new Map() };
+      return this._upsample;
+    }
+
     const wgsl = `
       struct UpsampleParams {
         srcW : u32,
@@ -2496,7 +2570,8 @@ export class CloudComputeBuilder {
       addressModeV: "clamp-to-edge",
     });
 
-    this._upsample = { pipe, bgl, samp, format: fmt, bgCache: new Map() };
+    deviceCache.upsampleByFormat.set(fmt, { pipe, bgl, samp, format: fmt });
+    this._upsample = { ...deviceCache.upsampleByFormat.get(fmt), bgCache: new Map() };
     return this._upsample;
   }
 
@@ -2590,6 +2665,13 @@ export class CloudComputeBuilder {
   // -------------------- preview render --------------------
   _ensureRenderPipeline(format = "bgra8unorm") {
     if (this._render && this._render.format === format) return this._render;
+    const deviceCache = getCloudGpuCache(this.device);
+    const cachedRender = deviceCache.previewByFormat.get(format);
+    if (cachedRender) {
+      this._render = cachedRender;
+      return this._render;
+    }
+
     const mod = this.device.createShaderModule({ code: previewWGSL });
     const bgl = this.device.createBindGroupLayout({
       entries: [
@@ -2623,7 +2705,8 @@ export class CloudComputeBuilder {
       addressModeU: "clamp-to-edge",
       addressModeV: "clamp-to-edge",
     });
-    this._render = { pipe, bgl, samp, format };
+    deviceCache.previewByFormat.set(format, { pipe, bgl, samp, format });
+    this._render = deviceCache.previewByFormat.get(format);
     return this._render;
   }
 
