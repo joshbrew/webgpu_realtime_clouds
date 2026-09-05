@@ -4410,6 +4410,8 @@ function buildPlanetAuroraConfig(runtime, result, seed, options = {}) {
     cloudBottom: config.shell?.cloudBottom,
     cloudTop: config.shell?.cloudTop,
     shellMaxHalfHeight: config.shell?.maxHalfHeight,
+    surfaceTerrainOcclusionRadius: result.radius + Math.max(0, Number(result.maxHeightValue) || 0),
+    surfaceTerrainDepthBias: 0.08,
     weatherWidth: config.textures?.weatherWidth,
     weatherHeight: config.textures?.weatherHeight,
     shapeSize: config.textures?.shapeSize,

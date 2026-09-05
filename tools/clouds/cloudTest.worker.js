@@ -3,6 +3,7 @@
 // Updated: supports full NoiseTransforms (weather scale/offset + per-axis scale vectors for shape/detail/weather)
 import { NoiseComputeBuilder } from "../noise/noiseCompute.js";
 import { CloudComputeBuilder } from "./clouds.js";
+import { CloudTimingReport } from "./cloudTiming.js";
 
 let device = null,
   queue = null,
@@ -35,6 +36,45 @@ let SHAPE_SIZE = 128,
   WEATHER_H = 512,
   BN_W = 256,
   BN_H = 256;
+
+const BOOTSTRAP_LIMITS = Object.freeze({
+  weather: 128,
+  blue: 64,
+  shape: 32,
+  detail: 16,
+  coarseFactor: 8,
+});
+
+function bootstrapBakeOptions() {
+  return {
+    weather: {
+      width: Math.max(16, Math.min(WEATHER_W, BOOTSTRAP_LIMITS.weather)),
+      height: Math.max(16, Math.min(WEATHER_H, BOOTSTRAP_LIMITS.weather)),
+      key: "weather2d-bootstrap",
+      waitForGpu: true,
+      debug: false,
+    },
+    blue: {
+      width: Math.max(16, Math.min(BN_W, BOOTSTRAP_LIMITS.blue)),
+      height: Math.max(16, Math.min(BN_H, BOOTSTRAP_LIMITS.blue)),
+      key: "blue2d-bootstrap",
+      waitForGpu: true,
+      debug: false,
+    },
+    shape: {
+      size: Math.max(8, Math.min(SHAPE_SIZE, BOOTSTRAP_LIMITS.shape)),
+      id: "shape-bootstrap",
+      waitForGpu: true,
+      debug: false,
+    },
+    detail: {
+      size: Math.max(8, Math.min(DETAIL_SIZE, BOOTSTRAP_LIMITS.detail)),
+      id: "detail-bootstrap",
+      waitForGpu: true,
+      debug: false,
+    },
+  };
+}
 
 let debugPreviewEnabled = true;
 let mobileProfileEnabled = false;
@@ -124,6 +164,14 @@ let shapeAxisScale = [1, 1.22, 1],
 
 const renderBundleCache = new Map();
 const log = (...a) => postMessage({ type: "log", data: a });
+function emitTimingProgress(report, phase) {
+  try {
+    postMessage({
+      type: "timing",
+      data: { phase: String(phase || "working"), report: report?.snapshot?.() || report || null },
+    });
+  } catch {}
+}
 
 let lastPermSeed = null;
 let cachedEntryPointsRef = null;
@@ -145,6 +193,12 @@ let lastBaseBlueView = null;
 let lastBaseShapeView = null;
 let lastBaseDetailView = null;
 let reprojResetFrames = 0;
+let cloudPipelineWarmupPromise = null;
+let cloudPipelineWarmupState = "idle";
+let cloudPipelineWarmupTimings = null;
+let noisePipelineWarmupPromise = null;
+let noisePipelineWarmupState = "idle";
+let noisePipelineWarmupTimings = null;
 
 // -----------------------------------------------------------------------------
 // startup deferral helpers
@@ -211,6 +265,9 @@ async function ensureDevice() {
     console.warn("nb.buildPermTable initial failed", e);
   }
 
+  startCloudPipelineWarmup();
+  startNoisePipelineWarmup();
+
 }
 
 function ensureCloudBuilder() {
@@ -227,6 +284,142 @@ function ensureCloudBuilder() {
   }
   renderBundleCache.clear();
   return cb;
+}
+
+function startCloudPipelineWarmup() {
+  if (cloudPipelineWarmupPromise) return cloudPipelineWarmupPromise;
+
+  const totalStarted = performance.now();
+  const builderStarted = performance.now();
+  const builder = ensureCloudBuilder();
+  const builderMs = performance.now() - builderStarted;
+  const asyncCompute = typeof device?.createComputePipelineAsync === "function";
+  const asyncPreview = typeof device?.createRenderPipelineAsync === "function";
+
+  cloudPipelineWarmupState = "running";
+
+  const computeTask = (async () => {
+    const started = performance.now();
+    if (typeof builder.ensureComputePipelineReadyAsync === "function") {
+      await builder.ensureComputePipelineReadyAsync();
+    } else {
+      builder.ensureComputePipelineReady();
+    }
+    return performance.now() - started;
+  })();
+
+  const previewTask = (async () => {
+    const started = performance.now();
+    if (typeof builder.ensureRenderPipelineReadyAsync === "function") {
+      await builder.ensureRenderPipelineReadyAsync("bgra8unorm");
+    } else {
+      builder._ensureRenderPipeline("bgra8unorm");
+    }
+    return performance.now() - started;
+  })();
+
+  cloudPipelineWarmupPromise = Promise.allSettled([computeTask, previewTask])
+    .then((results) => {
+      const failed = results.find((result) => result.status === "rejected");
+      if (failed) throw failed.reason;
+      const computeMs = results[0].value;
+      const previewMs = results[1].value;
+      cloudPipelineWarmupState = "ready";
+      cloudPipelineWarmupTimings = {
+        ok: true,
+        asyncCompute,
+        asyncPreview,
+        builderMs,
+        computeMs,
+        computePipelines: builder.getComputePipelineTimings?.(),
+        previewMs,
+        totalMs: performance.now() - totalStarted,
+      };
+      log("[BENCH] cloud pipeline warmup:", cloudPipelineWarmupTimings);
+      return cloudPipelineWarmupTimings;
+    })
+    .catch((err) => {
+      cloudPipelineWarmupState = "failed";
+      cloudPipelineWarmupTimings = {
+        ok: false,
+        asyncCompute,
+        asyncPreview,
+        builderMs,
+        totalMs: performance.now() - totalStarted,
+        computePipelines: builder.getComputePipelineTimings?.(),
+        error: String(err?.message || err),
+      };
+      console.warn("Cloud pipeline async warmup failed; falling back to on-demand creation", err);
+      return cloudPipelineWarmupTimings;
+    });
+
+  return cloudPipelineWarmupPromise;
+}
+
+function startNoisePipelineWarmup() {
+  if (noisePipelineWarmupPromise) return noisePipelineWarmupPromise;
+  const entries = [
+    "clearTexture",
+    "computeFBM4D",
+    "computeBillow4D",
+    "computeBlueNoise",
+    "computeAntiWorley4D",
+    "computeWorley4D",
+  ];
+  const started = performance.now();
+  const asyncSupported = typeof device?.createComputePipelineAsync === "function";
+  noisePipelineWarmupState = asyncSupported ? "running" : "on-demand";
+
+  if (!asyncSupported || !nb?.pipelineLayout || !nb?.shaderModule || !nb?.pipelines) {
+    noisePipelineWarmupTimings = {
+      ok: true,
+      asyncSupported,
+      deferredToFirstUse: true,
+      entries,
+      totalMs: performance.now() - started,
+    };
+    noisePipelineWarmupPromise = Promise.resolve(noisePipelineWarmupTimings);
+    return noisePipelineWarmupPromise;
+  }
+
+  const entryTimings = {};
+  noisePipelineWarmupPromise = Promise.all(entries.map(async (entryPoint) => {
+    if (nb.pipelines.has(entryPoint)) {
+      entryTimings[entryPoint] = 0;
+      return;
+    }
+    const entryStarted = performance.now();
+    const pipeline = await device.createComputePipelineAsync({
+      layout: nb.pipelineLayout,
+      compute: { module: nb.shaderModule, entryPoint },
+    });
+    if (!nb.pipelines.has(entryPoint)) nb.pipelines.set(entryPoint, pipeline);
+    entryTimings[entryPoint] = performance.now() - entryStarted;
+  }))
+    .then(() => {
+      noisePipelineWarmupState = "ready";
+      noisePipelineWarmupTimings = {
+        ok: true,
+        asyncSupported,
+        entries: entryTimings,
+        totalMs: performance.now() - started,
+      };
+      log("[BENCH] noise pipeline warmup:", noisePipelineWarmupTimings);
+      return noisePipelineWarmupTimings;
+    })
+    .catch((error) => {
+      noisePipelineWarmupState = "failed";
+      noisePipelineWarmupTimings = {
+        ok: false,
+        asyncSupported,
+        entries: entryTimings,
+        error: String(error?.message || error),
+        totalMs: performance.now() - started,
+      };
+      console.warn("Noise pipeline async warmup failed; using on-demand compilation", error);
+      return noisePipelineWarmupTimings;
+    });
+  return noisePipelineWarmupPromise;
 }
 
 function configureMainContext(width = MAIN_W, height = MAIN_H) {
@@ -343,6 +536,49 @@ function ensureMainPresentSize(width = MAIN_W, height = MAIN_H) {
     configureMainContext(w, h);
   }
   return ctxMain;
+}
+
+async function clearMainFrame(payload = {}) {
+  await ensureDevice();
+  const report = new CloudTimingReport("cloud-loading-sky");
+  const sky = Array.isArray(payload?.sky) ? payload.sky : [0.5, 0.6, 0.8];
+  const clearValue = {
+    r: finiteNumber(sky[0], 0.5),
+    g: finiteNumber(sky[1], 0.6),
+    b: finiteNumber(sky[2], 0.8),
+    a: 1,
+  };
+
+  let stage = report.start("configure-main-presentation", { width: MAIN_W, height: MAIN_H }, "buffering");
+  ensureMainPresentSize(MAIN_W, MAIN_H);
+  report.end(stage);
+
+  stage = report.start("encode-sky-clear", { clearValue }, "dispatch");
+  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginRenderPass({
+    colorAttachments: [{
+      view: ctxMain.getCurrentTexture().createView(),
+      loadOp: "clear",
+      clearValue,
+      storeOp: "store",
+    }],
+  });
+  pass.end();
+  const commandBuffer = encoder.finish();
+  report.end(stage);
+
+  stage = report.start("submit-sky-clear", undefined, "gpu-submit");
+  queue.submit([commandBuffer]);
+  report.end(stage);
+
+  if (payload?.waitForGpu !== false && typeof queue.onSubmittedWorkDone === "function") {
+    stage = report.start("wait-for-sky-visible", undefined, "gpu-wait");
+    await queue.onSubmittedWorkDone();
+    report.end(stage);
+  }
+
+  report.mark("loading-sky-visible");
+  return report.finish({ clearValue });
 }
 
 // -----------------------------------------------------------------------------
@@ -486,11 +722,18 @@ function withToroidalFromMode(params, mode) {
 // -----------------------------------------------------------------------------
 // baking
 // -----------------------------------------------------------------------------
-async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {}, weatherBParams = null) {
-  if (noise.weather.arrayView && !force && !noise.weather.dirty) {
-    renderDebugIfEnabled("weather");
+async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {}, weatherBParams = null, bakeOptions = {}) {
+  const width = Math.max(1, (bakeOptions.width ?? WEATHER_W) | 0);
+  const height = Math.max(1, (bakeOptions.height ?? WEATHER_H) | 0);
+  const key = String(bakeOptions.key || "weather2d");
+  const assign = bakeOptions.assign !== false;
+  const showDebug = bakeOptions.debug !== false;
+  const waitForGpu = !!bakeOptions.waitForGpu;
+
+  if (assign && noise.weather.arrayView && !force && !noise.weather.dirty) {
+    if (showDebug) renderDebugIfEnabled("weather");
     noise.weather.dirty = false;
-    return { baseMs: 0, gMs: 0, bMs: 0, totalMs: 0 };
+    return { width, height, key, baseMs: 0, gMs: 0, bMs: 0, gpuWaitMs: 0, totalMs: 0 };
   }
 
   const T0 = performance.now();
@@ -502,10 +745,10 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
   maybeApplySeedToPermTable(baseParams);
 
   const t0 = performance.now();
-  const baseView = await nb.computeToTexture(WEATHER_W, WEATHER_H, baseParams, {
+  const baseView = await nb.computeToTexture(width, height, baseParams, {
     noiseChoices: ["clearTexture", baseMode],
     outputChannel: 1,
-    textureKey: "weather2d",
+    textureKey: key,
     viewDimension: "2d-array",
   });
   const baseMs = performance.now() - t0;
@@ -522,10 +765,10 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
     maybeApplySeedToPermTable(gParams);
 
     const tg0 = performance.now();
-    await nb.computeToTexture(WEATHER_W, WEATHER_H, gParams, {
+    await nb.computeToTexture(width, height, gParams, {
       noiseChoices: ["clearTexture", gMode],
       outputChannel: 2,
-      textureKey: "weather2d",
+      textureKey: key,
       viewDimension: "2d-array",
     });
     gMs = performance.now() - tg0;
@@ -534,13 +777,13 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
   } else if (!noise.weather.gCleared) {
     const tc0 = performance.now();
     await nb.computeToTexture(
-      WEATHER_W,
-      WEATHER_H,
+      width,
+      height,
       { zoom: 1.0 },
       {
         noiseChoices: ["clearTexture"],
         outputChannel: 2,
-        textureKey: "weather2d",
+        textureKey: key,
         viewDimension: "2d-array",
       },
     );
@@ -559,10 +802,10 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
     maybeApplySeedToPermTable(bParams);
 
     const tb0 = performance.now();
-    await nb.computeToTexture(WEATHER_W, WEATHER_H, bParams, {
+    await nb.computeToTexture(width, height, bParams, {
       noiseChoices: ["clearTexture", bMode],
       outputChannel: 3,
-      textureKey: "weather2d",
+      textureKey: key,
       viewDimension: "2d-array",
     });
     bMs = performance.now() - tb0;
@@ -571,13 +814,13 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
   } else if (!noise.weather.bCleared) {
     const tc0 = performance.now();
     await nb.computeToTexture(
-      WEATHER_W,
-      WEATHER_H,
+      width,
+      height,
       { zoom: 1.0 },
       {
         noiseChoices: ["clearTexture"],
         outputChannel: 3,
-        textureKey: "weather2d",
+        textureKey: key,
         viewDimension: "2d-array",
       },
     );
@@ -585,11 +828,21 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
     bMs = performance.now() - tc0;
   }
 
-  noise.weather.arrayView =
-    (typeof nb.get2DView === "function" ? nb.get2DView("weather2d", { dimension: "2d-array" }) : baseView) || baseView;
-  noise.weather.dirty = false;
+  const finalView =
+    (typeof nb.get2DView === "function" ? nb.get2DView(key, { dimension: "2d-array" }) : baseView) || baseView;
+  if (assign) {
+    noise.weather.arrayView = finalView;
+    noise.weather.dirty = false;
+  }
 
-  renderDebugIfEnabled("weather");
+  let gpuWaitMs = 0;
+  if (waitForGpu && typeof queue?.onSubmittedWorkDone === "function") {
+    const waitStarted = performance.now();
+    await queue.onSubmittedWorkDone();
+    gpuWaitMs = performance.now() - waitStarted;
+  }
+
+  if (assign && showDebug) renderDebugIfEnabled("weather");
 
   const totalMs = performance.now() - T0;
   log(
@@ -608,7 +861,7 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
     " bEnabled:",
     enabledB,
   );
-  return { baseMs, gMs, bMs, totalMs };
+  return { width, height, key, baseMs, gMs, bMs, gpuWaitMs, totalMs };
 }
 
 
@@ -753,12 +1006,18 @@ function blurBlueNoiseView(inputView, width, height, sharpness = BLUE_NOISE_SHAR
   }
 }
 
-async function bakeBlue2D(blueParams = {}, force = false) {
+async function bakeBlue2D(blueParams = {}, force = false, bakeOptions = {}) {
+  const width = Math.max(1, (bakeOptions.width ?? BN_W) | 0);
+  const height = Math.max(1, (bakeOptions.height ?? BN_H) | 0);
+  const key = String(bakeOptions.key || "blue2d");
+  const assign = bakeOptions.assign !== false;
+  const showDebug = bakeOptions.debug !== false;
+  const waitForGpu = !!bakeOptions.waitForGpu;
   maybeApplySeedToPermTable(blueParams);
 
-  if (noise.blue.arrayView && !force && !noise.blue.dirty) {
+  if (assign && noise.blue.arrayView && !force && !noise.blue.dirty) {
     noise.blue.dirty = false;
-    if (debugPreviewEnabled && dbg.blue) {
+    if (showDebug && debugPreviewEnabled && dbg.blue) {
       nb.renderTextureToCanvas(noise.blue.arrayView, dbg.blue, {
         preserveCanvasSize: true,
         clear: true,
@@ -766,26 +1025,36 @@ async function bakeBlue2D(blueParams = {}, force = false) {
         height: DBG_H,
       });
     }
-    return { blueMs: 0, totalMs: 0 };
+    return { width, height, key, blueMs: 0, blurMs: 0, gpuWaitMs: 0, totalMs: 0 };
   }
 
   const T0 = performance.now();
   const t0 = performance.now();
-  const arrView = await nb.computeToTexture(BN_W, BN_H, blueParams, {
+  const arrView = await nb.computeToTexture(width, height, blueParams, {
     noiseChoices: ["clearTexture", "computeBlueNoise"],
     outputChannel: 0,
-    textureKey: "blue2d",
+    textureKey: key,
   });
   const blueMs = performance.now() - t0;
 
-  const rawBlueView = (typeof nb.get2DView === "function" ? nb.get2DView("blue2d") : arrView) || arrView;
+  const rawBlueView = (typeof nb.get2DView === "function" ? nb.get2DView(key) : arrView) || arrView;
   const blurT0 = performance.now();
-  const filteredBlueView = blurBlueNoiseView(rawBlueView, BN_W, BN_H, BLUE_NOISE_SHARPNESS);
+  const filteredBlueView = blurBlueNoiseView(rawBlueView, width, height, BLUE_NOISE_SHARPNESS);
   const blurMs = performance.now() - blurT0;
-  noise.blue.arrayView = filteredBlueView || rawBlueView;
-  noise.blue.dirty = false;
+  const finalView = filteredBlueView || rawBlueView;
+  if (assign) {
+    noise.blue.arrayView = finalView;
+    noise.blue.dirty = false;
+  }
 
-  if (debugPreviewEnabled && dbg.blue) {
+  let gpuWaitMs = 0;
+  if (waitForGpu && typeof queue?.onSubmittedWorkDone === "function") {
+    const waitStarted = performance.now();
+    await queue.onSubmittedWorkDone();
+    gpuWaitMs = performance.now() - waitStarted;
+  }
+
+  if (assign && showDebug && debugPreviewEnabled && dbg.blue) {
     nb.renderTextureToCanvas(noise.blue.arrayView, dbg.blue, {
       preserveCanvasSize: true,
       clear: true,
@@ -796,17 +1065,21 @@ async function bakeBlue2D(blueParams = {}, force = false) {
 
   const totalMs = performance.now() - T0;
   log("[BENCH] blue noise(ms):", blueMs.toFixed(2), " blur(ms):", blurMs.toFixed(2), " total(ms):", totalMs.toFixed(2));
-  return { blueMs, blurMs, totalMs };
+  return { width, height, key, blueMs, blurMs, gpuWaitMs, totalMs };
 }
 
-async function bakeShape128(shapeParams = {}, force = false) {
+async function bakeShape128(shapeParams = {}, force = false, bakeOptions = {}) {
+  const size = Math.max(1, (bakeOptions.size ?? SHAPE_SIZE) | 0);
+  const id = String(bakeOptions.id || "shape128");
+  const assign = bakeOptions.assign !== false;
+  const showDebug = bakeOptions.debug !== false;
+  const waitForGpu = bakeOptions.waitForGpu !== false;
   maybeApplySeedToPermTable(shapeParams);
 
-  if (noise.shape128.view3D && !force && !noise.shape128.dirty) {
+  if (assign && noise.shape128.view3D && !force && !noise.shape128.dirty) {
     noise.shape128.dirty = false;
-    if (typeof queue?.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
-    renderDebugIfEnabled("slices");
-    return { baseMs: 0, bandsMs: [0, 0, 0], totalMs: 0 };
+    if (showDebug) renderDebugIfEnabled("slices");
+    return { size, id, baseMs: 0, bandsMs: [0, 0, 0], gpuWaitMs: 0, totalMs: 0 };
   }
 
   const T0 = performance.now();
@@ -822,10 +1095,10 @@ async function bakeShape128(shapeParams = {}, force = false) {
   if (baseModeB && baseModeB !== baseModeA) baseChoices.push(baseModeB);
 
   const t0 = performance.now();
-  await nb.computeToTexture3D(SHAPE_SIZE, SHAPE_SIZE, SHAPE_SIZE, baseParams, {
+  await nb.computeToTexture3D(size, size, size, baseParams, {
     noiseChoices: baseChoices,
     outputChannel: 1,
-    id: "shape128",
+    id,
   });
   const baseMs = performance.now() - t0;
   await deferToBrowser();
@@ -841,25 +1114,34 @@ async function bakeShape128(shapeParams = {}, force = false) {
   for (const b of bandSpecs) {
     const tb0 = performance.now();
     await nb.computeToTexture3D(
-      SHAPE_SIZE,
-      SHAPE_SIZE,
-      SHAPE_SIZE,
+      size,
+      size,
+      size,
       { ...baseParamsRaw, zoom: b.zm, toroidal: 1 },
       {
         noiseChoices: ["clearTexture", b.mode],
         outputChannel: b.ch,
-        id: "shape128",
+        id,
       },
     );
     bandsMs.push(performance.now() - tb0);
     await deferToBrowser();
   }
 
-  noise.shape128.view3D = nb.get3DView("shape128");
-  noise.shape128.dirty = false;
+  const finalView = nb.get3DView(id);
+  if (assign) {
+    noise.shape128.view3D = finalView;
+    noise.shape128.size = size;
+    noise.shape128.dirty = false;
+  }
 
-  if (typeof queue?.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
-  renderDebugIfEnabled("slices");
+  let gpuWaitMs = 0;
+  if (waitForGpu && typeof queue?.onSubmittedWorkDone === "function") {
+    const waitStarted = performance.now();
+    await queue.onSubmittedWorkDone();
+    gpuWaitMs = performance.now() - waitStarted;
+  }
+  if (assign && showDebug) renderDebugIfEnabled("slices");
 
   const totalMs = performance.now() - T0;
   log(
@@ -876,17 +1158,21 @@ async function bakeShape128(shapeParams = {}, force = false) {
     " bands:",
     bandSpecs.map((b) => `${b.ch}:${b.mode}`).join(" "),
   );
-  return { baseMs, bandsMs, totalMs };
+  return { size, id, baseMs, bandsMs, gpuWaitMs, totalMs };
 }
 
-async function bakeDetail32(detailParams = {}, force = false) {
+async function bakeDetail32(detailParams = {}, force = false, bakeOptions = {}) {
+  const size = Math.max(1, (bakeOptions.size ?? DETAIL_SIZE) | 0);
+  const id = String(bakeOptions.id || "detail32");
+  const assign = bakeOptions.assign !== false;
+  const showDebug = bakeOptions.debug !== false;
+  const waitForGpu = bakeOptions.waitForGpu !== false;
   maybeApplySeedToPermTable(detailParams);
 
-  if (noise.detail32.view3D && !force && !noise.detail32.dirty) {
+  if (assign && noise.detail32.view3D && !force && !noise.detail32.dirty) {
     noise.detail32.dirty = false;
-    if (typeof queue?.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
-    renderDebugIfEnabled("slices");
-    return { bandsMs: [0, 0, 0], totalMs: 0 };
+    if (showDebug) renderDebugIfEnabled("slices");
+    return { size, id, bandsMs: [0, 0, 0], gpuWaitMs: 0, totalMs: 0 };
   }
 
   const T0 = performance.now();
@@ -909,25 +1195,34 @@ async function bakeDetail32(detailParams = {}, force = false) {
   for (const b of bands) {
     const tb0 = performance.now();
     await nb.computeToTexture3D(
-      DETAIL_SIZE,
-      DETAIL_SIZE,
-      DETAIL_SIZE,
+      size,
+      size,
+      size,
       { ...baseParamsRaw, zoom: b.zm, toroidal: 1 },
       {
         noiseChoices: ["clearTexture", b.mode],
         outputChannel: b.ch,
-        id: "detail32",
+        id,
       },
     );
     bandsMs.push(performance.now() - tb0);
     await deferToBrowser();
   }
 
-  noise.detail32.view3D = nb.get3DView("detail32");
-  noise.detail32.dirty = false;
+  const finalView = nb.get3DView(id);
+  if (assign) {
+    noise.detail32.view3D = finalView;
+    noise.detail32.size = size;
+    noise.detail32.dirty = false;
+  }
 
-  if (typeof queue?.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
-  renderDebugIfEnabled("slices");
+  let gpuWaitMs = 0;
+  if (waitForGpu && typeof queue?.onSubmittedWorkDone === "function") {
+    const waitStarted = performance.now();
+    await queue.onSubmittedWorkDone();
+    gpuWaitMs = performance.now() - waitStarted;
+  }
+  if (assign && showDebug) renderDebugIfEnabled("slices");
 
   const totalMs = performance.now() - T0;
   log(
@@ -938,7 +1233,7 @@ async function bakeDetail32(detailParams = {}, force = false) {
     " modes:",
     `${m1},${m2},${m3}`,
   );
-  return { bandsMs, totalMs };
+  return { size, id, bandsMs, gpuWaitMs, totalMs };
 }
 
 // -----------------------------------------------------------------------------
@@ -1665,8 +1960,19 @@ async function runFrame({
   tuning = null,
   waitForGpu = false,
   logFrame = false,
+  bootstrapPreview = false,
 } = {}) {
+  const frameStarted = performance.now();
+  const frameReport = new CloudTimingReport("cloud-frame", {
+    requestedCoarseFactor: coarseFactor,
+    requestedWaitForGpu: !!waitForGpu,
+    bootstrapPreview: !!bootstrapPreview,
+    outputSize: [MAIN_W, MAIN_H],
+  });
+  emitTimingProgress(frameReport, "frame:start");
+  const deviceStage = frameReport.start("ensure-device", undefined, "setup");
   await ensureDevice();
+  frameReport.end(deviceStage);
 
   try {
     const loopSafeReproj =
@@ -1691,13 +1997,20 @@ async function runFrame({
       tuning,
       waitForGpu,
       logFrame,
+      bootstrapPreview,
     };
   } catch {}
 
+  const setupStage = frameReport.start("builder-uniform-buffer-setup", undefined, "buffering");
   if (tuning && typeof tuning === "object") mergeTuningPatch(tuning);
   const cloudBox = previewCloudBox(preview);
+  const builderStarted = performance.now();
   ensureCloudBuilder();
+  const builderMs = performance.now() - builderStarted;
   applyWorkerTuning(cloudBox);
+
+  let outputAllocationMs = 0;
+  let historyAllocationMs = 0;
 
   if (tileTransforms && typeof tileTransforms === "object") {
     applyNoiseTransforms(tileTransforms, {
@@ -1717,8 +2030,9 @@ async function runFrame({
   }
 
   pushTransformsToCloudBuilder();
+  frameReport.end(setupStage, { builderMs });
 
-  const renderingFirstFrame = !cb.outTexture || !ctxMain;
+  const renderingFirstFrame = !ctxMain || cb.width !== MAIN_W || cb.height !== MAIN_H || cb.layers !== 1;
   if (renderingFirstFrame) await progressiveYield(true, "Rendering first frame...");
 
   const cameraChanged = updateViewInvalidation(preview);
@@ -1737,20 +2051,25 @@ async function runFrame({
   const hasTemporalHistory = !!(workerReproj && workerReproj.temporalBlend > 0.0001);
   if (cameraChanged && hasTemporalHistory) invalidateReprojectionHistory();
 
+  const fallbackStage = frameReport.start("fallback-resource-bakes", undefined, "gpu-submit");
   if (!noise.weather.arrayView) await bakeWeather2D(weatherParams, true, billowParams, weatherBParams);
   if (!noise.blue.arrayView) await bakeBlue2D({}, true);
   if (!noise.shape128.view3D) await bakeShape128(shapeParams, true);
   if (!noise.detail32.view3D) await bakeDetail32(detailParams, true);
+  frameReport.end(fallbackStage);
 
+  const inputBindingStage = frameReport.start("input-texture-bindings", undefined, "buffering");
   syncBaseInputMaps();
+  frameReport.end(inputBindingStage);
 
   const workerTemporalCellRate = normalizeTemporalCellRate(workerReproj?.temporalCellRate);
   let effectiveCoarseFactor = Math.max(1, coarseFactor | 0, previewRenderScaleDivider(preview));
   const coarseComputeMode = effectiveCoarseFactor >= 2;
-  const useReproj = !!(workerReproj && workerReproj.enabled && !coarseComputeMode);
-  const useTemporalCells = workerTemporalCellRate > 1;
-  const useFullResTemporalBlend = !!(workerReproj && !coarseComputeMode && workerReproj.temporalBlend > 0.0001);
-  const useCoarseInterleave = !!(workerReproj && coarseComputeMode && useTemporalCells);
+  const bootstrapPreviewMode = !!bootstrapPreview;
+  const useReproj = !!(!bootstrapPreviewMode && workerReproj && workerReproj.enabled && !coarseComputeMode);
+  const useTemporalCells = !bootstrapPreviewMode && workerTemporalCellRate > 1;
+  const useFullResTemporalBlend = !!(!bootstrapPreviewMode && workerReproj && !coarseComputeMode && workerReproj.temporalBlend > 0.0001);
+  const useCoarseInterleave = !!(!bootstrapPreviewMode && workerReproj && coarseComputeMode && useTemporalCells);
   const useTemporalHistory = !!(workerReproj && (useFullResTemporalBlend || useTemporalCells || useCoarseInterleave));
   const resetReprojThisFrame = useTemporalHistory && reprojResetFrames > 0;
   let effectiveReproj = workerReproj;
@@ -1823,16 +2142,29 @@ async function runFrame({
       depthView = null;
     }
 
-    const outputNeedsAlloc = !cb.outTexture || cb.width !== MAIN_W || cb.height !== MAIN_H || cb.layers !== 1;
-    if (outputNeedsAlloc) await progressiveYield(mobileProfileEnabled, "Allocating cloud render targets...");
-    cb.createOutputTexture(MAIN_W, MAIN_H, 1);
+    const outputNeedsSetup =
+      cb.width !== MAIN_W ||
+      cb.height !== MAIN_H ||
+      cb.layers !== 1 ||
+      (!coarseComputeMode && !cb.outTexture) ||
+      (coarseComputeMode && !!cb.outTexture);
+    if (outputNeedsSetup) await progressiveYield(mobileProfileEnabled, "Allocating cloud render targets...");
+    const outputAllocationStarted = performance.now();
+    if (outputNeedsSetup) {
+      if (coarseComputeMode && typeof cb.setOutputExtent === "function") {
+        cb.setOutputExtent(MAIN_W, MAIN_H, 1, "rgba16float", { releaseOutput: true });
+      } else cb.createOutputTexture(MAIN_W, MAIN_H, 1);
+      outputAllocationMs += performance.now() - outputAllocationStarted;
+    }
 
     const historyW = effectiveCoarseFactor >= 2 ? Math.max(1, Math.ceil(MAIN_W / effectiveCoarseFactor)) : (cb.width || MAIN_W);
     const historyH = effectiveCoarseFactor >= 2 ? Math.max(1, Math.ceil(MAIN_H / effectiveCoarseFactor)) : (cb.height || MAIN_H);
     const historyL = cb.layers || 1;
     const historyNeedsAlloc = !historyAllocated || historyTexWidth !== historyW || historyTexHeight !== historyH || historyTexLayers !== historyL;
     if (historyNeedsAlloc) await progressiveYield(mobileProfileEnabled, "Allocating temporal history...");
+    const historyAllocationStarted = performance.now();
     ensureHistoryTextures(historyW, historyH, historyL);
+    if (historyNeedsAlloc) historyAllocationMs += performance.now() - historyAllocationStarted;
 
     historyOutView = historyUsesAasOut ? historyViewA : historyViewB;
 
@@ -1931,28 +2263,90 @@ async function runFrame({
   }
 
   if (!useTemporalHistory) {
-    const outputNeedsAlloc = !cb.outTexture || cb.width !== MAIN_W || cb.height !== MAIN_H || cb.layers !== 1;
-    if (outputNeedsAlloc) await progressiveYield(mobileProfileEnabled, "Allocating cloud render target...");
-    cb.createOutputTexture(MAIN_W, MAIN_H, 1);
+    const targetWidth = bootstrapPreviewMode
+      ? Math.max(1, Math.ceil(MAIN_W / Math.max(1, effectiveCoarseFactor)))
+      : MAIN_W;
+    const targetHeight = bootstrapPreviewMode
+      ? Math.max(1, Math.ceil(MAIN_H / Math.max(1, effectiveCoarseFactor)))
+      : MAIN_H;
+    const outputNeedsSetup =
+      cb.width !== targetWidth ||
+      cb.height !== targetHeight ||
+      cb.layers !== 1 ||
+      (bootstrapPreviewMode && !cb.outTexture) ||
+      (!bootstrapPreviewMode && !coarseComputeMode && !cb.outTexture) ||
+      (!bootstrapPreviewMode && coarseComputeMode && !!cb.outTexture);
+    if (outputNeedsSetup) await progressiveYield(mobileProfileEnabled, "Allocating cloud render target...");
+    const outputAllocationStarted = performance.now();
+    if (outputNeedsSetup) {
+      if (bootstrapPreviewMode) {
+        cb.createOutputTexture(targetWidth, targetHeight, 1, "rgba16float");
+      } else if (coarseComputeMode && typeof cb.setOutputExtent === "function") {
+        cb.setOutputExtent(MAIN_W, MAIN_H, 1, "rgba16float", { releaseOutput: true });
+      } else cb.createOutputTexture(MAIN_W, MAIN_H, 1);
+      outputAllocationMs += performance.now() - outputAllocationStarted;
+    }
   }
 
   const shouldWaitForGpu = !!waitForGpu;
+  if (!bootstrapPreviewMode && cloudPipelineWarmupState === "running") {
+    try {
+      postMessage({ type: "progress", data: { message: "Finishing cloud shader compilation..." } });
+    } catch {}
+  }
+  const tWarmupWait0 = performance.now();
+  let warmupTimings;
+  if (bootstrapPreviewMode) {
+    const bootstrapWarmupStarted = performance.now();
+    await Promise.all([
+      cb.ensureBootstrapComputePipelineReadyAsync?.("rgba16float"),
+      cb.ensureBootstrapRenderPipelineReadyAsync?.("bgra8unorm"),
+    ]);
+    warmupTimings = {
+      ok: true,
+      bootstrapPreview: true,
+      totalMs: performance.now() - bootstrapWarmupStarted,
+      fullPipelineState: cloudPipelineWarmupState,
+    };
+  } else {
+    warmupTimings = await startCloudPipelineWarmup();
+    // Tuning can change after the initial warmup (notably sunStride crossing 1).
+    // Await the current variant too so a quality change cannot synchronously
+    // compile an un-warmed pipeline in dispatch encoding.
+    const variantStarted = performance.now();
+    await cb.ensureComputePipelineReadyAsync();
+    warmupTimings = {
+      ...warmupTimings,
+      currentVariantWaitMs: performance.now() - variantStarted,
+      computePipelines: cb.getComputePipelineTimings?.(),
+    };
+  }
+  const tWarmupWait1 = performance.now();
   const tP0 = performance.now();
-  if (typeof cb.ensureComputePipelineReady === "function") {
+  if (bootstrapPreviewMode && typeof cb._ensureBootstrapComputePipeline === "function") {
+    cb._ensureBootstrapComputePipeline("rgba16float");
+  } else if (typeof cb.ensureComputePipelineReady === "function") {
     cb.ensureComputePipelineReady();
   }
   const tP1 = performance.now();
   const tAll0 = performance.now();
+  const tPreDrain0 = performance.now();
   if (shouldWaitForGpu && typeof queue.onSubmittedWorkDone === "function") {
+    frameReport.mark("pre-dispatch-queue-drain-start");
+    emitTimingProgress(frameReport, "frame:pre-dispatch-queue-drain");
     await queue.onSubmittedWorkDone();
   }
+  const tPreDrain1 = performance.now();
 
   const cf = Math.max(1, effectiveCoarseFactor | 0);
+  const tEncoder0 = performance.now();
   const enc = device.createCommandEncoder();
+  const tEncoder1 = performance.now();
   const tC0 = performance.now();
   const reconstructAtPresentation = cf >= 2;
-  const encodedDispatch =
-    typeof cb.encodeDispatchPasses === "function"
+  const encodedDispatch = bootstrapPreviewMode
+    ? cb.encodeBootstrapPreviewPass?.(enc)
+    : typeof cb.encodeDispatchPasses === "function"
       ? cb.encodeDispatchPasses(enc, { coarseFactor: cf, reconstructAtPresentation })
       : null;
   if (!encodedDispatch) {
@@ -1962,80 +2356,100 @@ async function runFrame({
 
   ensureMainPresentSize(MAIN_W, MAIN_H);
 
-  const { pipe, bgl, samp, format } = cb._ensureRenderPipeline("bgra8unorm");
-
-  const layerIndex = Math.max(0, Math.min((cb?.layers || 1) - 1, preview?.layer || 0));
-  const renderSig = renderUniformSignature(preview, aspect, layerIndex, cloudParams || {}, cloudBox, MAIN_W, MAIN_H);
-  if (renderSig !== lastRenderUniformSignature) {
-    cb._writeRenderUniforms({
-      layerIndex,
-      cam: {
-        camPos: [preview?.cam?.x || 0, preview?.cam?.y || 0, preview?.cam?.z || 0],
-        right,
-        up,
-        fwd,
-        fovYDeg: preview?.cam?.fovYDeg || 60,
-        aspect,
-      },
-      sunDir,
-      box: cloudBox,
-      exposure: preview?.exposure || 1.0,
-      skyColor: preview?.sky || [0.5, 0.6, 0.8],
-      sunBloom: preview?.sun?.bloom || 0.0,
-      compositeQuality: 2,
-      gradeStyle: preview?.gradeStyle ?? 1,
-      sunColorTint: preview?.sunTint || [1.0, 1.0, 1.0],
-      lightTint: preview?.cloudLitTint || [1.0, 1.0, 1.0],
-      shadowTint: preview?.cloudShadowTint || [1.0, 1.0, 1.0],
-      edgeTint: preview?.edgeTint || [1.0, 1.0, 1.0],
-      styleShadowStrength: preview?.styleShadowStrength ?? 0.88,
-      styleShadowEdge: preview?.styleShadowEdge ?? 0.0,
-      styleShadowDarkness: preview?.styleShadowDarkness ?? 0.0,
-      styleColorLift: preview?.styleColorLift ?? 1.08,
-      styleSaturation: preview?.styleSaturation ?? 1.02,
-      styleRimStrength: preview?.styleRimStrength ?? 0.86,
-      styleSunBleed: preview?.styleSunBleed ?? 0.82,
-      styleMidLift: preview?.styleMidLift ?? 0.88,
-      silverIntensity: cloudParams?.silverIntensity ?? 1.15,
-      silverExponent: cloudParams?.silverExponent ?? 1.65,
-      outputWidth: MAIN_W,
-      outputHeight: MAIN_H,
-      godRaysEnabled: !!preview?.godRaysEnabled,
-      godRayStrength: preview?.godRayStrength ?? 0.0,
-      godRayLength: preview?.godRayLength ?? 1.0,
-      godRayFalloff: preview?.godRayFalloff ?? 1.55,
-      alphaFloor: preview?.alphaFloor ?? 0.0,
-      fogDensity: preview?.fogDensity ?? 0.34,
-      fogHorizon: preview?.fogHorizon ?? 0.30,
-      fogSun: preview?.fogSun ?? 1.50,
-    });
-    lastRenderUniformSignature = renderSig;
+  const clearValue = {
+    r: preview?.sky?.[0] ?? 0.5,
+    g: preview?.sky?.[1] ?? 0.6,
+    b: preview?.sky?.[2] ?? 0.8,
+    a: 1,
+  };
+  const tRenderPipeline0 = performance.now();
+  let regularRenderPipeline = null;
+  if (bootstrapPreviewMode) {
+    cb._ensureBootstrapRenderPipeline?.("bgra8unorm");
+  } else {
+    regularRenderPipeline = cb._ensureRenderPipeline("bgra8unorm");
   }
+  const tRenderPipeline1 = performance.now();
 
   const tR0 = performance.now();
-  const { bundle } = getOrCreateRenderBundle(pipe, bgl, samp, format);
-
   const tex = ctxMain.getCurrentTexture();
-  const pass = enc.beginRenderPass({
-    colorAttachments: [
-      {
+  if (bootstrapPreviewMode) {
+    const encodedBootstrapRender = cb.encodeBootstrapRenderPass?.(
+      enc,
+      tex.createView(),
+      { format: "bgra8unorm", clearValue },
+    );
+    if (!encodedBootstrapRender) {
+      throw new Error("CloudComputeBuilder.encodeBootstrapRenderPass is required for bootstrap presentation.");
+    }
+  } else {
+    const { pipe, bgl, samp, format } = regularRenderPipeline;
+    const layerIndex = Math.max(0, Math.min((cb?.layers || 1) - 1, preview?.layer || 0));
+    const renderSig = renderUniformSignature(preview, aspect, layerIndex, cloudParams || {}, cloudBox, MAIN_W, MAIN_H);
+    if (renderSig !== lastRenderUniformSignature) {
+      cb._writeRenderUniforms({
+        layerIndex,
+        cam: {
+          camPos: [preview?.cam?.x || 0, preview?.cam?.y || 0, preview?.cam?.z || 0],
+          right,
+          up,
+          fwd,
+          fovYDeg: preview?.cam?.fovYDeg || 60,
+          aspect,
+        },
+        sunDir,
+        box: cloudBox,
+        exposure: preview?.exposure || 1.0,
+        skyColor: preview?.sky || [0.5, 0.6, 0.8],
+        sunBloom: preview?.sun?.bloom || 0.0,
+        compositeQuality: 2,
+        gradeStyle: preview?.gradeStyle ?? 1,
+        sunColorTint: preview?.sunTint || [1.0, 1.0, 1.0],
+        lightTint: preview?.cloudLitTint || [1.0, 1.0, 1.0],
+        shadowTint: preview?.cloudShadowTint || [1.0, 1.0, 1.0],
+        edgeTint: preview?.edgeTint || [1.0, 1.0, 1.0],
+        styleShadowStrength: preview?.styleShadowStrength ?? 0.88,
+        styleShadowEdge: preview?.styleShadowEdge ?? 0.0,
+        styleShadowDarkness: preview?.styleShadowDarkness ?? 0.0,
+        styleColorLift: preview?.styleColorLift ?? 1.08,
+        styleSaturation: preview?.styleSaturation ?? 1.02,
+        styleRimStrength: preview?.styleRimStrength ?? 0.86,
+        styleSunBleed: preview?.styleSunBleed ?? 0.82,
+        styleMidLift: preview?.styleMidLift ?? 0.88,
+        silverIntensity: cloudParams?.silverIntensity ?? 1.15,
+        silverExponent: cloudParams?.silverExponent ?? 1.65,
+        outputWidth: MAIN_W,
+        outputHeight: MAIN_H,
+        godRaysEnabled: !!preview?.godRaysEnabled,
+        godRayStrength: preview?.godRayStrength ?? 0.0,
+        godRayLength: preview?.godRayLength ?? 1.0,
+        godRayFalloff: preview?.godRayFalloff ?? 1.55,
+        alphaFloor: preview?.alphaFloor ?? 0.0,
+        fogDensity: preview?.fogDensity ?? 0.34,
+        fogHorizon: preview?.fogHorizon ?? 0.30,
+        fogSun: preview?.fogSun ?? 1.50,
+      });
+      lastRenderUniformSignature = renderSig;
+    }
+    const { bundle } = getOrCreateRenderBundle(pipe, bgl, samp, format);
+    const pass = enc.beginRenderPass({
+      colorAttachments: [{
         view: tex.createView(),
         loadOp: "clear",
-        clearValue: {
-          r: preview?.sky?.[0] ?? 0.5,
-          g: preview?.sky?.[1] ?? 0.6,
-          b: preview?.sky?.[2] ?? 0.8,
-          a: 1,
-        },
+        clearValue,
         storeOp: "store",
-      },
-    ],
-  });
-  pass.executeBundles([bundle]);
-  pass.end();
+      }],
+    });
+    pass.executeBundles([bundle]);
+    pass.end();
+  }
 
   const tSubmit0 = performance.now();
-  queue.submit([enc.finish()]);
+  const tFinish0 = performance.now();
+  const commandBuffer = enc.finish();
+  const tFinish1 = performance.now();
+  queue.submit([commandBuffer]);
+  const tQueueSubmit1 = performance.now();
   encodedDispatch.restoreAfterSubmit?.();
 
   if (useTemporalHistory && historyAllocated) {
@@ -2059,6 +2473,8 @@ async function runFrame({
 
   const tWait0 = performance.now();
   if (shouldWaitForGpu && typeof queue.onSubmittedWorkDone === "function") {
+    frameReport.mark("post-submit-queue-wait-start");
+    emitTimingProgress(frameReport, "frame:post-submit-queue-wait");
     await queue.onSubmittedWorkDone();
   }
   const tWait1 = performance.now();
@@ -2071,8 +2487,19 @@ async function runFrame({
     renderMs: tR1 - tR0,
     submitMs: tSubmit1 - tSubmit0,
     gpuWaitMs: tWait1 - tWait0,
+    preDispatchQueueDrainMs: tPreDrain1 - tPreDrain0,
+    commandEncoderMs: tEncoder1 - tEncoder0,
+    commandFinishMs: tFinish1 - tFinish0,
+    queueSubmitMs: tQueueSubmit1 - tFinish1,
     totalMs: tAll1 - tAll0,
     pipelineMs: tP1 - tP0,
+    pipelineWarmupWaitMs: tWarmupWait1 - tWarmupWait0,
+    pipelineWarmup: warmupTimings,
+    renderPipelineMs: tRenderPipeline1 - tRenderPipeline0,
+    builderMs,
+    outputAllocationMs,
+    historyAllocationMs,
+    startupToSubmitMs: tSubmit1 - frameStarted,
     waitedForGpu: shouldWaitForGpu,
     coarseFactor: cf,
     directFullResReconstruction: !!encodedDispatch.directFullResReconstruction,
@@ -2085,6 +2512,26 @@ async function runFrame({
     interleaveStats: encodedDispatch.interleaveStats || null,
     frame: submittedFrameCount,
   };
+
+  frameReport.record("pipeline-warmup-wait", timings.pipelineWarmupWaitMs, warmupTimings, "pipeline");
+  frameReport.record("compute-pipeline-ready", timings.pipelineMs, undefined, "pipeline");
+  frameReport.record("pre-dispatch-queue-drain", timings.preDispatchQueueDrainMs, { waited: shouldWaitForGpu }, "gpu-wait");
+  frameReport.record("output-texture-allocation", outputAllocationMs, undefined, "buffering");
+  frameReport.record("history-texture-allocation", historyAllocationMs, undefined, "buffering");
+  frameReport.record("command-encoder-create", timings.commandEncoderMs, undefined, "dispatch");
+  frameReport.record("cloud-dispatch-encode", timings.computeMs, { coarseFactor: cf }, "dispatch");
+  frameReport.record("render-pipeline-ready", timings.renderPipelineMs, undefined, "pipeline");
+  frameReport.record("preview-render-encode", timings.renderMs, undefined, "dispatch");
+  frameReport.record("command-buffer-finish", timings.commandFinishMs, undefined, "dispatch");
+  frameReport.record("queue-submit", timings.queueSubmitMs, undefined, "dispatch");
+  frameReport.record("post-submit-queue-wait", timings.gpuWaitMs, { waited: shouldWaitForGpu }, "gpu-wait");
+  frameReport.mark("frame-submitted", { frame: submittedFrameCount, coarseFactor: cf });
+  timings.timingReport = frameReport.finish({
+    effectiveCoarseFactor: cf,
+    waitedForGpu: shouldWaitForGpu,
+    directFullResReconstruction: !!encodedDispatch.directFullResReconstruction,
+  });
+  emitTimingProgress(timings.timingReport, "frame:complete");
 
   if (shouldWaitForGpu || logFrame || submittedFrameCount % FRAME_LOG_EVERY === 0) {
     log(
@@ -2311,6 +2758,94 @@ function waitForLoopStopped() {
   return new Promise((resolve) => loopStopWaiters.push(resolve));
 }
 
+async function bakeCloudNoiseSet(payload = {}) {
+  const quality = payload?.quality === "bootstrap" ? "bootstrap" : "full";
+  const sizes = quality === "bootstrap" ? bootstrapBakeOptions() : {
+    weather: { width: WEATHER_W, height: WEATHER_H, key: "weather2d", waitForGpu: true, debug: false },
+    blue: { width: BN_W, height: BN_H, key: "blue2d", waitForGpu: true, debug: false },
+    shape: { size: SHAPE_SIZE, id: "shape128", waitForGpu: true, debug: false },
+    detail: { size: DETAIL_SIZE, id: "detail32", waitForGpu: true, debug: false },
+  };
+  const report = new CloudTimingReport(`cloud-noise-${quality}`, {
+    quality,
+    sizes: {
+      weather: [sizes.weather.width, sizes.weather.height],
+      blue: [sizes.blue.width, sizes.blue.height],
+      shape: sizes.shape.size,
+      detail: sizes.detail.size,
+    },
+    timingNote: "Each bake reports CPU encoding/submission and a separate gpuWaitMs queue-completion boundary; frame dispatch reports its own pre/post-submit GPU waits.",
+  });
+  const progressive = !!payload?.progressive;
+  const prevDebugEnabled = debugPreviewEnabled;
+  if (payload?.skipDebug === true || quality === "bootstrap") debugPreviewEnabled = false;
+  emitTimingProgress(report, `${quality}:start`);
+
+  try {
+    await report.measure("ensure-device", () => ensureDevice(), undefined, "setup");
+    const pipelineStage = report.start("noise-pipeline-warmup-wait", undefined, "pipeline");
+    emitTimingProgress(report, `${quality}:pipeline-warmup`);
+    const pipelineWarmup = await startNoisePipelineWarmup();
+    report.end(pipelineStage, pipelineWarmup);
+
+    const transformStage = report.start("apply-noise-transforms", undefined, "buffering");
+    if (payload?.tileTransforms) applyNoiseTransforms(payload.tileTransforms, { allowPositions: !!payload.tileTransforms.explicit, allowScale: true, allowVel: true, additive: !!payload.tileTransforms.additive });
+    if (payload?.noiseTransforms) applyNoiseTransforms(payload.noiseTransforms, { allowPositions: true, allowScale: true, allowVel: true, additive: !!payload.noiseTransforms.additive });
+    pushTransformsToCloudBuilder();
+    report.end(transformStage);
+
+    await progressiveYield(progressive, quality === "bootstrap" ? "Baking quick weather map..." : "Baking full weather map...");
+    let stage = report.start("weather-buffer-and-dispatch", { size: [sizes.weather.width, sizes.weather.height] }, "gpu-submit");
+    emitTimingProgress(report, `${quality}:weather`);
+    const weather = await bakeWeather2D(
+      payload.weatherParams || {},
+      true,
+      payload.billowParams || {},
+      payload.weatherBParams || payload.weatherB || null,
+      sizes.weather,
+    );
+    report.end(stage, weather);
+    emitTimingProgress(report, `${quality}:weather-complete`);
+
+    await progressiveYield(progressive, quality === "bootstrap" ? "Baking quick blue noise..." : "Baking full blue noise...");
+    stage = report.start("blue-buffer-and-dispatch", { size: [sizes.blue.width, sizes.blue.height] }, "gpu-submit");
+    emitTimingProgress(report, `${quality}:blue`);
+    const blue = await bakeBlue2D(payload.blueParams || {}, true, sizes.blue);
+    report.end(stage, blue);
+    emitTimingProgress(report, `${quality}:blue-complete`);
+
+    await progressiveYield(progressive, quality === "bootstrap" ? `Baking quick shape volume ${sizes.shape.size}³...` : `Baking full shape volume ${sizes.shape.size}³...`);
+    stage = report.start("shape-buffer-and-dispatch", { size: sizes.shape.size }, "gpu-submit");
+    emitTimingProgress(report, `${quality}:shape`);
+    const shape = await bakeShape128(payload.shapeParams || {}, true, sizes.shape);
+    report.end(stage, shape);
+    emitTimingProgress(report, `${quality}:shape-complete`);
+
+    await progressiveYield(progressive, quality === "bootstrap" ? `Baking quick detail volume ${sizes.detail.size}³...` : `Baking full detail volume ${sizes.detail.size}³...`);
+    stage = report.start("detail-buffer-and-dispatch", { size: sizes.detail.size }, "gpu-submit");
+    emitTimingProgress(report, `${quality}:detail`);
+    const detail = await bakeDetail32(payload.detailParams || {}, true, sizes.detail);
+    report.end(stage, detail);
+    emitTimingProgress(report, `${quality}:detail-complete`);
+
+    stage = report.start("bind-baked-textures", undefined, "buffering");
+    syncBaseInputMaps();
+    invalidateReprojectionHistory();
+    report.end(stage);
+    report.mark("resources-submitted", { quality });
+
+    const timingReport = report.finish();
+    emitTimingProgress(timingReport, `${quality}:complete`);
+    return { weather, blue, shape, detail, totalMs: timingReport.totalMs, quality, timingReport };
+  } catch (error) {
+    report.mark("failed", { error: String(error?.message || error) });
+    throw error;
+  } finally {
+    debugPreviewEnabled = prevDebugEnabled;
+    if (debugPreviewEnabled && !payload?.skipFinalDebug && quality === "full") renderDebugIfEnabled();
+  }
+}
+
 // -----------------------------------------------------------------------------
 // RPC handlers (serialized)
 // -----------------------------------------------------------------------------
@@ -2336,6 +2871,8 @@ async function _handleMessage(ev) {
 
   try {
     if (type === "init") {
+      const initReport = new CloudTimingReport("cloud-worker-init");
+      let initStage = initReport.start("receive-offscreen-canvases", undefined, "setup");
       const { canvases, constants } = payload;
 
       canvasMain = canvases.main;
@@ -2354,17 +2891,32 @@ async function _handleMessage(ev) {
       BN_H = constants.BN_H;
       debugPreviewEnabled = constants.DEBUG_ENABLED !== false;
       mobileProfileEnabled = !!constants.MOBILE_PROFILE;
+      initReport.end(initStage, {
+        shapeSize: SHAPE_SIZE,
+        detailSize: DETAIL_SIZE,
+        weatherSize: [WEATHER_W, WEATHER_H],
+        blueSize: [BN_W, BN_H],
+      });
 
       await progressiveYield(true, "Starting WebGPU worker...");
+      initStage = initReport.start("adapter-device-builders-and-pipeline-kickoff", undefined, "setup");
       await ensureDevice();
+      initReport.end(initStage, {
+        cloudPipelineWarmupState,
+        noisePipelineWarmupState,
+      });
       await progressiveYield(mobileProfileEnabled, "Configuring canvas...");
+      initStage = initReport.start("configure-main-canvas", undefined, "buffering");
       configureMainContext();
       renderBundleCache.clear();
       resetFrameStateCaches();
+      initReport.end(initStage, { width: MAIN_W, height: MAIN_H });
+      initReport.mark("worker-ready");
 
       respond(true, {
         ok: true,
         entryPoints: Array.isArray(nb?.entryPoints) ? nb.entryPoints.slice() : [],
+        timingReport: initReport.finish(),
       });
       return;
     }
@@ -2391,6 +2943,12 @@ async function _handleMessage(ev) {
 
       const result = await applyResizePayloadNow(incoming);
       respond(true, result);
+      return;
+    }
+
+    if (type === "clearMain") {
+      const timingReport = await clearMainFrame(payload || {});
+      respond(true, { ok: true, timingReport });
       return;
     }
 
@@ -2440,42 +2998,9 @@ async function _handleMessage(ev) {
     }
 
     if (type === "bakeAll") {
-      await ensureDevice();
-      const t0 = performance.now();
-      const progressive = !!payload?.progressive;
-      const prevDebugEnabled = debugPreviewEnabled;
-      if (payload?.skipDebug === true) debugPreviewEnabled = false;
-
-      try {
-        if (payload?.tileTransforms) applyNoiseTransforms(payload.tileTransforms, { allowPositions: !!payload.tileTransforms.explicit, allowScale: true, allowVel: true, additive: !!payload.tileTransforms.additive });
-        if (payload?.noiseTransforms) applyNoiseTransforms(payload.noiseTransforms, { allowPositions: true, allowScale: true, allowVel: true, additive: !!payload.noiseTransforms.additive });
-        pushTransformsToCloudBuilder();
-
-        await progressiveYield(progressive, "Baking weather map...");
-        const weather = await bakeWeather2D(
-          payload.weatherParams || {},
-          true,
-          payload.billowParams || {},
-          payload.weatherBParams || payload.weatherB || null,
-        );
-
-        await progressiveYield(progressive, "Baking blue noise...");
-        const blue = await bakeBlue2D(payload.blueParams || {}, true);
-
-        await progressiveYield(progressive, `Baking shape volume ${SHAPE_SIZE}³...`);
-        const shape = await bakeShape128(payload.shapeParams || {}, true);
-
-        await progressiveYield(progressive, `Baking detail volume ${DETAIL_SIZE}³...`);
-        const detail = await bakeDetail32(payload.detailParams || {}, true);
-
-        await progressiveYield(progressive, "Preparing first frame...");
-        const t1 = performance.now();
-        invalidateReprojectionHistory();
-        respond(true, { baked: "all", timings: { weather, blue, shape, detail, totalMs: t1 - t0 } });
-      } finally {
-        debugPreviewEnabled = prevDebugEnabled;
-        if (debugPreviewEnabled && !payload?.skipFinalDebug) renderDebugIfEnabled();
-      }
+      const timings = await bakeCloudNoiseSet(payload || {});
+      await progressiveYield(!!payload?.progressive, payload?.quality === "bootstrap" ? "Rendering quick first frame..." : "Preparing first cloud frame...");
+      respond(true, { baked: "all", timings });
       return;
     }
 

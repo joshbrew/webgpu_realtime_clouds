@@ -85,6 +85,7 @@ Use a current Chromium-based browser with:
 
 ```text
 clouds.js                CloudComputeBuilder library.
+cloudTiming.js           Structured live startup/frame timing reports.
 clouds.wgsl              Volumetric cloud compute shader.
 cloudsRender.wgsl        Preview/composite shader.
 cloudTest.worker.js      Worker-owned WebGPU demo backend.
@@ -643,6 +644,14 @@ The 3D shape and detail texture previews each have their own Z slice slider dire
 
 Texture preview canvases render once after startup baking and can be refreshed from the worker with `refreshDebug`, so they should no longer stay blank after the first frame.
 
+Startup keeps the UI responsive while shader compilation and GPU noise baking run in the worker. The playground immediately clears the canvas to the configured sky, but it deliberately does not display a simplified cloud proxy: the first cloud-bearing image comes from the regular raymarch and the same full-size resources used by later frames. This avoids a visible scene/layout swap when the expensive shader finishes compiling. The raymarch compiles asynchronously, so controls, progress text, and timing diagnostics continue updating during a cold driver compile.
+
+The complete startup trace is exposed as `window.cloudStartupTiming` and is also emitted through the `cloud-startup-timing` window event. Its `stages` array covers UI/worker setup, the loading-sky clear, uniform uploads, every noise buffer/dispatch stage, pipeline warmup, output/history allocation, cloud dispatch encoding, command-buffer finish, queue submission, and GPU queue drains. `metadata.loadingSkyVisibleMs` reports the responsive loading state; `metadata.timeToFirstFrameMs` reports the first real raymarched cloud image. While work is still running, `window.cloudWorkerTiming` identifies the exact active worker stage and `window.cloudWorkerTimingHistory` keeps recent snapshots. Noise bake submission timings and GPU completion waits are labeled separately so an expensive GPU bake is not misreported as JavaScript buffering time.
+
+`pipelineWarmup.computePipelines` now reports shader module creation/validation and each compute variant's `compileMs`, entrypoint, quality flag, and status. The same structured-cloneable object is available from `CloudComputeBuilder.getComputePipelineTimings()`. These are API wall times, not GPU execution timestamps; cached variants retain their original compile measurement. A large warmup `computeMs` with a small frame dispatch/queue wait means pipeline compilation, not texture buffering or raymarch resolution, is delaying startup.
+
+Normal/exposure probes use compact loops to avoid repeatedly expanding the density/warp call graph during compilation. The regular pipeline excludes detailed density lighting only when the uploaded `sunStride > 1`, where that branch was already unreachable. Stride 1 (and lower values) selects the full lighting variant; tuning changes are awaited before worker dispatch. This does not introduce a separate low-quality first cloud image. Run the variant/cache regression tests with `node --test tests/cloudPipeline.test.mjs`.
+
 ## Preview
 
 | Parameter | Default | Meaning |
@@ -1133,6 +1142,51 @@ Animate with:
 
 For stable animation, start with Render Scale Divider `4` and Temporal Interleave `1 / 4`. Set Temporal Interleave to `Off / full quality` to test the raw coarse upsample path. If an artifact is unchanged by the interleave selector, it is coming from coarse rendering, upsampling, or the raymarch itself rather than the interleave owner pattern.
 
+## Planet overlay adaptive performance
+
+`planetClouds.js` keeps the presentation canvas at display resolution while adapting the internal spherical raymarch target to projected planet coverage and a pixel budget.
+
+Planet cloud layers start in the regular volumetric `raymarch` mode. Set `cloudRenderMode: 'mc33-shell'` explicitly, or use the render-toggle controller, when the extracted surface renderer is desired.
+
+Both planet renderers use progressive startup by default. The raymarcher returns after a confirmed bootstrap frame built from `128 x 64` weather, `32³` shape, `16³` detail, `64²` blue noise, an internal render divider of `8`, and the small bootstrap cloud pipeline. The expensive full raymarch pipeline compiles concurrently and is awaited only by background refinement. The MC33 renderer starts with `128 x 64` spherical maps and a `28 x 28 x 6` shell field. Full maps, volumes, and geometry buffers refine asynchronously in `layer.refinementPromise`; the confirmed bootstrap image remains visible and animation/extraction dispatch is paused until the swap. Set `progressiveStartup: false` to retain blocking full-quality creation, or await `layer.refinementPromise` when downstream work requires final resources immediately.
+
+`layer.startupTiming` is a live structured report during startup and a completed snapshot afterward. The render-toggle controller forwards both `startupTiming` and `refinementPromise`. Listen for `planet-cloud-startup-timing` or supply `onStartupTiming(report, layer)` for telemetry. Each resource stage includes a separate `gpuWaitMs`, making weather, shape, detail, blue-noise, pipeline, and first-frame stalls directly attributable.
+
+Default controls:
+
+| Option | Default | Purpose |
+| --- | ---: | --- |
+| `cloudRenderMode` | `raymarch` | Starts with regular volumetric clouds; `mc33-shell` remains opt-in. |
+| `renderScaleDivider` | `1` | Allows full internal resolution when the pixel budget permits it. |
+| `maxDpr` | `2` | Caps overlay canvas device-pixel ratio. |
+| `maxRaymarchPixels` | `1400000` | Internal raymarch pixel budget when the planet occupies a smaller part of the view. |
+| `fullscreenRaymarchPixels` | `1050000` | Internal raymarch pixel budget when the globe fills most of the screen. |
+| `adaptiveScreenQuality` | `true` | Raises the effective render divider as projected globe coverage grows. |
+| `adaptiveMarchQuality` | `true` | Reduces primary and sun march work under high screen coverage. |
+| `animatedTemporalCellRate` | `2` | Updates half of the stationary animated cloud cells per frame. |
+| `animatedTemporalBlend` | `0.45` | Keeps half-rate animated sampling while reducing stale lighting and shadow history. |
+| `movingFullscreenCoarseFactor` | `1` | Keeps the same coarse factor during and after camera motion. |
+
+The layer creates its default reprojection history explicitly. Initial frames use a lower march budget at the final output resolution, so the atmosphere appears quickly without a low-resolution texture swap. The first stationary frame after camera motion resets history weights in place instead of reallocating history textures.
+
+### Aurora shell motion and palette
+
+The aurora shell uses independent polar spin and side-axis roll. The defaults favor roll over spin:
+
+```js
+auroraSpinSpeed: 0.0024,
+auroraRollSpeed: 0.0065,
+```
+
+The default aurora palette lowers the green channel and gives gold and red bands more range. These colors remain overridable through `params.frontLightColor`, `params.sunColor`, and `params.shadowLightColor`.
+
+Runtime diagnostics are available through `getPlanetCloudPerformanceStats(layer)` or `layer.performanceStats`:
+
+```js
+const stats = getPlanetCloudPerformanceStats(planetCloudLayer);
+console.table(stats);
+```
+
 # Credits
 WebGPU implementation by Joshua Brewster (MIT License)
 
@@ -1140,3 +1194,98 @@ Inspired by Fredrik Häggström's [Real-time rendering of volumetric clouds](htt
 
 This implementation uses the companion WebGPU procedural texture work in [webgpu_noise_compute_textures](https://github.com/joshbrew/webgpu_noise_compute_textures).
 
+
+### Randomized aurora gradients
+
+Aurora gradients use full-spectrum palette families, including green/gold, cyan/blue, violet/magenta, teal/purple, sunset, ruby, rose, and mixed solar palettes.
+
+```js
+randomizePlanetAuroraGradient(auroraLayer, {
+  auroraGradientRandomAmount: 0.72,
+  auroraGreenBoost: 1.0,
+});
+```
+
+Set `auroraGradientSeed` for a repeatable palette. Set `auroraPaletteFamily` to force a family, or set `auroraRandomizeGradient: false` to use the fixed preset.
+
+## Planet cloud MC33 shell mode
+
+Planet clouds can use a GPU MC33 surface pipeline while aurora continues to use the volumetric raymarcher.
+
+```js
+const cloudLayer = await createPlanetCloudLayer({
+  device,
+  queue,
+  noiseBuilder,
+  parent,
+  sourceCanvas,
+  getCameraState,
+  getSunDir,
+  radius,
+  atmosphereRadius,
+  options: {
+    cloudRenderMode: 'mc33-shell',
+    seed: 12345,
+
+    surfaceAngularCells: 64,
+    surfaceRadialCells: 12,
+    surfaceMeshUpdateHz: 20,
+    surfaceMaxVertices: 1_200_000,
+
+    surfaceCoverageThreshold: 0.49,
+    surfaceHeightScale: 1.0,
+    surfaceMinThickness: 0.55,
+    surfaceMaxThickness: 2.6,
+    surfaceBulgeStrength: 1.25,
+    surfaceCavityStrength: 0.42,
+
+    surfaceLowPush: 0.030,
+    surfaceCurlPush: 0.017,
+    surfaceDetailPush: 0.010,
+  },
+});
+```
+
+The surface pipeline evaluates a closed scalar field directly from spherical weather, shape, and detail textures. It does not create or sample a 3D noise texture. Shape and detail gradients are baked once into their 2D textures, then sampled during extraction. Low- and high-frequency gradients displace sampling coordinates differently through shell depth, producing bulbous sections, folds, undercuts, and concave cavities before MC33 extracts the zero surface.
+
+The compute dispatch is limited in three stages:
+
+1. CPU face selection removes cubed-sphere faces pointing away from the camera.
+2. GPU frustum and planetary-horizon tests remove invisible shell cells.
+3. A cheap weather/shape coverage sample removes empty cells before the eight MC33 corner evaluations.
+
+Buffers and spatial resolution stay fixed while the camera moves. Camera motion only changes visibility tests and projection. The generated mesh is rendered at the overlay canvas resolution with full-resolution depth, lighting, and animated detail-normal sampling.
+
+Useful runtime controls:
+
+```js
+updatePlanetCloudLayerOptions(cloudLayer, {
+  surfaceMeshUpdateHz: 30,
+  surfaceCoverageThreshold: 0.53,
+  surfaceBulgeStrength: 1.5,
+  surfaceCavityStrength: 0.55,
+  surfaceLowPush: 0.038,
+});
+```
+
+`surfaceAngularCells` and `surfaceRadialCells` change lattice density without changing any camera-dependent quality state. `surfaceMaxVertices` determines persistent GPU arena capacity and should be selected when the layer is created.
+
+### MC33 shell v2: stable field and compacted extraction
+
+The surface path now evaluates the layered 2D cloud field once per cubed-sphere lattice point and stores it in ping-pong GPU buffers. Object-space exponential smoothing stabilizes topology without screen-space temporal history.
+
+```js
+updatePlanetCloudLayerOptions(cloudLayer, {
+  surfaceFieldUpdateHz: 30,
+  surfaceMeshUpdateHz: 20,
+  surfaceFieldResponseTime: 0.12,
+  surfaceVertexProjection: true,
+  surfaceProjectionStrength: 0.55,
+  surfaceProjectionMaxStep: 0.22,
+    surfaceOcclusionRadiusScale: 0.985,
+});
+```
+
+Visible cells are classified against the stored field, sign-changing cells are compacted, and extraction uses an indirect dispatch over that compacted list. Between MC33 rebuilds, the existing vertices are projected toward the current field so scrolling textures do not appear as a low-rate sequence of frozen meshes.
+
+`layer.performanceStats` includes `fieldPointCount`, `candidateCells`, `maxActiveCells`, `fieldUpdated`, `meshUpdated`, and `vertexProjection`.

@@ -5,6 +5,7 @@
 
 import html from "./clouds.html";
 import wrkr from "./cloudTest.worker.js";
+import { CloudTimingReport, logCloudTimingReport } from "./cloudTiming.js";
 
 let worker;
 
@@ -74,6 +75,29 @@ const SHAPE_SIZE = STARTUP_PROFILE.shapeSize,
   BN_W = STARTUP_PROFILE.blueW,
   BN_H = STARTUP_PROFILE.blueH;
 const DBG_SIZE = STARTUP_PROFILE.dbgSize;
+const cloudFirstLoadTiming = new CloudTimingReport("cloud-first-load", {
+  mobileProfile: MOBILE_PROFILE,
+  fullSizes: {
+    weather: [WEATHER_W, WEATHER_H],
+    blue: [BN_W, BN_H],
+    shape: SHAPE_SIZE,
+    detail: DETAIL_SIZE,
+  },
+});
+let workerInitTimingReport = null;
+let latestCloudStartupTiming = null;
+const cloudWorkerTimingHistory = [];
+
+function publishCloudStartupTiming(report, complete = false) {
+  latestCloudStartupTiming = report;
+  try {
+    globalThis.cloudStartupTiming = report;
+    globalThis.dispatchEvent?.(new CustomEvent("cloud-startup-timing", { detail: { report, complete } }));
+  } catch {}
+  return report;
+}
+
+publishCloudStartupTiming(cloudFirstLoadTiming.snapshot(), false);
 const DPR = () => {
   const raw = Math.max(1, window.devicePixelRatio || 1);
   return STARTUP_PROFILE.capMainCanvas ? Math.min(STARTUP_PROFILE.maxDpr, raw) : raw;
@@ -5113,6 +5137,7 @@ function scheduleInitialBakeAndRender() {
 
     setBusy(true, MOBILE_PROFILE ? "Preparing mobile cloud preview..." : "Preparing cloud preview...");
     try {
+      let stage = cloudFirstLoadTiming.start("read-settings-and-upload-initial-uniform-buffers", undefined, "buffering");
       refreshSliceLabel();
       readWeather();
       readWeatherG();
@@ -5123,7 +5148,7 @@ function scheduleInitialBakeAndRender() {
       readDetailTransform();
       readPreview();
 
-      await rpc("bakeAll", {
+      const bakePayload = {
         weatherParams: safeClone(weatherParams),
         billowParams: safeClone(billowParams),
         weatherBParams: safeClone(weatherBParams),
@@ -5134,7 +5159,7 @@ function scheduleInitialBakeAndRender() {
         progressive: true,
         skipDebug: !!STARTUP_PROFILE.skipStartupDebug,
         skipFinalDebug: true,
-      });
+      };
 
       await rpc("setReproj", { reproj: getReprojPayload(), perf: null });
       try {
@@ -5157,15 +5182,72 @@ function scheduleInitialBakeAndRender() {
 
       useFreshFullFrameReproj(payload);
       ensureCoarseInPayload(payload);
+      cloudFirstLoadTiming.end(stage);
 
-      await setBusyAndPaint("Rendering first frame...");
-      const { timings } = await rpc("runFrame", payload);
+      const status = $("cloud-quick-status");
+      stage = cloudFirstLoadTiming.start("loading-sky-clear-and-present", {
+        sky: preview.sky.slice(),
+      }, "presentation");
+      const loadingSky = await rpc("clearMain", { sky: preview.sky.slice(), waitForGpu: true });
+      cloudFirstLoadTiming.end(stage, { worker: loadingSky?.timingReport });
+      cloudFirstLoadTiming.mark("loading-sky-visible", {
+        elapsedMs: cloudFirstLoadTiming.snapshot().totalMs,
+      });
+      if (status) {
+        status.dataset.manual = "true";
+        status.textContent = "Baking full cloud field and compiling the raymarcher...";
+      }
+      await nextPaint();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      await setBusyAndPaint("Preparing the first full-quality cloud frame...");
+      stage = cloudFirstLoadTiming.start("full-quality-noise-buffer-and-dispatch-refinement", {
+        weather: [WEATHER_W, WEATHER_H],
+        blue: [BN_W, BN_H],
+        shape: SHAPE_SIZE,
+        detail: DETAIL_SIZE,
+      }, "gpu-submit");
+      const fullBake = await rpc("bakeAll", { ...bakePayload, quality: "full" });
+      cloudFirstLoadTiming.end(stage, { worker: fullBake?.timings?.timingReport || fullBake?.timings });
+
+      ensureCoarseInPayload(payload);
+      payload.waitForGpu = true;
+      payload.logFrame = true;
+      payload.bootstrapPreview = false;
+      stage = cloudFirstLoadTiming.start("first-cloud-frame-buffer-encode-dispatch-and-present", {
+        coarseFactor: payload.coarseFactor,
+      }, "first-frame");
+      const firstFrame = await rpc("runFrame", payload);
+      cloudFirstLoadTiming.end(stage, { worker: firstFrame?.timings?.timingReport || firstFrame?.timings });
+      cloudFirstLoadTiming.mark("first-frame-visible", {
+        coarseFactor: payload.coarseFactor,
+        quality: "full",
+        elapsedMs: cloudFirstLoadTiming.snapshot().totalMs,
+      });
+      cloudFirstLoadTiming.mark("full-quality-frame-visible");
+      publishCloudStartupTiming(cloudFirstLoadTiming.snapshot(), false);
+      logCloudTimingReport(latestCloudStartupTiming, "[CLOUD FIRST FRAME]");
+
+      const finalTiming = cloudFirstLoadTiming.finish({
+        timeToFirstFrameMs: cloudFirstLoadTiming.milestones.find((mark) => mark.name === "first-frame-visible")?.atMs ?? null,
+        loadingSkyVisibleMs: cloudFirstLoadTiming.milestones.find((mark) => mark.name === "loading-sky-visible")?.atMs ?? null,
+        firstFrameQuality: "full",
+      });
+      publishCloudStartupTiming(finalTiming, true);
+      logCloudTimingReport(finalTiming, "[CLOUD STARTUP COMPLETE]");
       setTimeout(() => {
         refreshDebugPreviews().catch((e) => console.warn("startup debug refresh failed", e));
       }, 0);
-      console.log("[BENCH] init frame timings:", timings);
+      if (status) {
+        status.dataset.manual = "false";
+        status.textContent = "Cloud preview ready";
+      }
     } catch (err) {
       console.error("initial cloud bake/render failed", err);
+      cloudFirstLoadTiming.mark("startup-failed", { error: String(err?.message || err) });
+      const failedTiming = cloudFirstLoadTiming.finish({ failed: true });
+      publishCloudStartupTiming(failedTiming, true);
+      logCloudTimingReport(failedTiming, "[CLOUD STARTUP FAILED]");
       const pre = document.createElement("pre");
       pre.textContent = err && err.stack ? err.stack : String(err);
       document.body.appendChild(pre);
@@ -5179,6 +5261,7 @@ function scheduleInitialBakeAndRender() {
 
 // ---- init ----
 async function init() {
+  let firstLoadStage = cloudFirstLoadTiming.start("build-main-ui", undefined, "setup");
   mountCloudHtml();
   installCloudUiPolish();
   injectPreviewLookControls();
@@ -5402,9 +5485,11 @@ async function init() {
 
   setBusy(true, MOBILE_PROFILE ? "Starting mobile WebGPU worker..." : "Starting WebGPU worker...");
   await nextPaint();
+  cloudFirstLoadTiming.end(firstLoadStage);
+  firstLoadStage = cloudFirstLoadTiming.start("spawn-worker-and-transfer-canvases", undefined, "setup");
 
   // spawn worker
-  worker = new Worker(wrkr, { type: "module" });
+  worker = new Worker(wrkr);
   worker.onmessage = (ev) => {
     const { id, type, ok, data, error } = ev.data || {};
     if (id && _pending.has(id)) {
@@ -5413,6 +5498,21 @@ async function init() {
       return ok ? resolve(data) : reject(error || new Error("Worker error"));
     }
     if (type === "log") console.log(...(data || []));
+    if (type === "timing") {
+      const timingEvent = data || {};
+      cloudWorkerTimingHistory.push(timingEvent);
+      if (cloudWorkerTimingHistory.length > 80) cloudWorkerTimingHistory.shift();
+      try {
+        globalThis.cloudWorkerTiming = timingEvent;
+        globalThis.cloudWorkerTimingHistory = cloudWorkerTimingHistory;
+      } catch {}
+      if (cloudFirstLoadTiming.finishedAt === null) {
+        publishCloudStartupTiming({
+          ...cloudFirstLoadTiming.snapshot(),
+          activeWorker: timingEvent,
+        }, false);
+      }
+    }
     if (type === "progress") {
       const msg = data?.message || data || "Working...";
       const status = $("cloud-quick-status");
@@ -5496,6 +5596,9 @@ async function init() {
       offscreenDbg["dbg-blue"],
     ],
   );
+
+  workerInitTimingReport = initRes?.timingReport || null;
+  cloudFirstLoadTiming.end(firstLoadStage, { worker: workerInitTimingReport });
 
   ENTRY_POINTS = Array.isArray(initRes?.entryPoints)
     ? initRes.entryPoints.slice()

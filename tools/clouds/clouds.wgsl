@@ -6,13 +6,16 @@ const VIEW_EXTINCTION_SCALE: f32 = 0.075;
 const SUN_EXTINCTION_SCALE: f32 = 0.014;
 const DENSITY_LIGHT_SCALE: f32 = 0.01;
 
-// The JavaScript side builds one full-detail pipeline entry point per active
-// mode. This is compile-time specialization only; it does not change the visual
-// quality path.
+// Box and spherical rendering remain compile-time specializations. Planetary
+// clouds and aurora share the spherical pipeline; V.volumeLayers selects the
+// aurora path uniformly at runtime so the planet does not compile this shader twice.
 override CLOUD_IS_SPHERICAL: u32 = 0u;
-override CLOUD_IS_AURORA: u32 = 0u;
 override CLOUD_USE_CUSTOM_POS: u32 = 0u;
 override CLOUD_WRITE_RGB: u32 = 1u;
+// Detailed density normals/exposure are unreachable when the uploaded sunStride
+// is > 1 (adaptiveStrideAdd is non-negative). Keep them out of the regular
+// pipeline's call graph; select the detailed variant if that setting changes.
+override CLOUD_DETAILED_LIGHTING: u32 = 1u;
 
 // ---------------------- TUNING UNIFORM
 struct CloudTuning {
@@ -506,15 +509,15 @@ fn sphericalCloudMode() -> bool {
 
 
 fn auroraLayerMode() -> bool {
-  return CLOUD_IS_AURORA != 0u;
+  return sphericalCloudMode() && V.volumeLayers > 1.5;
 }
 
 fn cloudModeF32(boxVal: f32, sphereVal: f32, auroraVal: f32) -> f32 {
-  return select(select(boxVal, sphereVal, CLOUD_IS_SPHERICAL != 0u), auroraVal, CLOUD_IS_AURORA != 0u);
+  return select(select(boxVal, sphereVal, CLOUD_IS_SPHERICAL != 0u), auroraVal, auroraLayerMode());
 }
 
 fn auroraModeF32(baseVal: f32, auroraVal: f32) -> f32 {
-  return select(baseVal, auroraVal, CLOUD_IS_AURORA != 0u);
+  return select(baseVal, auroraVal, auroraLayerMode());
 }
 
 fn normalizeOr(v: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
@@ -701,10 +704,34 @@ fn sphericalDriftedWorld(posWorld: vec3<f32>, offset: vec3<f32>) -> vec3<f32> {
   }
 
   let rel = posWorld - B.center;
-  let angle = offset.x * 6.283185307179586;
-  let xz = rotateXZ(rel.xz, angle);
-  let y = rel.y + offset.y;
-  return B.center + vec3<f32>(xz.x, y, xz.y);
+  let longitudeAngle = offset.x * 6.283185307179586;
+  let meridionalAngle = offset.z * 6.283185307179586;
+  let xz = rotateXZ(rel.xz, longitudeAngle);
+  let yz = rotateXZ(vec2<f32>(rel.y, xz.y), meridionalAngle);
+  return B.center + vec3<f32>(xz.x, yz.x + offset.y, yz.y);
+}
+
+fn auroraAnimatedWorld(posWorld: vec3<f32>) -> vec3<f32> {
+  if (!auroraLayerMode()) {
+    return posWorld;
+  }
+  let shellMotion = vec3<f32>(
+    NTransform.weatherOffsetWorld.x,
+    0.0,
+    NTransform.weatherOffsetWorld.z
+  );
+  return sphericalDriftedWorld(posWorld, shellMotion);
+}
+
+fn auroraAnimatedUVFromWorld(posWorld: vec3<f32>) -> vec2<f32> {
+  return auroraUVFromWorld(auroraAnimatedWorld(posWorld));
+}
+
+fn sphericalSampleDriftedWorld(posWorld: vec3<f32>, localOffset: vec3<f32>) -> vec3<f32> {
+  if (auroraLayerMode()) {
+    return sphericalDriftedWorld(auroraAnimatedWorld(posWorld), localOffset);
+  }
+  return sphericalDriftedWorld(posWorld, localOffset);
 }
 
 fn sphereUVFromWorld(posWorld: vec3<f32>) -> vec2<f32> {
@@ -720,7 +747,7 @@ fn sphereUVFromWorld(posWorld: vec3<f32>) -> vec2<f32> {
 
 fn shellUVFromWorld(posWorld: vec3<f32>) -> vec2<f32> {
   if (auroraLayerMode()) {
-    return auroraUVFromWorld(posWorld);
+    return auroraAnimatedUVFromWorld(posWorld);
   }
   return sphereUVFromWorld(posWorld);
 }
@@ -1002,7 +1029,7 @@ fn phLayerBreakupMacro(ph: f32, wm: vec4<f32>, s: vec4<f32>) -> f32 {
 // shape & detail samplers
 fn shapeUVW_fromWarp(pos: vec3<f32>, ph: f32, w: vec2<f32>) -> vec3<f32> {
   let scaleS = max(wg_scaleS, EPS);
-  let movedPos = sphericalDriftedWorld(pos, NTransform.shapeOffsetWorld);
+  let movedPos = sphericalSampleDriftedWorld(pos, NTransform.shapeOffsetWorld);
   let ap = verticalScaledDomainPos(anvilShapePos(movedPos, ph));
   let tall = tallBoxBlend();
   let yBreak = worldWarpY(movedPos.xz, ph, wg_boxMaxXZ);
@@ -1021,7 +1048,7 @@ fn shapeUVW_fromWarp(pos: vec3<f32>, ph: f32, w: vec2<f32>) -> vec3<f32> {
 
 fn detailUVW_fromWarp(pos: vec3<f32>, ph: f32, w: vec2<f32>) -> vec3<f32> {
   let scaleD = max(wg_scaleD, EPS);
-  let movedPos = sphericalDriftedWorld(pos, NTransform.detailOffsetWorld);
+  let movedPos = sphericalSampleDriftedWorld(pos, NTransform.detailOffsetWorld);
   let ap = verticalScaledDomainPos(anvilShapePos(movedPos, ph));
   let tall = tallBoxBlend();
   let yBreak = worldWarpY(movedPos.xz, ph, wg_boxMaxXZ) * mix_f(0.65, 1.45, tall);
@@ -1057,7 +1084,7 @@ fn sampleDetailRGB(pos: vec3<f32>, ph: f32, lod: f32) -> vec3<f32> {
 }
 
 fn auroraRibbonUVW(pos: vec3<f32>, ph: f32, offsetWorld: vec3<f32>, scaleBase: f32) -> vec3<f32> {
-  let uv = auroraUVFromWorld(pos);
+  let uv = auroraAnimatedUVFromWorld(pos);
   let phs = saturate(ph);
   let drift = vec2<f32>(
     offsetWorld.x * 0.055 + offsetWorld.z * 0.021,
@@ -1089,6 +1116,12 @@ fn sampleAuroraRibbonShape(pos: vec3<f32>, ph: f32, lod: f32) -> vec4<f32> {
 // ---------------------- weather mapping
 fn weatherUV_from(pos_world: vec3<f32>, wScale: f32) -> vec2<f32> {
   let wAxis = axisOrOne3(NTransform.weatherAxisScale);
+
+  if (auroraLayerMode()) {
+    let uv = auroraAnimatedUVFromWorld(pos_world);
+    let centered = (uv - vec2<f32>(0.5, 0.5)) * vec2<f32>(wAxis.x, wAxis.z) * max(wScale, EPS);
+    return centered + vec2<f32>(0.5, 0.5);
+  }
 
   if (sphericalCloudMode()) {
     let uv = shellUVFromWorld(pos_world);
@@ -1660,7 +1693,7 @@ fn auroraCurtainDensity(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>, po
   let cap = auroraCapMask(pos);
   if (cap <= 0.0001) { return 0.0; }
 
-  let uv = auroraUVFromWorld(pos);
+  let uv = auroraAnimatedUVFromWorld(pos);
   let broadWeather = saturate(wm.r * 0.60 + wm.g * 0.40);
   let weatherGate = smoothstep(0.30, 0.78, broadWeather);
   let shellBand = smoothstep(0.035, 0.18, phs) * (1.0 - smoothstep(0.82, 1.0, phs));
@@ -1700,19 +1733,48 @@ fn auroraCurtainDensity(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>, po
   );
 }
 
+fn auroraSpectralColor(pos: vec3<f32>, ph: f32) -> vec3<f32> {
+  let phs = saturate(ph);
+  let uv = auroraAnimatedUVFromWorld(pos);
+  let colorWave = 0.5 + 0.5 * sin((uv.x * 4.2 + uv.y * 2.7 + phs * 0.48) * 2.0 * PI);
+  let colorWave2 = 0.5 + 0.5 * sin((uv.x * 6.1 - uv.y * 3.4 + phs * 0.73 + 1.2) * 2.0 * PI);
+  let strandWave = smoothCellHash2D(vec2<f32>(uv.x * 2.4, uv.y * 5.8 + phs * 0.40), 7.0);
+  let curtainWave = smoothCellHash2D(vec2<f32>(uv.x * 5.1 - phs * 0.8, uv.y * 3.2 + phs * 0.2), 11.0);
+
+  let anchorA = max(C.frontLightColor, vec3<f32>(0.0));
+  let anchorB = max(C.sunColor, vec3<f32>(0.0));
+  let anchorC = max(C.shadowLightColor, vec3<f32>(0.0));
+  let anchorD = mix_v3(anchorB, anchorC, 0.5 + 0.5 * sin((uv.x * 1.6 + uv.y * 1.1 + phs * 0.4) * 2.0 * PI));
+  let lowerAccent = mix_v3(anchorA, anchorD, 0.20 + 0.18 * (1.0 - phs));
+
+  var wA = 0.18 + 0.82 * (1.0 - smoothstep(0.56, 0.96, colorWave)) * mix_f(0.82, 1.18, strandWave);
+  var wB = 0.10 + 0.72 * smoothstep(0.28, 0.82, colorWave) * mix_f(0.80, 1.14, curtainWave);
+  var wC = 0.08 + 0.72 * smoothstep(0.34, 0.90, colorWave2) * mix_f(0.82, 1.16, 1.0 - strandWave);
+  var wD = 0.06 + 0.42 * smoothstep(0.14, 0.64, phs) * (1.0 - smoothstep(0.78, 0.98, phs));
+
+  let lowBand = 1.0 - smoothstep(0.22, 0.78, phs);
+  let midBand = smoothstep(0.12, 0.44, phs) * (1.0 - smoothstep(0.62, 0.94, phs));
+  let highBand = smoothstep(0.46, 0.90, phs);
+
+  wA *= 0.58 + 0.82 * lowBand;
+  wB *= 0.54 + 0.88 * midBand;
+  wC *= 0.54 + 0.92 * highBand;
+  wD *= 0.40 + 0.90 * (midBand + 0.35 * highBand);
+
+  let spectralCore = anchorA * wA + anchorB * wB + anchorC * wC + lowerAccent * wD;
+  let weightSum = max(wA + wB + wC + wD, 0.0001);
+  let spectral = spectralCore / weightSum;
+  return max(spectral, vec3<f32>(0.0));
+}
+
 fn auroraEmissionColor(pos: vec3<f32>, ph: f32, viewDir: vec3<f32>, sunDir: vec3<f32>, auroraMask: f32) -> vec3<f32> {
   let relShell = pos - B.center;
   let shellN = normalizeOr(relShell, vec3<f32>(0.0, 1.0, 0.0));
   let nightBoost = 1.0 - smoothstep(-0.18, 0.42, dot(shellN, sunDir));
   let limb = pow(1.0 - saturate(dot(shellN, viewDir)), 1.85);
-  let phs = saturate(ph);
-
-  let oxygenGreen = max(C.frontLightColor, vec3<f32>(0.0));
-  let shadowGreen = max(C.shadowLightColor, vec3<f32>(0.0));
-  let base = mix_v3(oxygenGreen * 0.82, shadowGreen * 1.18, 0.28);
-  let upperTint = mix_v3(base, max(C.sunColor, vec3<f32>(0.0)) * vec3<f32>(0.70, 1.04, 0.50), smoothstep(0.48, 0.94, phs) * 0.18);
+  let spectral = auroraSpectralColor(pos, ph);
   let capLift = mix_f(0.82, 1.18, saturate(auroraMask));
-  return upperTint * capLift * mix_f(0.82, 1.85, nightBoost) + upperTint * limb * 0.20;
+  return spectral * capLift * mix_f(0.82, 1.85, nightBoost) + spectral * limb * 0.20;
 }
 
 fn syntheticShapeFromWeather(ph: f32, wm: vec4<f32>) -> vec4<f32> {
@@ -1756,6 +1818,8 @@ fn sampleLightingDensity(
   return max(d, 0.0);
 }
 
+// Keep repeated probes in loops. Expanding the whole density/warp call graph
+// at every probe caused multi-second driver compilation on Windows/NVIDIA.
 fn approxLightingNormal(
   pos: vec3<f32>,
   weatherLOD: f32,
@@ -1763,30 +1827,21 @@ fn approxLightingNormal(
   lodDetail: f32,
   wScale: f32
 ) -> vec3<f32> {
+
   let probe = max(wg_finestWorld * 0.9, 1e-3);
-
-  let dx =
-    sampleLightingDensity(pos + vec3<f32>(probe, 0.0, 0.0), weatherLOD, lodShape, lodDetail, wScale) -
-    sampleLightingDensity(pos - vec3<f32>(probe, 0.0, 0.0), weatherLOD, lodShape, lodDetail, wScale);
-
-  let dy =
-    sampleLightingDensity(pos + vec3<f32>(0.0, probe, 0.0), weatherLOD, lodShape, lodDetail, wScale) -
-    sampleLightingDensity(pos - vec3<f32>(0.0, probe, 0.0), weatherLOD, lodShape, lodDetail, wScale);
-
-  let dz =
-    sampleLightingDensity(pos + vec3<f32>(0.0, 0.0, probe), weatherLOD, lodShape, lodDetail, wScale) -
-    sampleLightingDensity(pos - vec3<f32>(0.0, 0.0, probe), weatherLOD, lodShape, lodDetail, wScale);
-
-  let g = vec3<f32>(dx, dy, dz);
-  if (dot(g, g) < 1e-8) {
-    let n = normalize(vec3<f32>(
-      smoothCellHash2D(pos.xz + vec2<f32>(11.7, 3.9), 5.0) - 0.5,
-      0.22,
-      smoothCellHash2D(pos.xz + vec2<f32>(2.4, 17.1), 5.0) - 0.5
-    ));
-    return n;
+  let offsets = array<vec3<f32>, 6>(
+  vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(-1.0, 0.0, 0.0),
+  vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, -1.0, 0.0),
+  vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, 0.0, -1.0)
+);
+  var samples: array<f32, 6>;
+  for (var i = 0u; i < 6u; i++) {
+    samples[i] = sampleLightingDensity(pos + offsets[i] * probe, weatherLOD, lodShape, lodDetail, wScale);
   }
-
+  let g = vec3<f32>(samples[0] - samples[1], samples[2] - samples[3], samples[4] - samples[5]);
+  if (dot(g, g) < 1e-8) {
+    return normalize(vec3<f32>(smoothCellHash2D(pos.xz + vec2<f32>(11.7, 3.9), 5.0) - 0.5, 0.22, smoothCellHash2D(pos.xz + vec2<f32>(2.4, 17.1), 5.0) - 0.5));
+  }
   return normalize(-g);
 }
 
@@ -1798,17 +1853,19 @@ fn directionalExposure(
   sunDir: vec3<f32>,
   wScale: f32
 ) -> f32 {
+
   let probe = max(wg_finestWorld * 2.25, 2e-3);
-
-  let d0 = sampleLightingDensity(pos, weatherLOD, lodShape, lodDetail, wScale);
-  if (d0 <= 1e-5) { return 0.0; }
-
-  let dFront = sampleLightingDensity(pos + sunDir * probe, weatherLOD, lodShape, lodDetail, wScale);
-  let dBack = sampleLightingDensity(pos - sunDir * probe, weatherLOD, lodShape, lodDetail, wScale);
-
+  var samples: array<f32, 3>;
+  let offsets = array<f32, 3>(0.0, 1.0, -1.0);
+  for (var i = 0u; i < 3u; i++) {
+    samples[i] = sampleLightingDensity(pos + sunDir * (probe * offsets[i]), weatherLOD, lodShape, lodDetail, wScale);
+    if (i == 0u && samples[0] <= 1e-5) { return 0.0; }
+  }
+  let d0 = samples[0];
+  let dFront = samples[1];
+  let dBack = samples[2];
   let opensToSun = saturate((d0 - dFront) / max(d0, 0.06));
   let buriedFromBehind = saturate((dBack - d0) / max(max(dBack, d0), 0.06));
-
   return saturate(opensToSun * (1.0 - 0.65 * buriedFromBehind));
 }
 
@@ -2125,41 +2182,37 @@ fn CalculateLight(
 }
 // approximate surface normal from coarse shape mip
 fn approxShapeNormal(pos: vec3<f32>, ph: f32, lodShape: f32) -> vec3<f32> {
-  let probe = max(wg_finestWorld * 1.25, 1e-3);
 
-  let c = sampleShapeRGBA(pos, ph, lodShape).r;
-  let px = sampleShapeRGBA(pos + vec3<f32>(probe, 0.0, 0.0), ph, lodShape).r;
-  let nx = sampleShapeRGBA(pos - vec3<f32>(probe, 0.0, 0.0), ph, lodShape).r;
-  let pz = sampleShapeRGBA(pos + vec3<f32>(0.0, 0.0, probe), ph, lodShape).r;
-  let nz = sampleShapeRGBA(pos - vec3<f32>(0.0, 0.0, probe), ph, lodShape).r;
-  let py = sampleShapeRGBA(pos + vec3<f32>(0.0, probe, 0.0), ph, lodShape).r;
-  let ny = sampleShapeRGBA(pos - vec3<f32>(0.0, probe, 0.0), ph, lodShape).r;
-
-  let gy = (py - ny) * 0.5 / probe;
-  let gx = (px - nx) * 0.5 / probe;
-  let gz = (pz - nz) * 0.5 / probe;
-
-  let g = vec3<f32>(gx, gy, gz);
-  if (dot(g, g) < 1e-8) {
-    return normalize(vec3<f32>(0.18, 0.28, 0.94));
-  }
-  return normalize(-g);
+    let probe = max(wg_finestWorld * 1.25, 1e-3);
+    let offsets = array<vec3<f32>, 6>(
+  vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(-1.0, 0.0, 0.0),
+  vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, -1.0, 0.0),
+  vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, 0.0, -1.0)
+);
+    var samples: array<f32, 6>;
+    for (var i = 0u; i < 6u; i++) {
+      samples[i] = sampleShapeRGBA(pos + offsets[i] * probe, ph, lodShape).r;
+    }
+    let g = vec3<f32>(samples[0] - samples[1], samples[2] - samples[3], samples[4] - samples[5]) * (0.5 / probe);
+    if (dot(g, g) < 1e-8) { return normalize(vec3<f32>(0.18, 0.28, 0.94)); }
+    return normalize(-g);
 }
 
 fn approxShapeNormalFast(pos: vec3<f32>, ph: f32, lodShape: f32) -> vec3<f32> {
-  let probe = max(wg_finestWorld * 1.5, 1e-3);
-  let px = sampleShapeRGBA(pos + vec3<f32>(probe, 0.0, 0.0), ph, lodShape).r;
-  let nx = sampleShapeRGBA(pos - vec3<f32>(probe, 0.0, 0.0), ph, lodShape).r;
-  let py = sampleShapeRGBA(pos + vec3<f32>(0.0, probe, 0.0), ph, lodShape).r;
-  let ny = sampleShapeRGBA(pos - vec3<f32>(0.0, probe, 0.0), ph, lodShape).r;
-  let pz = sampleShapeRGBA(pos + vec3<f32>(0.0, 0.0, probe), ph, lodShape).r;
-  let nz = sampleShapeRGBA(pos - vec3<f32>(0.0, 0.0, probe), ph, lodShape).r;
 
-  let g = vec3<f32>((px - nx), (py - ny), (pz - nz)) * (0.5 / probe);
-  if (dot(g, g) < 1e-8) {
-    return normalize(vec3<f32>(0.18, 0.28, 0.94));
-  }
-  return normalize(-g);
+    let probe = max(wg_finestWorld * 1.5, 1e-3);
+    let offsets = array<vec3<f32>, 6>(
+  vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(-1.0, 0.0, 0.0),
+  vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, -1.0, 0.0),
+  vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, 0.0, -1.0)
+);
+    var samples: array<f32, 6>;
+    for (var i = 0u; i < 6u; i++) {
+      samples[i] = sampleShapeRGBA(pos + offsets[i] * probe, ph, lodShape).r;
+    }
+    let g = vec3<f32>(samples[0] - samples[1], samples[2] - samples[3], samples[4] - samples[5]) * (0.5 / probe);
+    if (dot(g, g) < 1e-8) { return normalize(vec3<f32>(0.18, 0.28, 0.94)); }
+    return normalize(-g);
 }
 
 fn approxShapeNormalFromChannels(s: vec4<f32>, pos: vec3<f32>, ph: f32, sunDir: vec3<f32>, viewDir: vec3<f32>) -> vec3<f32> {
@@ -3133,7 +3186,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
         let thickDenseFastLighting = thickLightPerfF > 0.30 && shadowInteriorProbe > 0.12 && lightingEdgeProtect < 0.20;
         let fastLighting = (sunStrideSafe > TUNE.sunStride && lightingEdgeProtect < 0.22) || macroOnly || (farF > 0.34) || (proxyPerfF > 0.42) || thickDenseFastLighting;
         let ultraFastLighting = fastLighting && (thickDenseFastLighting || ((thickLightPerfF > 0.38 && shadowInteriorProbe > 0.18) && lightingEdgeProtect < 0.14) || proxyPerfF > 0.70 || Tr < 0.48);
-        if (!fastLighting && sunStrideSafe <= 1) {
+        if (CLOUD_DETAILED_LIGHTING != 0u && !fastLighting && sunStrideSafe <= 1) {
           shapeN_cached = approxShapeNormal(p, max(ph_coarse, 0.0), max(0.0, lodShapeLighting));
         } else if (ultraFastLighting) {
           shapeN_cached = approxShapeNormalFromChannels(s, p, max(ph_coarse, 0.0), sunDir, viewDir);
@@ -3141,7 +3194,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
           shapeN_cached = approxShapeNormalFast(p, max(ph_coarse, 0.0), max(0.0, lodShapeLighting + 0.45));
         }
 
-        if (!fastLighting && sunStrideSafe <= 1) {
+        if (CLOUD_DETAILED_LIGHTING != 0u && !fastLighting && sunStrideSafe <= 1) {
           let densityN = approxLightingNormal(
             p,
             0.0,
@@ -3232,7 +3285,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
 
         if (auroraLayerMode()) {
           let nightBoost = 1.0 - smoothstep(-0.18, 0.42, sunDotShell);
-          let auroraPalette = max(mix_v3(C.frontLightColor, C.shadowLightColor, 0.30), vec3<f32>(0.0));
+          let auroraPalette = auroraSpectralColor(p, ph_coarse);
           let capPresence = mix_f(0.90, 1.32, auroraMask);
           let evenEmission = auroraPalette * alpha * capPresence * mix_f(1.05, 2.00, nightBoost);
           let darkSideBoost = auroraPalette * alpha * mix_f(0.16, 0.55, nightBoost);
@@ -3256,7 +3309,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
         let relShell2 = p - B.center;
         let shellN2 = normalizeOr(relShell2, vec3<f32>(0.0, 1.0, 0.0));
         let nightBoost2 = 1.0 - smoothstep(-0.18, 0.42, dot(shellN2, sunDir));
-        let auroraPalette2 = max(mix_v3(C.frontLightColor * 1.06, C.shadowLightColor, 0.22), vec3<f32>(0.0));
+        let auroraPalette2 = auroraSpectralColor(p, ph_coarse);
         let emissiveFloor = auroraPalette2 * alpha * mix_f(0.85, 2.10, nightBoost2) * mix_f(0.80, 1.25, auroraMask);
         lightCol = max(lightCol, emissiveFloor);
       }
@@ -3447,14 +3500,6 @@ fn computeCloudBox(
 
 @compute @workgroup_size(8, 8, 1)
 fn computeCloudSphere(
-  @builtin(global_invocation_id) gid_in: vec3<u32>,
-  @builtin(local_invocation_id) local_id: vec3<u32>
-) {
-  computeCloudCore(gid_in, local_id);
-}
-
-@compute @workgroup_size(8, 8, 1)
-fn computeCloudAurora(
   @builtin(global_invocation_id) gid_in: vec3<u32>,
   @builtin(local_invocation_id) local_id: vec3<u32>
 ) {
