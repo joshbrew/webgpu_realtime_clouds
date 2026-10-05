@@ -69,6 +69,10 @@ temporal ray budget. Ordinary cloud presets keep their existing interleave.
 
 # Screenshots
 
+<img width="800"  alt="image3" src="https://github.com/user-attachments/assets/bc6f6212-2d7a-42be-9951-9c5f1f07cde1" />
+<img width="800"  alt="image" src="https://github.com/user-attachments/assets/14f415ff-ed9d-4145-b688-75b9f03bbc54" />
+<img width="800"  alt="image2" src="https://github.com/user-attachments/assets/4b7e8fe5-96b3-469b-9a2b-32e5baeeab0e" />
+
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/85a8a9e9-8cc8-41e1-bd49-d9fa5681ba0b" />
 <img width="800" alt="Screenshot 2026-06-06 172156" src="https://github.com/user-attachments/assets/36306a95-fda1-4f0a-8a09-7c8dc0115241" />
 <img width="800" alt="Screenshot 2026-05-29 105041" src="https://github.com/user-attachments/assets/96fae4fd-ba58-42bb-a2a0-728086c8c8b5" />
@@ -82,6 +86,10 @@ temporal ray budget. Ordinary cloud presets keep their existing interleave.
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/ef959ab5-070b-4fc1-bf39-444d091674c6" />
 <img width="800" alt="Screenshot 2026-05-07 223522" src="https://github.com/user-attachments/assets/939b4692-5aea-4238-93ba-84015ded4231" />
 
+
+| Planets with volumetric clouds and aurora |  |  |
+|---|---|---|
+| <img width="1586" height="1168" alt="Screenshot 2026-06-13 233532" src="https://github.com/user-attachments/assets/8872720b-8710-4fa7-a28c-decf422edd21" /> | <img width="1338" height="1094" alt="Screenshot 2026-06-13 231303" src="https://github.com/user-attachments/assets/b4e74511-71bb-4db9-ab86-5d5d60ddcdd2" /> | <img width="1636" height="1252" alt="Screenshot 2026-06-13 124342" src="https://github.com/user-attachments/assets/155f60ce-0dd5-416a-9adc-f30a32d427c5" /> |
 
 ---
 
