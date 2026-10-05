@@ -69,6 +69,10 @@ temporal ray budget. Ordinary cloud presets keep their existing interleave.
 
 # Screenshots
 
+<img width="800"  alt="image" src="https://github.com/user-attachments/assets/14f415ff-ed9d-4145-b688-75b9f03bbc54" />
+<img width="800"  alt="image2" src="https://github.com/user-attachments/assets/4b7e8fe5-96b3-469b-9a2b-32e5baeeab0e" />
+<img width="800"  alt="image3" src="https://github.com/user-attachments/assets/bc6f6212-2d7a-42be-9951-9c5f1f07cde1" />
+
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/85a8a9e9-8cc8-41e1-bd49-d9fa5681ba0b" />
 <img width="800" alt="Screenshot 2026-06-06 172156" src="https://github.com/user-attachments/assets/36306a95-fda1-4f0a-8a09-7c8dc0115241" />
 <img width="800" alt="Screenshot 2026-05-29 105041" src="https://github.com/user-attachments/assets/96fae4fd-ba58-42bb-a2a0-728086c8c8b5" />
