@@ -10,10 +10,13 @@ import {
   PLANET_CLOUD_FLAT_LAB_PRESET,
   PLANET_CLOUD_NOISE,
   createPlanetCloudLayer,
+  setPlanetCloudStyle,
   updatePlanetCloudLayer,
   updatePlanetCloudLayerOptions,
   disposePlanetCloudLayer,
 } from '../clouds/planetClouds.js';
+import {PLANET_CLOUD_STYLES,planetCloudSimStylePatch} from '../clouds/planetCloudSimStyles.js';
+import {cloudColorStrength,cloudColorHex,cloudColorFromHex,scaleCloudColor} from '../clouds/planetCloudColors.js';
 
 const DEFAULT_SEGMENTS = 1000;
 const DEFAULT_RADIUS = 50;
@@ -1196,6 +1199,12 @@ export const NOISE_PLANET_TEST_AURORA = mergePlain(NOISE_PLANET_TEST_CLOUDS, {
 });
 
 NOISE_PLANET_TEST_CLOUDS.aurora = clonePlain(NOISE_PLANET_TEST_AURORA);
+// Preserve the old editable settings and leave the independent aurora alone.
+const NOISE_PLANET_TEST_LEGACY_CLOUDS = clonePlain(NOISE_PLANET_TEST_CLOUDS);
+function cloudConfigForStyle(style='realistic',radius=DEFAULT_RADIUS) {
+  return mergePlain(NOISE_PLANET_TEST_LEGACY_CLOUDS,planetCloudSimStylePatch(style,radius));
+}
+Object.assign(NOISE_PLANET_TEST_CLOUDS,cloudConfigForStyle());
 
 function defaultAuroraConfig() {
   return clonePlain(NOISE_PLANET_TEST_AURORA);
@@ -1460,7 +1469,8 @@ function makePlanetNoiseStackEditorOptions(options = {}) {
 }
 
 function makeCloudEditorOptions(options = {}) {
-  const merged = mergePlain(NOISE_PLANET_TEST_CLOUDS, typeof options.clouds === 'object' ? options.clouds : {});
+  const overrides = typeof options.clouds === 'object' ? options.clouds : {};
+  const merged = mergePlain(cloudConfigForStyle(overrides.cloudStyle || 'realistic',options.radius ?? DEFAULT_RADIUS),overrides);
   if (!merged.aurora || typeof merged.aurora !== 'object') {
     merged.aurora = defaultAuroraConfig();
   } else {
@@ -1655,7 +1665,7 @@ function isCloudTextureBakePath(path = '') {
 
   // These paths change baked weather/shape/detail/blue textures and should not
   // be live-applied as uniform-only updates.
-  if (p === 'seed' || p.startsWith('noise.')) return true;
+  if (p === 'seed' || p === 'cloudStyle' || p.startsWith('noise.')) return true;
 
   const textureBakePaths = new Set([
     'textures.weatherWidth',
@@ -1726,7 +1736,7 @@ function makeCompactInput({ label, value, type = 'number', step = 'any', min = n
     input.style.accentColor = '#84b8ff';
   }
 
-  input.addEventListener('change', () => {
+  input.addEventListener(type === 'color' ? 'input' : 'change', () => {
     let next;
     if (isCheckbox) next = !!input.checked;
     else if (type === 'number') {
@@ -2147,6 +2157,14 @@ function createTweakPanel(options = {}) {
 
   function writeInputValue(input, type, value, index = null) {
     if (!input) return;
+    if (type === 'colorVec3') {
+      input.value = cloudColorHex(value);
+      return;
+    }
+    if (type === 'colorStrength') {
+      input.value = cloudColorStrength(value);
+      return;
+    }
     if (type === 'checkbox') {
       input.checked = !!value;
       return;
@@ -2197,7 +2215,9 @@ function createTweakPanel(options = {}) {
     liveCloudApplyTimer = window.setTimeout(async () => {
       try {
         await liveCloudApplyHandler({ label, path });
-        status.textContent = `${label} live-applied to existing cloud uniforms. No planet/noise texture rebake.`;
+        status.textContent = path === 'cloudStyle'
+          ? `${label} applied. Cloud maps prepared; planet terrain was not rebuilt.`
+          : `${label} live-applied to existing cloud uniforms. No planet/noise texture rebake.`;
       } catch (err) {
         console.error(err);
         status.textContent = `Cloud live apply failed: ${err?.message || err}`;
@@ -2461,7 +2481,7 @@ function createTweakPanel(options = {}) {
 
   const cloudQuick = makeCompactControlPanel(
     'Cloud quick controls',
-    'Shell, texture size, motion, and interleave shortcuts.',
+    'Live cloud colors and opacity; shell, texture size, motion, and interleave shortcuts.',
   );
 
   function addCloudControl(path, label, type = 'number', step = 'any', opts = {}) {
@@ -2480,6 +2500,33 @@ function createTweakPanel(options = {}) {
     registerEditorPathInput(clouds, path, control, type);
     return control;
   }
+
+  addCloudControl('render.opacity', 'Ray opacity', 'number', '0.01', {min:0,max:1});
+  addCloudControl('surface.surfaceOpacity', 'Mesh opacity', 'number', '0.01', {min:0,max:1});
+
+  function addQuickCloudColor(path, label) {
+    const current = getPathValue(clouds.value, path, [1,1,1]);
+    const color = makeCompactInput({
+      label: `${label} color`, type:'color', value:cloudColorHex(current),
+      onChange: (hex) => updateEditorValue(clouds, `Cloud ${label} color`, (cfg) => {
+        const rgb = getPathValue(cfg, path, [1,1,1]);
+        setPathValue(cfg, path, cloudColorFromHex(hex, cloudColorStrength(rgb) || 1));
+      }, {path}),
+    });
+    color.input.style.height = '26px';
+    const strength = makeCompactInput({
+      label: `${label} brightness`, type:'number', step:'0.01', min:0,
+      value:cloudColorStrength(current),
+      onChange: (next) => updateEditorValue(clouds, `Cloud ${label} brightness`, (cfg) => {
+        setPathValue(cfg, path, scaleCloudColor(getPathValue(cfg, path, [1,1,1]), next));
+      }, {path}),
+    });
+    cloudQuick.grid.append(color.wrap, strength.wrap);
+    registerEditorPathInput(clouds, path, color, 'colorVec3');
+    registerEditorPathInput(clouds, path, strength, 'colorStrength');
+  }
+  addQuickCloudColor('params.frontLightColor', 'Lit');
+  addQuickCloudColor('params.shadowLightColor', 'Shadow');
 
   addCloudControl('shell.cloudBottom', 'cloudBottom', 'number', '0.01');
   addCloudControl('shell.cloudTop', 'cloudTop', 'number', '0.01');
@@ -3044,7 +3091,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
         while (vec.length < 3) vec.push(0);
         vec[index] = next;
         setPathValue(cfg, path, vec);
-      });
+      }, {path});
     };
     for (const [index, suffix] of ['R', 'G', 'B'].entries()) {
       const control = makeCompactInput({
@@ -3056,6 +3103,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
       });
       cloudLookPanel.grid.appendChild(control.wrap);
       cloudLookControls.push({ path, type: 'vec3', index, input: control.input });
+      registerEditorPathInput(clouds, path, control, 'vec3', index);
     }
   }
 
@@ -3520,6 +3568,20 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     'Cloud march/render/tuning controls',
     'March cost, empty skipping, alpha shaping, sparsity, definition, and overlay.',
   );
+  const planetCloudStyleSelect = makeCompactInput({
+    label:'Planet cloud style',type:'select',value:clouds.value.cloudStyle || 'realistic',
+    options:PLANET_CLOUD_STYLES.map(s=>({value:s.id,label:s.label})),
+    onChange:(style)=>{
+      updateEditorValue(clouds,'Planet cloud style',(cfg)=>{
+        const radius=Number(readOptions().radius) || DEFAULT_RADIUS;
+        const {aurora,textures,...presetConfig}=cloudConfigForStyle(style,radius);
+        Object.assign(cfg,mergePlain(cfg,presetConfig));
+      },{path:'cloudStyle',forceCloudLiveApply:true});
+      syncEditorPathInputs(clouds);
+    },
+  });
+  cloudQuick.grid.prepend(planetCloudStyleSelect.wrap);
+  registerEditorPathInput(clouds,'cloudStyle',planetCloudStyleSelect,'select');
 
   function addCloudMarchControl(path, label, type = 'number', step = 'any', opts = {}) {
     const control = makeCompactInput({
@@ -4532,7 +4594,7 @@ async function rebakePlanetAuroraTexturesOnly(runtime, options = {}) {
 function buildPlanetCloudConfig(runtime, result, seed, options = {}) {
   const atmosphereRadius = runtime.atmosphereSettings?.atmosphereRadius ?? (result.radius + 18);
   const cloudOverrides = typeof options.clouds === 'object' ? options.clouds : {};
-  const config = mergePlain(NOISE_PLANET_TEST_CLOUDS, cloudOverrides);
+  const config = mergePlain(cloudConfigForStyle(cloudOverrides.cloudStyle || 'realistic',result.radius), cloudOverrides);
   const transforms = mergePlain(config.transforms, {
     weatherOffsetWorld: config.motion?.offsets?.weatherOffsetWorld,
     shapeOffsetWorld: config.motion?.offsets?.shapeOffsetWorld,
@@ -4540,7 +4602,14 @@ function buildPlanetCloudConfig(runtime, result, seed, options = {}) {
   });
 
   const cloudOptions = {
+    ...config.surface,
     seed,
+    cloudStyle:config.cloudStyle,
+    cloudRenderMode:runtime.planetClouds?.activeMode || runtime.cloudRenderMode || config.cloudRenderMode || 'raymarch',
+    showCloudStyleControl:false,
+    progressiveStartup:false,
+    bootstrapFrames:0,
+    nearSurfaceAdaptiveQuality:config.nearSurfaceAdaptiveQuality,
     enabled: config.enabled !== false,
     sphereOffset: result.offset ?? options.offset ?? 0,
     sphereOffset2: result.offset2 ?? options.offset2 ?? 0,
@@ -4588,12 +4657,14 @@ function buildPlanetCloudConfig(runtime, result, seed, options = {}) {
 async function setupPlanetClouds(runtime, result, seed, options = {}) {
   const cloudOptions = options.clouds;
   if (cloudOptions === false || cloudOptions?.enabled === false) {
+    if(runtime.planetClouds?.activeMode)runtime.cloudRenderMode=runtime.planetClouds.activeMode;
     disposePlanetCloudLayer(runtime.planetClouds);
     runtime.planetClouds = null;
     runtime.planetCloudSettings = null;
     return null;
   }
 
+  if(runtime.planetClouds?.activeMode)runtime.cloudRenderMode=runtime.planetClouds.activeMode;
   disposePlanetCloudLayer(runtime.planetClouds);
   runtime.planetClouds = null;
   runtime.planetCloudSettings = null;
@@ -4663,6 +4734,9 @@ async function applyPlanetCloudLiveSettings(runtime, options = {}, meta = {}) {
 
   runtime.planetClouds.radius = runtime.lastResult.radius;
   runtime.planetClouds.atmosphereRadius = atmosphereRadius;
+  if(runtime.planetClouds.options.cloudStyle !== layerOptions.cloudStyle) {
+    await setPlanetCloudStyle(runtime.planetClouds,layerOptions.cloudStyle,layerOptions);
+  }
 
   updatePlanetCloudLayerOptions(runtime.planetClouds, layerOptions, {
     resetHistory: !!meta.resetHistory,
@@ -4892,6 +4966,7 @@ export async function noisePlanetTest(options = {}) {
     disposeAtmosphere(runtime);
 
     if (!preserveClouds) {
+      if(runtime.planetClouds?.activeMode)runtime.cloudRenderMode=runtime.planetClouds.activeMode;
       disposePlanetCloudLayer(runtime.planetClouds);
       runtime.planetClouds = null;
       runtime.planetCloudSettings = null;
@@ -5170,6 +5245,7 @@ export async function clearNoisePlanetTest(runtime = window.noisePlanetTestRende
   }
 
   disposeAtmosphere(runtime);
+  if(runtime.planetClouds?.activeMode)runtime.cloudRenderMode=runtime.planetClouds.activeMode;
   disposePlanetCloudLayer(runtime.planetClouds);
   runtime.planetClouds = null;
   disposePlanetCloudLayer(runtime.planetAurora);

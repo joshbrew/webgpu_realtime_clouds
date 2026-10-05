@@ -6,6 +6,7 @@
 import html from "./clouds.html";
 import wrkr from "./cloudTest.worker.js";
 import { CloudTimingReport, logCloudTimingReport } from "./cloudTiming.js";
+import { ANVIL_FORM, ANVIL_PRESET_VALUES } from './weather/cloudAnvilLook.js';
 
 let worker;
 
@@ -125,6 +126,7 @@ const preview = {
   renderScaleDivider: STARTUP_PROFILE.renderScaleDivider,
   temporalCellRate: STARTUP_PROFILE.temporalCellRate,
   layerPreset: "rain_shelf",
+  volumeShape: "box",
   gradeStyle: 3,
   sunTint: [1.0, 1.0, 1.0],
   transmissiveLightTint: [0.94, 1.00, 1.08],
@@ -2152,6 +2154,8 @@ function organizeSidebarControlGroups() {
 
   const tuningPanel = $("p-cloudParams");
   appendControlGroup(tuningPanel, "Density", [
+    { label: "Form", columns: 1, fields: [{ id: "t-formType", label: "Shape" }] },
+    { label: "Puffs", columns: 3, fields: [{ id: "t-puffScale", label: "Size" }, { id: "t-towerHeightVariation", label: "Height variation" }, { id: "t-aoStrength", label: "Occlusion" }] },
     { label: "Body", columns: 3, fields: [{ id: "p-coverage", label: "Coverage" }, { id: "p-density", label: "Density" }, { id: "p-anvil", label: "Anvil" }] },
     { label: "Shell", columns: 4, fields: [{ id: "t-fluffFactor", label: "Fluff" }, { id: "t-sparsity", label: "Sparse" }, { id: "t-definition", label: "Define" }, { id: "t-topJitter", label: "Top" }] },
     { label: "Grain", columns: 1, fields: [{ id: "t-baseJitter", label: "Base" }] },
@@ -2291,6 +2295,7 @@ const clamp01 = (v) => Math.max(0, Math.min(4, Number.isFinite(+v) ? +v : 1));
 const CLOUD_LAYER_PRESETS = {
   fair_cumulus: {
     description: "Puffy fair-weather cumulus with a balanced body and soft tops.",
+    form: { type: 1, halfY: 2.0, puffScale: 3.8, ao: 0.50, heightVariation: 0.38 },
     values: {
       "p-coverage": 0.86,
       "p-density": 8.5,
@@ -2336,6 +2341,7 @@ const CLOUD_LAYER_PRESETS = {
   },
   broken_cumulus: {
     description: "Open-cell broken cumulus with deeper erosion and more gaps.",
+    form: { type: 1, halfY: 1.6, puffScale: 4.4, ao: 0.56, heightVariation: 0.54 },
     values: {
       "p-coverage": 0.72,
       "p-density": 8.0,
@@ -2420,6 +2426,7 @@ const CLOUD_LAYER_PRESETS = {
   },
   towering_cu: {
     description: "Strong vertical cumulus towers without a fully spread anvil.",
+    form: { type: 2, halfY: 3.6, puffScale: 5.0, ao: 0.60, heightVariation: 0.28 },
     values: {
       "p-coverage": 0.88,
       "p-density": 10.5,
@@ -2463,28 +2470,10 @@ const CLOUD_LAYER_PRESETS = {
     },
   },
   cumulonimbus_anvil: {
-    description: "Tall storm tower with connected body and upper anvil, with extra vertical erosion.",
+    description: "Scattered tall anvil storms among lower cumulus, with connected outflow canopies and volumetric breakup.",
+    form: ANVIL_FORM,
     values: {
-      "p-coverage": 0.94,
-      "p-density": 11.8,
-      "p-anvil": 1.15,
-      "p-beer": 6.0,
-      "p-sI": 1.15,
-      "p-sE": 1.65,
-      "t-fluffFactor": 4.90,
-      "t-sparsity": 0.44,
-      "t-definition": 0.72,
-      "t-raySmoothDens": 0.23,
-      "t-baseJitter": 0.045,
-      "t-topJitter": 0.32,
-      "t-verticalTextureHomogeneity": 1.0,
-      "t-verticalLayerDecorrelation": 1.0,
-      "t-sliceJitterStrength": 0.14,
-      "t-alphaCutoff": 0.965,
-      "t-alphaBoostThreshold": 0.20,
-      "t-alphaBoostAmount": 0.14,
-      "t-minOutputAlpha": 0.12,
-      "t-outputAlphaFeather": 0.52,
+      ...ANVIL_PRESET_VALUES,
       "we-zoom": 3.55,
       "we-freq": 1.00,
       "we-oct": 5,
@@ -2507,18 +2496,89 @@ const CLOUD_LAYER_PRESETS = {
       "de-axis-y": 3.25,
     },
   },
-  wispy_high: {
-    description: "Thin high broken wisps with stronger erosion and low density.",
+  rotating_donut: {
+    description: "An arbitrary rotating torus filled with independently scrolling volumetric clouds.",
+    form: { type: 1, halfY: 14, puffScale: 3.8, ao: 0.65, heightVariation: 0.35, volumeShape: "torus" },
     values: {
-      "p-coverage": 0.52,
-      "p-density": 4.4,
+      "p-coverage": 0.95, "p-density": 9.5, "p-anvil": 0, "p-beer": 5.6,
+      "t-fluffFactor": 3.55, "t-sparsity": 0.30, "t-definition": 0.64,
+      "t-minOutputAlpha": 0.04, "t-alphaBoostAmount": 0,
+      "we-zoom": 3.7, "we-freq": 1.05, "we-oct": 5, "we-gain": 0.52,
+      "we-billow-enable": true, "we-billow-zoom": 4.4, "we-billow-freq": 1.55,
+      "sh-zoom": 4.2, "sh-freq": 1.02, "sh-oct": 2, "sh-thr": 0.40,
+      "sh-scale": 0.135, "sh-bias": 0.39, "sh-axis-y": 1,
+      "de-zoom": 5.35, "de-freq": 1.18, "de-oct": 4, "de-scale": 1.46, "de-axis-y": 1,
+    },
+  },
+  rotating_gallery: {
+    description: "A torus, cube, ellipsoid, capsule and diamond rotating independently inside noisy cloud volumes.",
+    form: {type:1,halfY:14,puffScale:3.8,ao:.65,heightVariation:.35,volumeShape:"gallery"},
+    values: {
+      "p-coverage":.95,"p-density":9.5,"p-anvil":0,"p-beer":5.6,
+      "t-fluffFactor":3.55,"t-sparsity":.30,"t-definition":.64,
+      "t-minOutputAlpha":.04,"t-alphaBoostAmount":0,
+      "we-zoom":3.7,"we-freq":1.05,"we-oct":5,"we-gain":.52,
+      "we-billow-enable":true,"we-billow-zoom":4.4,"we-billow-freq":1.55,
+      "sh-zoom":4.2,"sh-freq":1.02,"sh-oct":2,"sh-thr":.40,
+      "sh-scale":.135,"sh-bias":.39,"sh-axis-y":1,
+      "de-zoom":5.35,"de-freq":1.18,"de-oct":4,"de-scale":1.46,"de-axis-y":1,
+    },
+  },
+  cirrus: {
+    description: "High feathered ice-cloud streaks with flowing filaments and translucent edges.",
+    form: { type: 5, halfY: 5.8, puffScale: 5.0, ao: 0.25, heightVariation: 0.3, camera: [4, 0.2, 22, 188, 20] },
+    values: {
+      "p-coverage": 0.86, "p-density": 4.5, "p-anvil": 0, "p-beer": 4.2,
+      "p-sI": 1.05, "p-sE": 1.75, "t-fluffFactor": 1.5,
+      "t-sparsity": 0.48, "t-definition": 0.56, "t-raySmoothDens": 0.12,
+      "t-minOutputAlpha": 0.004, "t-alphaBoostAmount": 0, "t-outputAlphaFeather": 0.16,
+      "we-zoom": 3.8, "we-freq": 1.0, "we-oct": 4, "we-gain": 0.52, "we-billow-enable": false,
+      "sh-zoom": 4.2, "sh-freq": 1.02, "sh-oct": 2, "sh-thr": 0.40,
+      "sh-scale": 0.13, "sh-bias": 0.34, "sh-axis-y": 1,
+      "de-zoom": 5.4, "de-freq": 1.2, "de-oct": 4, "de-scale": 1.45, "de-axis-y": 1,
+    },
+  },
+  kelvin_helmholtz: {
+    description: "Wind-sheared fluctus: open curling wave crests rooted in a broken cloud bank.",
+    form: { type: 6, halfY: 4, puffScale: 5.8, ao: 0.65, heightVariation: 0.3, camera: [4, 2.0, 26, 188, 7] },
+    values: {
+      "p-coverage": 0.92, "p-density": 6.5, "p-anvil": 0, "p-beer": 5.0,
+      "p-sI": 1.10, "p-sE": 1.65, "t-fluffFactor": 2.8,
+      "t-sparsity": 0.40, "t-definition": 0.58, "t-raySmoothDens": 0.18,
+      "t-minOutputAlpha": 0.008, "t-alphaBoostAmount": 0, "t-outputAlphaFeather": 0.28,
+      "we-zoom": 3.8, "we-freq": 1.0, "we-oct": 4, "we-gain": 0.52, "we-billow-enable": true,
+      "sh-zoom": 4.2, "sh-freq": 1.02, "sh-oct": 2, "sh-thr": 0.40,
+      "sh-scale": 0.13, "sh-bias": 0.34, "sh-axis-y": 1,
+      "de-zoom": 5.4, "de-freq": 1.2, "de-oct": 4, "de-scale": 1.45, "de-axis-y": 1,
+    },
+  },
+  asperitas: {
+    description: "A turbulent connected ceiling with irregular wave troughs on its shadowed underside.",
+    form: { type: 7, halfY: 4, puffScale: 5.0, ao: 0.70, heightVariation: 0.3, camera: [4, -3.0, 12, 188, 25] },
+    values: {
+      "p-coverage": 1.04, "p-density": 10.5, "p-anvil": 0, "p-beer": 5.8,
+      "p-sI": 1.10, "p-sE": 1.65, "t-fluffFactor": 3.0,
+      "t-sparsity": 0.12, "t-definition": 0.64, "t-raySmoothDens": 0.20,
+      "t-minOutputAlpha": 0.02, "t-alphaBoostAmount": 0, "t-outputAlphaFeather": 0.32,
+      "we-zoom": 3.8, "we-freq": 1.0, "we-oct": 4, "we-gain": 0.52, "we-billow-enable": true,
+      "sh-zoom": 4.2, "sh-freq": 1.02, "sh-oct": 2, "sh-thr": 0.40,
+      "sh-scale": 0.13, "sh-bias": 0.34, "sh-axis-y": 1,
+      "de-zoom": 5.4, "de-freq": 1.2, "de-oct": 4, "de-scale": 1.45, "de-axis-y": 1,
+    },
+  },
+  wispy_high: {
+    description: "Thin broken wisps with gentle erosion and preserved translucent edges.",
+    values: {
+      "p-coverage": 0.80,
+      "p-density": 3.4,
       "p-anvil": 0.05,
       "p-beer": 4.2,
       "p-sI": 0.95,
       "p-sE": 1.85,
-      "t-fluffFactor": 5.10,
-      "t-sparsity": 0.78,
-      "t-definition": 0.86,
+      "t-fluffFactor": 1.55,
+      "t-sparsity": 0.42,
+      "t-definition": 0.52,
+      "t-raySmoothDens": 0.12,
       "t-baseJitter": 0.04,
       "t-topJitter": 0.18,
       "t-verticalTextureHomogeneity": 0.78,
@@ -2526,9 +2586,9 @@ const CLOUD_LAYER_PRESETS = {
       "t-sliceJitterStrength": 0.12,
       "t-alphaCutoff": 0.985,
       "t-alphaBoostThreshold": 0.24,
-      "t-alphaBoostAmount": 0.10,
-      "t-minOutputAlpha": 0.14,
-      "t-outputAlphaFeather": 0.40,
+      "t-alphaBoostAmount": 0.0,
+      "t-minOutputAlpha": 0.006,
+      "t-outputAlphaFeather": 0.16,
       "we-zoom": 5.8,
       "we-freq": 1.55,
       "we-oct": 5,
@@ -2622,7 +2682,12 @@ function injectPreviewLookControls() {
           <option value="stratus_sheet">Stratus Sheet</option>
           <option value="towering_cu">Towering Cu</option>
           <option value="cumulonimbus_anvil">Cumulonimbus Anvil</option>
+          <option value="rotating_donut">Rotating Cloud Donut</option>
+          <option value="rotating_gallery">Arbitrary Volume Gallery</option>
           <option value="wispy_high">Wispy High</option>
+          <option value="cirrus">Feather Cirrus</option>
+          <option value="kelvin_helmholtz">Kelvin–Helmholtz (Experimental)</option>
+          <option value="asperitas">Asperitas</option>
           <option value="rain_shelf">Rain Shelf</option>
         </select>
       </label>
@@ -2654,6 +2719,10 @@ function injectPreviewLookControls() {
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Horizon</span><input id="v-fog-horizon" type="number" step="0.01" min="0" max="2" title="How strongly fog gathers around the horizon and distant cloud silhouettes."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Sun</span><input id="v-fog-sun" type="number" step="0.01" min="0" max="2" title="Amount of sun-washed color injected into the atmospheric fog by the active color grade."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Min Output Alpha</span><input id="t-minOutputAlpha" type="number" step="0.005" min="0" max="0.45" title="Compute-side alpha cutoff. Pixels below this alpha are written transparent before temporal history so low-opacity speckle cannot accumulate."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Form</span><select id="t-formType"><option value="0">Layer / Rain Shelf</option><option value="1">Rounded Cumulus</option><option value="2">Towering Cumulus</option><option value="3">Thunderhead / Anvil</option><option value="4">Mixed Weather</option><option value="5">Feather Cirrus</option><option value="6">Kelvin–Helmholtz Waves</option><option value="7">Asperitas</option></select></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Puff Size</span><input id="t-puffScale" type="number" value="3.6" step="0.1" min="0.75" max="12" title="World-space size of rounded cloud cells. Layer mode keeps its original noise structure."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Ambient Occlusion</span><input id="t-aoStrength" type="number" value="0" step="0.05" min="0" max="1" title="Rounded forms only: cached neighboring density probes darken pockets between puffs. Layer mode retains its original lighting."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Height Variation</span><input id="t-towerHeightVariation" type="number" value="0.35" step="0.05" min="0" max="0.9" title="Varies cloud-cell heights so the tops do not form a flat ceiling."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Front Occlusion</span><input id="t-frontOcclusionStrength" type="number" step="0.01" min="0" max="1" title="Close opaque cloud acceleration. 0 disables it; higher values cut behind-cloud work sooner once the front body has accumulated alpha."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Occ. Alpha Start</span><input id="t-frontOcclusionAlpha" type="number" step="0.01" min="0" max="0.98" title="Accumulated alpha where front-occlusion acceleration starts."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Occ. Step Boost</span><input id="t-frontOcclusionStepBoost" type="number" step="0.05" min="1" max="8" title="Maximum behind-front-cloud step multiplier."></label>
@@ -3137,6 +3206,11 @@ function setControlValue(id, val) {
   }
 }
 
+let savedLayerCamera = null;
+let savedDonutBounds = null;
+let savedGalleryTemporal = null;
+const donutBoundsControls = ["v-box-cx", "v-box-cz", "v-box-hx", "v-box-hz"];
+const formCameraControls = ["v-cx", "v-cy", "v-cz", "v-yaw", "v-pitch"];
 function applyCloudLayerPresetValues(key) {
   const preset = CLOUD_LAYER_PRESETS[key];
   if (!preset) return false;
@@ -3145,6 +3219,45 @@ function applyCloudLayerPresetValues(key) {
   for (const [id, val] of Object.entries(preset.values || {})) {
     setControlValue(id, val);
   }
+  // Every preset owns its form and volume height. Returning to Rain Shelf resets
+  // these explicitly, so a previously selected thunderhead cannot leak into it.
+  const form = preset.form || { type: 0, halfY: 0.3, puffScale: 3.6, ao: 0, heightVariation: 0.35 };
+  preview.volumeShape = form.volumeShape || "box";
+  // Fast independent rotations have no screen-space motion vectors. Stale
+  // interleaved rays made diagonal bands across the shapes; refresh the small
+  // coarse target fully instead. Restore the user's ray budget on exit.
+  if (preview.volumeShape === "gallery") {
+    savedGalleryTemporal ??= $("v-temporal-cell-rate")?.value;
+    setControlValue("v-temporal-cell-rate", 1);
+  } else if (savedGalleryTemporal !== null) {
+    setControlValue("v-temporal-cell-rate", savedGalleryTemporal);
+    savedGalleryTemporal = null;
+  }
+  if (preview.volumeShape === "torus" || preview.volumeShape === "gallery") {
+    savedDonutBounds ||= donutBoundsControls.map(id => $(id)?.value);
+    donutBoundsControls.forEach((id, i) => setControlValue(id, [0, 0, 14, 14][i]));
+  } else if (savedDonutBounds) {
+    donutBoundsControls.forEach((id, i) => setControlValue(id, savedDonutBounds[i]));
+    savedDonutBounds = null;
+  }
+  // Tall forms need an outside view. Preserve the user's layer view so switching
+  // back to coastal/Rain Shelf clouds doesn't silently change its framing.
+  if (form.type) {
+    savedLayerCamera ||= formCameraControls.map(id => $(id)?.value);
+    // View the lit shoulders, not straight into the sun through an opaque body.
+    // Backlit views remain available, but shouldn't hide each preset's billows.
+    const camera = form.camera || (preview.volumeShape === "torus" || preview.volumeShape === "gallery" ? [0, 0, 34, 180, 0] : form.type === 1 ? [4, 0.8, 24, 188, 7] : form.type === 2 ? [4, 1.2, 28, 187, 9] : [4, 0.8, 32, 187, 12]);
+    formCameraControls.forEach((id, i) => setControlValue(id, camera[i]));
+  } else if (savedLayerCamera) {
+    formCameraControls.forEach((id, i) => setControlValue(id, savedLayerCamera[i]));
+    savedLayerCamera = null;
+  }
+  setControlValue("t-formType", form.type);
+  setControlValue("t-puffScale", form.puffScale);
+  setControlValue("t-aoStrength", form.ao);
+  setControlValue("t-towerHeightVariation", form.heightVariation);
+  setControlValue("v-box-hy", form.halfY);
+  setControlValue("v-box-cy", preview.volumeShape === "torus" || preview.volumeShape === "gallery" ? 0 : form.type ? form.halfY - 0.3 : 0);
   return true;
 }
 
@@ -3157,12 +3270,27 @@ async function applyCloudLayerPreset(key, render = true) {
   const preset = CLOUD_LAYER_PRESETS[key];
   if (!preset) return;
 
-  applyCloudLayerPresetValues(key);
-
-  if (!render) return;
+  if (!render) {
+    applyCloudLayerPresetValues(key);
+    return;
+  }
 
   setBusy(true, `Applying ${key.replaceAll("_", " ")}...`);
+  const wasAnimating = animRunning;
+  let presetReady = false;
   try {
+    // A preset is a scene transaction: do not let the animation loop render a
+    // new form against the old bounds/textures while its bakes are in flight.
+    if (wasAnimating) {
+      animRunning = false;
+      stopVisualFpsTicker();
+      if (_liveAnimationUpdateTimer) clearTimeout(_liveAnimationUpdateTimer);
+      _liveAnimationUpdateTimer = 0;
+      _liveAnimationUpdateQueued = false;
+      _liveAnimationUpdateIncludeTransforms = false;
+      await rpc("stopLoop", {});
+    }
+    applyCloudLayerPresetValues(key);
     readWeather();
     readWeatherG();
     readWeatherB();
@@ -3199,8 +3327,25 @@ async function applyCloudLayerPreset(key, render = true) {
     payload.skipFinalDebug = true;
     await setBusyAndPaint("Rendering first frame...");
     await runFrameLatest(payload);
+    presetReady = true;
     await refreshDebugPreviews();
   } finally {
+    // Rounded examples should flow immediately, not wait for the separate
+    // reprojection button. Explicit Stop still pauses the current scene.
+    if ((wasAnimating || preset.form?.type > 0) && presetReady) {
+      try {
+        await rpc("setReproj", { reproj: getReprojPayload(), perf: null });
+        await rpc("startLoop", {});
+        animRunning = true;
+        startVisualFpsTicker();
+        const btn = $("reproj-anim-toggle");
+        if (btn) btn.textContent = "Stop Reproject Anim";
+      } catch (err) {
+        console.warn("restart animation after preset failed", err);
+        const btn = $("reproj-anim-toggle");
+        if (btn) btn.textContent = "Start Reproject Anim";
+      }
+    }
     setBusy(false);
   }
 }
@@ -3454,6 +3599,10 @@ function readTuning() {
     fluffFactor: +($("t-fluffFactor")?.value || 3.2),
     sparsity: num("t-sparsity", 0.42),
     definition: num("t-definition", 0.62),
+    formType: num("t-formType", 0),
+    puffScale: num("t-puffScale", 3.6),
+    aoStrength: num("t-aoStrength", 0),
+    towerHeightVariation: num("t-towerHeightVariation", 0.35),
     anvilLift: num("t-anvilLift", 0.6),
     alphaCutoff: +($("t-alphaCutoff")?.value || 0.98),
     verticalStepBoost: +($("t-verticalStepBoost")?.value || 3.0),
@@ -4300,6 +4449,9 @@ function setBusy(on, msg = "Working...") {
     "reproj-anim-toggle",
     "quick-render-button",
     "quick-rebake-button",
+    "quick-layer-preset",
+    "v-layer-preset",
+    "weather-cycle-enabled",
   ].forEach((id) => {
     const b = $(id);
     if (b) b.disabled = on;
@@ -4492,14 +4644,80 @@ function populateAllModeSelects() {
   populateSelect("de-mode-3", vol4d, detailParams.mode3, { allowNone: false });
 }
 
+let savedWeatherScene=null, weatherCycleUIBusy=false;
+function weatherCycleConfig(enabled=$('weather-cycle-enabled')?.checked) {
+  return {enabled,timeOfDay:$('weather-cycle-tod')?.checked!==false,
+    weatherSeconds:num('weather-cycle-minutes',7)*60,daySeconds:num('weather-cycle-day-minutes',3)*60,startHour:num('weather-cycle-hour',9)};
+}
+async function changeWeatherCycle(enabled) {
+  if(weatherCycleUIBusy) return;
+  weatherCycleUIBusy=true;
+  const toggle=$('weather-cycle-enabled'), status=$('weather-cycle-status');
+  toggle.disabled=true;
+  let recoverScene=false;
+  try {
+    if(enabled && !savedWeatherScene) {
+      savedWeatherScene={
+        controls:Array.from(document.querySelectorAll('input[id],select[id]')).filter(el=>/^(v-|c-|p-|t-|we-|sh-|de-|bn-)/.test(el.id)).map(el=>({id:el.id,value:el.value,checked:el.checked})),
+        preview:safeClone(preview),tileTransforms:safeClone(tileTransforms),wasAnimating:animRunning,
+        savedLayerCamera:savedLayerCamera?.slice()||null,savedDonutBounds:savedDonutBounds?.slice()||null,
+        savedGalleryTemporal,
+      };
+      status.textContent='Preparing cached weather maps…';
+      // One coordinated shape/detail bake on entry, never a preset rebake per
+      // weather transition. Manual controls are restored on exit.
+      await applyCloudLayerPreset('cumulonimbus_anvil',true);
+      await rpc('stopLoop',{}); animRunning=false; stopVisualFpsTicker();
+      setBusy(true,'Preparing weather cycle…');
+      await rpc('setWeatherCycle',weatherCycleConfig(true));
+      const payload={weatherParams:safeClone(weatherParams),billowParams:safeClone(billowParams),weatherBParams:safeClone(weatherBParams),shapeParams:safeClone(shapeParams),detailParams:safeClone(detailParams),preview:safeClone(preview),cloudParams:readCloudParams()};
+      useFreshFullFrameReproj(payload); ensureCoarseInPayload(payload); payload.skipFinalDebug=true;
+      await runFrameLatest(payload);
+      await rpc('setReproj',{reproj:getReprojPayload(),perf:null}); await rpc('startLoop',{});
+      animRunning=true; startVisualFpsTicker(); $('reproj-anim-toggle').textContent='Stop Reproject Anim';
+      status.textContent='Running · 6 cached weather maps';
+    } else if(!enabled && savedWeatherScene) {
+      await rpc('stopLoop',{}); animRunning=false; stopVisualFpsTicker();
+      await rpc('setWeatherCycle',{enabled:false});
+      const scene=savedWeatherScene;
+      for(const control of scene.controls) {
+        const el=$(control.id); if(!el) continue;
+        el.value=control.value; if(el.type==='checkbox') el.checked=control.checked;
+      }
+      Object.assign(preview,safeClone(scene.preview)); Object.assign(tileTransforms,safeClone(scene.tileTransforms));
+      savedLayerCamera=scene.savedLayerCamera; savedDonutBounds=scene.savedDonutBounds;
+      savedGalleryTemporal=scene.savedGalleryTemporal;
+      readWeather(); readWeatherG(); readWeatherB(); readBlue(); readShape(); readShapeTransform(); readDetail(); readDetailTransform(); readPreview();
+      animRunning=scene.wasAnimating;
+      await runBakeJobsAndFrame([{bakeRpcType:'bakeAll',bakePayload:{weatherParams:safeClone(weatherParams),billowParams:safeClone(billowParams),weatherBParams:safeClone(weatherBParams),blueParams:safeClone(blueParams),shapeParams:safeClone(shapeParams),detailParams:safeClone(detailParams),tileTransforms:safeClone(tileTransforms)}}]);
+      savedWeatherScene=null; toggle.checked=false; status.textContent='Off · previous scene restored';
+      $('reproj-anim-toggle').textContent=animRunning?'Stop Reproject Anim':'Start Reproject Anim';
+    } else if(enabled) {
+      await rpc('setWeatherCycle',weatherCycleConfig(true));
+    }
+  } catch(error) {
+    status.textContent='Weather cycle failed: '+error.message;
+    try { await rpc('setWeatherCycle',{enabled:false}); } catch {}
+    toggle.checked=false;
+    console.warn('weather cycle failed',error);
+    recoverScene=enabled && !!savedWeatherScene;
+  } finally {weatherCycleUIBusy=false; toggle.disabled=false; setBusy(false);}
+  if(recoverScene) await changeWeatherCycle(false);
+}
+
 // ---- wire UI & initialization ----
 async function wireUI() {
+  $('weather-cycle-enabled')?.addEventListener('change',()=>changeWeatherCycle($('weather-cycle-enabled').checked));
+  for(const id of ['weather-cycle-tod','weather-cycle-minutes','weather-cycle-day-minutes','weather-cycle-hour']) $(id)?.addEventListener('change',()=>{
+    if($('weather-cycle-enabled')?.checked) changeWeatherCycle(true);
+  });
   $("pass")?.addEventListener("change", () => showPanelsFor($("pass").value));
   showPanelsFor($("pass")?.value || "preview");
 
   $("v-layer-preset")?.addEventListener("change", async () => {
     const key = $("v-layer-preset")?.value || "custom";
     try {
+      if(savedWeatherScene) await changeWeatherCycle(false);
       await applyCloudLayerPreset(key, true);
     } catch (err) {
       console.warn("cloud layer preset failed", err);
@@ -5522,6 +5740,13 @@ async function init() {
       }
       const ov = $("busyOverlay");
       if (ov && ov.style.display !== "none") setBusy(true, msg);
+    }
+    if (type === 'weather-cycle-state') {
+      const status=$('weather-cycle-status');
+      if(status && $('weather-cycle-enabled')?.checked) {
+        const hour=Math.floor(data.hour), minute=Math.floor((data.hour-hour)*60);
+        status.textContent=`${data.label} · ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')} ${data.moon?'moonlight':'sunlight'} · ${data.cachedMaps} cached maps`;
+      }
     }
     if (type === "frame") {
       if (!animRunning) {

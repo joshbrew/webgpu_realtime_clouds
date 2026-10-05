@@ -236,6 +236,19 @@
         </div>
       </div>
 
+      <div class="panel" id="weather-cycle-panel">
+        <h2>Weather simulation</h2>
+        <label><input type="checkbox" id="weather-cycle-enabled" /> Evolving weather</label>
+        <label><input type="checkbox" id="weather-cycle-tod" checked /> Day / night and moonlight</label>
+        <div class="inline">
+          <label>Weather cycle (minutes)<input id="weather-cycle-minutes" type="number" min="0.5" max="120" step="0.5" value="7" /></label>
+          <label>Day length (minutes)<input id="weather-cycle-day-minutes" type="number" min="0.2" max="120" step="0.2" value="3" /></label>
+        </div>
+        <label>Starting hour<input id="weather-cycle-hour" type="number" min="0" max="23.99" step="0.5" value="9" /></label>
+        <small class="hint">Cumulus → towers / anvils → Rain Shelf → rain banks → stratus → high wisps → clearing. Maps are cached and blended; Stop Reproject Anim pauses both clocks. Turning this off restores your previous scene. This is a stylized cycle, not physical simulation.</small>
+        <div id="weather-cycle-status" role="status">Off</div>
+      </div>
+
       <!-- Weather -->
       <div class="panel" id="p-weather">
         <h2>Weather 2D (R, G, B channels)</h2>

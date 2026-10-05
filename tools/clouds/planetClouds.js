@@ -1,10 +1,16 @@
 import { NoiseComputeBuilder } from '../noise/noiseCompute.js';
 import { CloudComputeBuilder } from './clouds.js';
 import { CloudTimingReport } from './cloudTiming.js';
+import { CloudVolumeMips } from './cloudVolumeMips.js';
+import { PlanetCloudNoise } from './planetCloudNoise.js';
+import { advancePlanetCloudTime, planetCloudMotion } from './planetCloudMotion.js';
+import { PLANET_CLOUD_STYLES, planetCloudStyleOptions } from './planetCloudStyles.js';
+export { PLANET_CLOUD_STYLES, planetCloudStyleOptions } from './planetCloudStyles.js';
 import {
   createPlanetCloudSurfaceLayer,
   updatePlanetCloudSurfaceLayer,
   updatePlanetCloudSurfaceOptions,
+  setPlanetCloudSurfaceStyle,
   disposePlanetCloudSurfaceLayer,
 } from './planetCloudSurface.js';
 
@@ -19,6 +25,19 @@ const DEFAULT_MAX_RAYMARCH_PIXELS = 1400000;
 const DEFAULT_FULLSCREEN_RAYMARCH_PIXELS = 1050000;
 const OVERLAY_GPU_CACHE = new WeakMap();
 const PLANET_NOISE_BUILDER_CACHE = new WeakMap();
+const PLANET_VOLUME_MIPS = new WeakMap();
+const PLANET_STYLE_NOISE = new WeakMap();
+function planetStyleNoise(noiseBuilder) {
+  let baker=PLANET_STYLE_NOISE.get(noiseBuilder);
+  if(!baker){baker=new PlanetCloudNoise(noiseBuilder.device);PLANET_STYLE_NOISE.set(noiseBuilder,baker);}
+  return baker;
+}
+
+function planetVolumeMips(noiseBuilder) {
+  let mips = PLANET_VOLUME_MIPS.get(noiseBuilder);
+  if (!mips) { mips = new CloudVolumeMips(noiseBuilder.device); PLANET_VOLUME_MIPS.set(noiseBuilder,mips); }
+  return mips;
+}
 
 function getOverlayGpuCache(device) {
   let cache = OVERLAY_GPU_CACHE.get(device);
@@ -727,7 +746,9 @@ async function bakeShapeVolume(noiseBuilder, options) {
     });
   }
 
-  return noiseBuilder.get3DView(textureId);
+  const view = noiseBuilder.get3DView(textureId);
+  // Oversized chunked volumes retain their existing representation.
+  return view?.views ? view : planetVolumeMips(noiseBuilder).bake(view,size,textureId);
 }
 
 async function bakeDetailVolume(noiseBuilder, options) {
@@ -755,7 +776,8 @@ async function bakeDetailVolume(noiseBuilder, options) {
     });
   }
 
-  return noiseBuilder.get3DView(textureId);
+  const view = noiseBuilder.get3DView(textureId);
+  return view?.views ? view : planetVolumeMips(noiseBuilder).bake(view,size,textureId);
 }
 
 async function bakeBlueNoise(noiseBuilder, options) {
@@ -853,6 +875,7 @@ async function prewarmPlanetCloudPipeline(layer) {
 }
 
 async function prewarmPlanetBootstrapPipeline(layer) {
+  if (layer.options.progressiveStartup === false) return 0;
   const started = performance.now();
   const cb = layer.cloudBuilder;
   if (typeof cb.ensureBootstrapComputePipelineReadyAsync === 'function') {
@@ -874,22 +897,25 @@ function getSharedPlanetNoiseBuilder(device, queue) {
 
 function collectPlanetNoisePipelineEntries(options = {}) {
   const entries = new Set(['clearTexture', 'computeBlueNoise']);
-  const weather = mergePlain(PLANET_CLOUD_NOISE.weather, options.weather);
-  const weatherG = mergePlain(PLANET_CLOUD_NOISE.weatherG, options.weatherG);
-  const weatherB = mergePlain(PLANET_CLOUD_NOISE.weatherB, options.weatherB);
-  entries.add(weather.mode || 'computeFBM');
-  if (weatherG.enabled !== false) entries.add(weatherG.mode || 'computeBillow');
-  if (weatherB.enabled === true) entries.add(weatherB.mode || 'computeBillow');
+  const styled = !options.auroraMode && options.cloudStyle && options.cloudStyle !== 'legacy';
+  if (!styled) {
+    const weather = mergePlain(PLANET_CLOUD_NOISE.weather, options.weather);
+    const weatherG = mergePlain(PLANET_CLOUD_NOISE.weatherG, options.weatherG);
+    const weatherB = mergePlain(PLANET_CLOUD_NOISE.weatherB, options.weatherB);
+    entries.add(weather.mode || 'computeFBM');
+    if (weatherG.enabled !== false) entries.add(weatherG.mode || 'computeBillow');
+    if (weatherB.enabled === true) entries.add(weatherB.mode || 'computeBillow');
 
-  const shapeDefaults = options.auroraMode
-    ? mergePlain(PLANET_CLOUD_NOISE.shape, PLANET_AURORA_NOISE.shape)
-    : PLANET_CLOUD_NOISE.shape;
-  const shape = mergePlain(shapeDefaults, options.shape);
-  entries.add(shape.baseModeA || 'computeAntiWorley4D');
-  entries.add(shape.baseModeB || shape.baseModeA || 'computeAntiWorley4D');
-  entries.add(shape.bandMode2 || 'computeWorley4D');
-  entries.add(shape.bandMode3 || 'computeWorley4D');
-  entries.add(shape.bandMode4 || 'computeWorley4D');
+    const shapeDefaults = options.auroraMode
+      ? mergePlain(PLANET_CLOUD_NOISE.shape, PLANET_AURORA_NOISE.shape)
+      : PLANET_CLOUD_NOISE.shape;
+    const shape = mergePlain(shapeDefaults, options.shape);
+    entries.add(shape.baseModeA || 'computeAntiWorley4D');
+    entries.add(shape.baseModeB || shape.baseModeA || 'computeAntiWorley4D');
+    entries.add(shape.bandMode2 || 'computeWorley4D');
+    entries.add(shape.bandMode3 || 'computeWorley4D');
+    entries.add(shape.bandMode4 || 'computeWorley4D');
+  }
 
   const detailDefaults = options.auroraMode
     ? mergePlain(PLANET_CLOUD_NOISE.detail, PLANET_AURORA_NOISE.detail)
@@ -934,7 +960,11 @@ async function prewarmPlanetNoisePipelines(layer) {
     return pending;
   };
 
-  await Promise.all(collectPlanetNoisePipelineEntries(layer.options).map(compileEntry));
+  const pending = collectPlanetNoisePipelineEntries(layer.options).map(compileEntry);
+  if (!layer.options.auroraMode && layer.options.cloudStyle && layer.options.cloudStyle !== 'legacy') {
+    pending.push(planetStyleNoise(nb).prepare());
+  }
+  await Promise.all(pending);
   return performance.now() - started;
 }
 
@@ -1195,15 +1225,19 @@ function destroyCloudHistory(layer) {
   layer.history = null;
 }
 
-function ensureCloudHistory(layer, width, height) {
+function ensureCloudHistory(layer, width, height, coarseFactor = 1) {
   if (!wantsCloudHistory(layer)) {
     destroyCloudHistory(layer);
     layer.cloudBuilder.setInputMaps({ historyPrevView: null, historyOutView: null });
     return null;
   }
 
-  const w = Math.max(1, width | 0);
-  const h = Math.max(1, height | 0);
+  // Dispatch writes and samples history in its actual raymarch dimensions,
+  // not the upsampled presentation size. A full-size history here left the
+  // coarse image in its corner, then sampled it as a second smaller planet.
+  const factor = Math.max(1, Math.floor(coarseFactor));
+  const w = Math.max(1, Math.ceil(width / factor));
+  const h = Math.max(1, Math.ceil(height / factor));
   const fmt = layer.cloudBuilder?.outFormat || 'rgba16float';
   if (layer.history && layer.history.width === w && layer.history.height === h && layer.history.format === fmt) {
     return layer.history;
@@ -1389,8 +1423,8 @@ function createPlanetCloudToggleButton(controller) {
   button.className = controller.options.renderModeToggleClassName || 'planet-cloud-render-mode-toggle';
   Object.assign(button.style, {
     position: 'absolute',
-    left: '12px',
-    bottom: '12px',
+    right: '12px',
+    bottom: '64px',
     zIndex: String(finiteNumber(controller.options.renderModeToggleZIndex, 40)),
     padding: '7px 10px',
     border: '1px solid rgba(255,255,255,0.32)',
@@ -1415,12 +1449,111 @@ function createPlanetCloudToggleButton(controller) {
   return button;
 }
 
+function createPlanetCloudStyleControl(layer) {
+  if (!layer?.parent || layer.options.auroraMode || layer.options.showCloudStyleControl === false || layer.styleControl) return;
+  ensureToggleParentPosition(layer.parent);
+  const select = document.createElement('select');
+  select.setAttribute('aria-label','Planet cloud style');
+  Object.assign(select.style,{position:'absolute',right:'12px',bottom:'100px',zIndex:'40',
+    padding:'7px 10px',border:'1px solid rgba(255,255,255,.32)',borderRadius:'7px',
+    background:'rgba(7,11,18,.82)',color:'#f4f7ff',font:'12px system-ui'});
+  for (const style of PLANET_CLOUD_STYLES) {
+    const option=document.createElement('option');option.value=style.id;option.textContent=style.label;select.appendChild(option);
+  }
+  select.value=layer.options.cloudStyle || 'legacy';
+  select.addEventListener('change',async()=>{
+    const previous=layer.options.cloudStyle || 'legacy';select.disabled=true;
+    try { await setPlanetCloudStyle(layer,select.value); }
+    catch(error) { select.value=previous;console.error('Planet cloud style could not be applied:',error); }
+    finally { if(!layer.disposed)select.disabled=false; }
+  });
+  layer.parent.appendChild(select);layer.styleControl=select;
+  const target=layer.activeLayer || layer;
+  if(target.refinementPromise) {
+    select.disabled=true;
+    target.refinementPromise.finally(()=>{if(!layer.disposed)select.disabled=false;});
+  }
+}
+
+// A deliberate one-time texture rebake, with the last complete image retained
+// until all maps are ready. Ordinary camera/sun/option changes still never bake.
+export async function setPlanetCloudStyle(layer, style) {
+  if(!layer || layer.disposed)return null;
+  const target=layer;
+  if(target._stylePromise){await target._stylePromise;return setPlanetCloudStyle(layer,style);}
+  const transaction=applyPlanetCloudStyle(layer,style);
+  target._stylePromise=transaction;
+  try{return await transaction;}
+  finally{if(target._stylePromise===transaction)target._stylePromise=null;}
+}
+
+async function applyPlanetCloudStyle(layer, style) {
+  if (!layer || layer.disposed) return null;
+  if(layer.kind === 'planet-cloud-render-toggle') {
+    if(layer.switchPromise)await layer.switchPromise;
+    // Keep cached peers coherent; returning to raymarch must not resurrect
+    // an old weather map after editing the style in mesh mode.
+    for(const renderer of layer.renderers.values())await applyPlanetCloudStyle(renderer,style);
+    layer.options=mergePlain(layer.options,{...layer.activeLayer.options,cloudRenderMode:layer.activeMode});
+    if(layer.styleControl)layer.styleControl.value=style;
+    return layer.options;
+  }
+  const target=layer.activeLayer || layer;
+  if(target.kind==='mc33-shell')return setPlanetCloudSurfaceStyle(target,style);
+  if(target.options.auroraMode) throw new Error('Cloud styles do not apply to aurora.');
+  const overrides=planetCloudStyleOptions(style,target.radius);
+  if(target.refinementPromise) await target.refinementPromise;
+  if(layer.disposed || target.disposed) return null;
+  target._styleBaseOptions ||= clonePlain(target.options);
+  const previous=target.options,previousKeys=target.resourceKeys,previousTextures=target.textures;
+  const base=target._styleBaseOptions;
+  const next=mergePlain(base,{...overrides,cloudStyle:style,
+    resourceNonce:`${base.resourceNonce}-style-${(target._styleRevision=(target._styleRevision||0)+1)}`});
+  const nextKeys=Object.fromEntries(['weather','shape','detail','blue'].map(kind=>[kind,cloudResourceKey(next,kind,target.seed)]));
+  target.styleChanging=true;
+  const release=keys=>{
+    if(!keys)return;
+    PLANET_STYLE_NOISE.get(target.noiseBuilder)?.release(keys.shape);
+    for(const key of [keys.weather,keys.blue])target.noiseBuilder.destroyTexturePair?.(key);
+    for(const key of [keys.shape,keys.detail]) {
+      target.noiseBuilder.destroyVolume?.(key);PLANET_VOLUME_MIPS.get(target.noiseBuilder)?.release(key);
+    }
+  };
+  const transaction=(async()=>{
+    await bakePlanetCloudResources(target,{options:next});
+    await target.queue.onSubmittedWorkDone();
+    if(layer.disposed || target.disposed) {release(target.resourceKeys);return null;}
+    target.options=next;configurePlanetCloudBuilder(target);
+    // A first switch from custom clouds must not compile synchronously in the
+    // animation loop. Keep the previous canvas image until the variant is ready.
+    await target.cloudBuilder.ensureComputePipelineReadyAsync?.();
+    if(layer.disposed || target.disposed) {release(target.resourceKeys);return null;}
+    destroyCloudHistory(target);
+    if(layer.activeLayer) layer.options=mergePlain(layer.options,next);
+    if(layer.styleControl)layer.styleControl.value=style;
+    release(previousKeys);
+    return next;
+  })();
+  try { return await transaction; }
+  catch(error) {
+    release(nextKeys);
+    if(!target.disposed) {
+      target.options=previous;target.resourceKeys=previousKeys;target.textures=previousTextures;
+      if(previousTextures)target.cloudBuilder.setInputMaps(previousTextures);
+      configurePlanetCloudBuilder(target);
+    }
+    throw error;
+  }
+  finally {target.styleChanging=false;}
+}
+
 async function createPlanetCloudRendererImplementation(config, mode) {
   const normalizedMode = normalizePlanetCloudRenderMode(mode);
   const options = mergePlain(config.options || {}, {
     cloudRenderMode: normalizedMode,
     enableRenderModeToggle: false,
     showRenderModeToggle: false,
+    showCloudStyleControl: false,
     auroraMode: false,
   });
   return createPlanetCloudLayer({ ...config, options });
@@ -1439,7 +1572,7 @@ export async function createPlanetCloudRenderToggleLayer(config = {}) {
     getCameraState: config.getCameraState,
     getSunDir: config.getSunDir,
     options: mergePlain(
-      { preloadAlternateCloudRendererOnIdle: true },
+      { preloadAlternateCloudRendererOnIdle: false },
       mergePlain(config.options || {}, {
         cloudRenderMode: initialMode,
         enableRenderModeToggle: true,
@@ -1525,6 +1658,7 @@ export async function createPlanetCloudRenderToggleLayer(config = {}) {
   });
   setPlanetCloudLayerVisible(initialLayer, true);
   createPlanetCloudToggleButton(controller);
+  createPlanetCloudStyleControl(controller);
 
   if (controller.options.preloadAlternateCloudRenderer === true) {
     if (initialLayer?.refinementPromise) await initialLayer.refinementPromise;
@@ -1554,6 +1688,7 @@ export async function setPlanetCloudRenderMode(layer, mode, overrides = {}) {
   const normalizedMode = normalizePlanetCloudRenderMode(mode);
   if (!layer || layer.disposed) return layer;
   if (layer.options?.auroraMode === true) return layer;
+  if (layer._stylePromise) await layer._stylePromise;
 
   if (layer.kind !== 'planet-cloud-render-toggle') {
     const currentMode = getPlanetCloudRenderMode(layer);
@@ -1565,6 +1700,7 @@ export async function setPlanetCloudRenderMode(layer, mode, overrides = {}) {
       }
       setPlanetCloudLayerVisible(layer, false);
       setPlanetCloudLayerVisible(cachedPeer, true);
+      if(layer.animationClock)cachedPeer.animationClock={...layer.animationClock,last:performance.now()*0.001};
       await updatePlanetCloudLayer(cachedPeer);
       return cachedPeer;
     }
@@ -1588,6 +1724,7 @@ export async function setPlanetCloudRenderMode(layer, mode, overrides = {}) {
     setPlanetCloudLayerVisible(nextLayer, true);
     layer._planetCloudTogglePeer = nextLayer;
     nextLayer._planetCloudTogglePeer = layer;
+    if(layer.animationClock)nextLayer.animationClock={...layer.animationClock,last:performance.now()*0.001};
     await updatePlanetCloudLayer(nextLayer);
     return nextLayer;
   }
@@ -1614,6 +1751,10 @@ export async function setPlanetCloudRenderMode(layer, mode, overrides = {}) {
       updatePlanetCloudLayerOptions(renderer, overrides);
     }
 
+    if(layer.activeLayer?.animationClock && renderer !== layer.activeLayer){
+      renderer.animationClock={...layer.activeLayer.animationClock,last:performance.now()*0.001};
+      if(renderer.kind==='mc33-shell'){renderer.fieldValid=false;renderer.topologyDirty=true;}
+    }
     for (const cachedRenderer of layer.renderers.values()) {
       setPlanetCloudLayerVisible(cachedRenderer, cachedRenderer === renderer);
     }
@@ -1731,8 +1872,8 @@ export async function createPlanetCloudLayer({
   const seed = Math.floor(options.seed ?? Date.now()) >>> 0;
   const visualPreset = options.auroraMode
     ? mergePlain(PLANET_CLOUD_FLAT_LAB_PRESET, PLANET_AURORA_FAST_PRESET)
-    : PLANET_CLOUD_FLAT_LAB_PRESET;
-  const mergedOptions = mergePlain({
+    : mergePlain(PLANET_CLOUD_FLAT_LAB_PRESET, planetCloudStyleOptions(options.cloudStyle || 'legacy', radius));
+  const defaultOptions = {
     enabled: true,
     weatherWidth: DEFAULT_WEATHER_WIDTH,
     weatherHeight: DEFAULT_WEATHER_HEIGHT,
@@ -1806,8 +1947,10 @@ export async function createPlanetCloudLayer({
       compactInterleave: 1,
     },
     resourceNonce: options.resourceNonce ?? `${seed}-${Date.now()}`,
-    ...visualPreset,
-  }, options || {});
+  };
+  // Keep an unstyled baseline even when the layer starts in a new style.
+  const customBaseOptions = mergePlain(mergePlain(defaultOptions,PLANET_CLOUD_FLAT_LAB_PRESET),{...options,cloudStyle:'legacy'});
+  const mergedOptions = mergePlain(mergePlain(defaultOptions,visualPreset), options || {});
   if (!mergedOptions.resourceNonce) mergedOptions.resourceNonce = `${seed}-${Date.now()}`;
   if (mergedOptions.auroraMode) {
     const auroraGradientSeed = Math.floor(mergedOptions.auroraGradientSeed ?? seed) >>> 0;
@@ -1860,6 +2003,7 @@ export async function createPlanetCloudLayer({
     sharedNoiseBuilder: !noiseBuilder,
     cloudBuilder,
     options: mergedOptions,
+    _styleBaseOptions: customBaseOptions,
     seed,
     radius,
     atmosphereRadius,
@@ -2042,6 +2186,9 @@ export async function createPlanetCloudLayer({
               try { nb.destroyTexturePair?.(layer.resourceKeys.blue); } catch {}
               try { nb.destroyVolume?.(layer.resourceKeys.shape); } catch {}
               try { nb.destroyVolume?.(layer.resourceKeys.detail); } catch {}
+              PLANET_VOLUME_MIPS.get(nb)?.release(layer.resourceKeys.shape);
+              PLANET_STYLE_NOISE.get(nb)?.release(layer.resourceKeys.shape);
+              PLANET_VOLUME_MIPS.get(nb)?.release(layer.resourceKeys.detail);
             }
             layer.refining = false;
             startupTiming.mark('refinement-cancelled');
@@ -2071,6 +2218,9 @@ export async function createPlanetCloudLayer({
             try { nb.destroyTexturePair?.(bootstrapKeys.blue); } catch {}
             try { nb.destroyVolume?.(bootstrapKeys.shape); } catch {}
             try { nb.destroyVolume?.(bootstrapKeys.detail); } catch {}
+            PLANET_VOLUME_MIPS.get(nb)?.release(bootstrapKeys.shape);
+            PLANET_STYLE_NOISE.get(nb)?.release(bootstrapKeys.shape);
+            PLANET_VOLUME_MIPS.get(nb)?.release(bootstrapKeys.detail);
           }
           layer.bootstrapResourceKeys = null;
           const finalTiming = startupTiming.finish({
@@ -2130,6 +2280,7 @@ export async function createPlanetCloudLayer({
   } finally {
     try { loadingMessage?.remove?.(); } catch {}
     layer.loadingMessage = null;
+    if(startupTiming.milestones.some(mark=>mark.name==='first-frame-visible'))createPlanetCloudStyleControl(layer);
   }
 }
 
@@ -2171,12 +2322,17 @@ export async function bakePlanetCloudResources(layer, bakeOptions = {}) {
     blue: cloudResourceKey(opt, 'blue', seed),
   };
 
+  try {
   const weatherStarted = performance.now();
   let stage = timingReport?.start(`${quality}-weather-buffer-and-dispatch`, {
     size: [opt.weatherWidth, opt.weatherHeight],
   }, 'gpu-submit');
   publishTiming();
-  const weatherView = await bakeSphericalWeather(nb, {
+  const styled = !opt.auroraMode && opt.cloudStyle && opt.cloudStyle !== 'legacy';
+  const styledMaps = styled ? await planetStyleNoise(nb).bake({key:resourceKeys.shape,seed,
+    shapeSize:opt.shapeSize || DEFAULT_SHAPE_SIZE,weatherWidth:opt.weatherWidth || DEFAULT_WEATHER_WIDTH,
+    weatherHeight:opt.weatherHeight || DEFAULT_WEATHER_HEIGHT,weatherStyle:opt.cloudStyle}) : null;
+  const weatherView = styledMaps?.weatherView || await bakeSphericalWeather(nb, {
     ...opt,
     seed,
     textureKey: resourceKeys.weather,
@@ -2188,7 +2344,7 @@ export async function bakePlanetCloudResources(layer, bakeOptions = {}) {
     size: opt.shapeSize,
   }, 'gpu-submit');
   publishTiming();
-  const shape3DView = await bakeShapeVolume(nb, {
+  const shape3DView = styledMaps ? await planetVolumeMips(nb).bake(styledMaps.shapeView,opt.shapeSize || DEFAULT_SHAPE_SIZE,resourceKeys.shape) : await bakeShapeVolume(nb, {
     ...opt,
     seed,
     textureId: resourceKeys.shape,
@@ -2242,12 +2398,22 @@ export async function bakePlanetCloudResources(layer, bakeOptions = {}) {
   layer.configSummary.resourceKeys = resourceKeys;
   layer.configSummary.resourceNonce = opt.resourceNonce;
   return layer.textures;
+  } catch (error) {
+    // Initial setup can fail before resourceKeys are published on the layer.
+    // Release partial allocations as well as failed style transactions.
+    PLANET_STYLE_NOISE.get(nb)?.release(resourceKeys.shape);
+    for (const key of [resourceKeys.weather,resourceKeys.blue]) nb.destroyTexturePair?.(key);
+    for (const key of [resourceKeys.shape,resourceKeys.detail]) {
+      nb.destroyVolume?.(key);PLANET_VOLUME_MIPS.get(nb)?.release(key);
+    }
+    throw error;
+  }
 }
 
 export function configurePlanetCloudBuilder(layer) {
   const opt = layer.options;
   const cb = layer.cloudBuilder;
-  cb.setOptions({ sphericalMode: true, writeRGB: true, outputChannel: 0, r1: 0.0 });
+  cb.setOptions({ sphericalMode: true, planetStyleMode:!opt.auroraMode && !!opt.cloudStyle && opt.cloudStyle!=='legacy', writeRGB: true, outputChannel: 0, r1: 0.0 });
   cb.setParams(opt.params || PLANET_CLOUD_FLAT_LAB_PRESET.params);
   cb.setNoiseTransforms(opt.transforms || PLANET_CLOUD_FLAT_LAB_PRESET.transforms);
   cb.setTuning(resolvePlanetCloudTuning(opt));
@@ -2337,7 +2503,7 @@ export async function updatePlanetCloudLayer(layer) {
   // Keep the confirmed bootstrap image on screen while full-size noise is being
   // generated. This also prevents animation frames from filling the queue ahead
   // of the one-time refinement work.
-  if (layer.refining) return;
+  if (layer.refining || layer.styleChanging) return;
   const opt = layer.options;
   const { width, height } = resizeOverlayCanvas(layer.canvas, layer.sourceCanvas, opt);
   const camera = layer.getCameraState?.() || makeDefaultCameraState();
@@ -2364,8 +2530,6 @@ export async function updatePlanetCloudLayer(layer) {
     layer.overlayBindGroupView = null;
     destroyCloudHistory(layer);
   }
-
-  ensureCloudHistory(layer, outW, outH);
 
   const frameStride = Math.max(1, Math.floor(opt.updateEvery ?? 1));
   layer.frame += 1;
@@ -2397,7 +2561,8 @@ export async function updatePlanetCloudLayer(layer) {
   const auroraHemisphere = String(auroraCap.hemisphere || 'north').toLowerCase() === 'south' ? -1.0 : 1.0;
   const auroraEnabled = !!opt.auroraMode;
 
-  if (opt.animate !== false) {
+  const styledMotion = !auroraEnabled && opt.cloudStyle && opt.cloudStyle !== 'legacy';
+  if (opt.animate !== false || styledMotion) {
     const configuredSpin = finiteNumber(opt.spinSpeed, Array.isArray(vel.weather) ? finiteNumber(vel.weather[0], 0.14) : 0.14);
     const meridionalDrift = finiteNumber(opt.meridionalDrift, Array.isArray(vel.weather) ? finiteNumber(vel.weather[2], 0.0) : 0.0);
 
@@ -2429,6 +2594,13 @@ export async function updatePlanetCloudLayer(layer) {
         vel.detail || [0, 0, 0],
         t,
       );
+    } else if (opt.cloudStyle && opt.cloudStyle !== 'legacy') {
+      // Styled clouds share one slow wind and evolve locally, not by rotating
+      // their shape/detail fields at different (often additive) angular speeds.
+      const motion = planetCloudMotion(opt, advancePlanetCloudTime(layer, t));
+      transforms.weatherOffsetWorld = addScaled(baseTransforms.weatherOffsetWorld || [0, 0, 0], motion.weatherOffsetWorld, 1);
+      transforms.shapeOffsetWorld = addScaled(baseTransforms.shapeOffsetWorld || [0, 0, 0], motion.shapeOffsetWorld, 1);
+      transforms.detailOffsetWorld = addScaled(baseTransforms.detailOffsetWorld || [0, 0, 0], motion.detailOffsetWorld, 1);
     } else {
       const spinSpeed = configuredSpin;
       const shapeSpinFactor = finiteNumber(opt.shapeSpinFactor, 0.68);
@@ -2538,6 +2710,22 @@ export async function updatePlanetCloudLayer(layer) {
   });
   layer.cloudBuilder.setLight({ sunDir, camPos });
 
+  const baseCoarseFactor = Math.max(1, Math.floor(opt.performance?.coarseFactor ?? opt.coarseFactor ?? 1));
+  const nearSurfaceCoarseFactor = Math.max(1, Math.floor(
+    opt.performance?.nearSurfaceCoarseFactor ?? opt.nearSurfaceCoarseFactor ?? 3,
+  ));
+  const nearSurfaceActive = nearSurfaceFactor > 0.15;
+  const adaptiveCoarseFactor = nearSurfaceActive ? nearSurfaceCoarseFactor : 1;
+  const movingFullscreenCoarseFactor = cameraIsMoving && screenMetrics.pressure > 0.30
+    ? Math.max(1, Math.floor(
+      opt.performance?.movingFullscreenCoarseFactor ?? opt.movingFullscreenCoarseFactor ?? 2,
+    ))
+    : 1;
+  const coarseFactor = Math.max(baseCoarseFactor, adaptiveCoarseFactor, movingFullscreenCoarseFactor);
+  ensureCloudHistory(layer, outW, outH, coarseFactor);
+
+  // Allocating a new history (including a coarse/full-size transition) must
+  // happen before this warmup decision. Seed it with one fresh complete frame.
   const reprojBase = opt.reprojection || {};
   const auroraAnimating = auroraEnabled && opt.animate !== false;
   const historyWarmupActive = (layer.historyWarmupFrames | 0) > 0;
@@ -2578,25 +2766,9 @@ export async function updatePlanetCloudLayer(layer) {
     temporalCellPhase: temporalCellRate > 1 ? frameIndex % temporalCellRate : 0,
     compactInterleave: cameraIsMoving || auroraAnimating ? 0 : (reprojBase.compactInterleave ?? (temporalCellRate > 1 ? 1 : 0)),
     frameIndex,
-    fullWidth: outW,
-    fullHeight: outH,
+    fullWidth: Math.max(1, Math.ceil(outW / coarseFactor)),
+    fullHeight: Math.max(1, Math.ceil(outH / coarseFactor)),
   });
-
-  const baseCoarseFactor = Math.max(1, Math.floor(opt.performance?.coarseFactor ?? opt.coarseFactor ?? 1));
-  const nearSurfaceCoarseFactor = Math.max(1, Math.floor(
-    opt.performance?.nearSurfaceCoarseFactor ?? opt.nearSurfaceCoarseFactor ?? 3,
-  ));
-  const nearSurfaceMovingCoarseFactor = Math.max(nearSurfaceCoarseFactor, Math.floor(
-    opt.performance?.nearSurfaceMovingCoarseFactor ?? opt.nearSurfaceMovingCoarseFactor ?? 4,
-  ));
-  const nearSurfaceActive = nearSurfaceFactor > 0.15;
-  const adaptiveCoarseFactor = nearSurfaceActive ? nearSurfaceCoarseFactor : 1;
-  const movingFullscreenCoarseFactor = cameraIsMoving && screenMetrics.pressure > 0.30
-    ? Math.max(1, Math.floor(
-      opt.performance?.movingFullscreenCoarseFactor ?? opt.movingFullscreenCoarseFactor ?? 2,
-    ))
-    : 1;
-  const coarseFactor = Math.max(baseCoarseFactor, adaptiveCoarseFactor, movingFullscreenCoarseFactor);
   layer.performanceStats = {
     canvasWidth: width,
     canvasHeight: height,
@@ -2617,6 +2789,9 @@ export async function updatePlanetCloudLayer(layer) {
     temporalCellRate,
     temporalBlend,
     coarseFactor,
+    historyWidth: layer.history?.width || 0,
+    historyHeight: layer.history?.height || 0,
+    historyWarmupActive,
   };
   if (layer.useBootstrapPreview && typeof layer.cloudBuilder.dispatchBootstrapPreview === 'function') {
     await layer.cloudBuilder.dispatchBootstrapPreview({ wait: false });
@@ -2672,6 +2847,7 @@ export function disposePlanetCloudLayer(layer) {
     if (!layer || layer.disposed) return;
     layer.disposed = true;
     try { layer.toggleButton?.remove?.(); } catch {}
+    try { layer.styleControl?.remove?.(); } catch {}
     const renderers = Array.from(new Set(layer.renderers.values()));
     layer.renderers.clear();
     for (const renderer of renderers) {
@@ -2696,6 +2872,7 @@ export function disposePlanetCloudLayer(layer) {
   }
   if (!layer || layer.disposed) return;
   layer.disposed = true;
+  try { layer.styleControl?.remove?.(); } catch {}
   try { layer.loadingMessage?.remove?.(); } catch {}
   try { layer.canvas?.remove?.(); } catch {}
   try { layer.overlayParams?.destroy?.(); } catch {}
@@ -2706,14 +2883,22 @@ export function disposePlanetCloudLayer(layer) {
     try { layer.noiseBuilder?.destroyTexturePair?.(layer.resourceKeys.blue); } catch {}
     try { layer.noiseBuilder?.destroyVolume?.(layer.resourceKeys.shape); } catch {}
     try { layer.noiseBuilder?.destroyVolume?.(layer.resourceKeys.detail); } catch {}
+    PLANET_VOLUME_MIPS.get(layer.noiseBuilder)?.release(layer.resourceKeys.shape);
+    PLANET_STYLE_NOISE.get(layer.noiseBuilder)?.release(layer.resourceKeys.shape);
+    PLANET_VOLUME_MIPS.get(layer.noiseBuilder)?.release(layer.resourceKeys.detail);
     const bootstrapKeys = layer.bootstrapResourceKeys;
     if (bootstrapKeys) {
       try { layer.noiseBuilder?.destroyTexturePair?.(bootstrapKeys.weather); } catch {}
       try { layer.noiseBuilder?.destroyTexturePair?.(bootstrapKeys.blue); } catch {}
       try { layer.noiseBuilder?.destroyVolume?.(bootstrapKeys.shape); } catch {}
       try { layer.noiseBuilder?.destroyVolume?.(bootstrapKeys.detail); } catch {}
+      PLANET_VOLUME_MIPS.get(layer.noiseBuilder)?.release(bootstrapKeys.shape);
+      PLANET_STYLE_NOISE.get(layer.noiseBuilder)?.release(bootstrapKeys.shape);
+      PLANET_VOLUME_MIPS.get(layer.noiseBuilder)?.release(bootstrapKeys.detail);
     }
   } else if (layer.ownsNoiseBuilder) {
+    PLANET_VOLUME_MIPS.get(layer.noiseBuilder)?.destroy();
+    PLANET_STYLE_NOISE.get(layer.noiseBuilder)?.destroy();
     try { layer.noiseBuilder?.destroyAllTexturePairs?.(); } catch {}
   }
 }

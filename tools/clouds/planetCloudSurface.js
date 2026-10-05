@@ -1,13 +1,16 @@
-import { NoiseComputeBuilder } from '../noise/noiseCompute.js';
 import { MC33_ALL_TABLES } from './mc33Tables.js';
 import { CloudTimingReport } from './cloudTiming.js';
-import planetCloudSurfaceMC33WGSL from './planetCloudSurfaceMC33.wgsl';
-import planetCloudSurfaceRenderWGSL from './planetCloudSurfaceRender.wgsl';
+import { PlanetCloudNoise } from './planetCloudNoise.js';
+import { planetCloudStyleOptions } from './planetCloudStyles.js';
+import { advancePlanetCloudTime } from './planetCloudMotion.js';
+import planetCloudSurfaceMC33WGSL from './shaders/planetCloudSurfaceMC33.wgsl';
+import planetCloudSurfaceRenderWGSL from './shaders/planetCloudSurfaceRender.wgsl';
+import gasAppearanceWGSL from './shaders/planetGasAppearance.wgsl';
 
-const DEFAULT_ANGULAR_CELLS = 48;
+const DEFAULT_ANGULAR_CELLS = 96;
 const DEFAULT_RADIAL_CELLS = 11;
 const DEFAULT_TILE_CELLS = 8;
-const DEFAULT_MAX_VERTICES = 150000;
+const DEFAULT_MAX_VERTICES = 900000;
 const PIPELINE_CACHE = new WeakMap();
 
 function finiteNumber(value, fallback) {
@@ -100,7 +103,7 @@ async function getPipelines(device, colorFormat, sampleCount = 1) {
       label: 'Planet cloud MC33 shell shader',
     });
     const renderModule = device.createShaderModule({
-      code: planetCloudSurfaceRenderWGSL,
+      code: gasAppearanceWGSL+'\n'+planetCloudSurfaceRenderWGSL,
       label: 'Planet cloud surface render shader',
     });
     await Promise.all([
@@ -188,145 +191,36 @@ async function getPipelines(device, colorFormat, sampleCount = 1) {
     };
   })();
 
-  byFormat.set(pipelineKey, promise);
-  return promise;
+  const pending=promise.catch(error=>{
+    if(byFormat.get(pipelineKey)===pending)byFormat.delete(pipelineKey);
+    throw error;
+  });
+  byFormat.set(pipelineKey, pending);
+  return pending;
 }
 
-async function bakeSphericalMap(noiseBuilder, {
-  width,
-  height,
-  textureKey,
-  seed,
-  channels,
-  encodeGradient = false,
-}) {
-  const sphereOptions = {
-    useCustomPos: 2,
-    sphereOffset: 0,
-    sphereOffset2: 0,
-    textureKey,
-    viewDimension: '2d-array',
-  };
-
-  for (let index = 0; index < channels.length; index += 1) {
-    const channel = channels[index];
-    await noiseBuilder.computeToTexture(width, height, {
-      seed: (seed + channel.seedSalt) >>> 0,
-      zoom: channel.zoom,
-      freq: channel.freq,
-      octaves: channel.octaves,
-      lacunarity: channel.lacunarity ?? 2,
-      seedAngle: Math.PI / 2,
-      gain: channel.gain ?? 0.5,
-      threshold: channel.threshold ?? 0.1,
-      time: 0,
-      voroMode: channel.voroMode ?? 4,
-      edgeK: channel.edgeK ?? 0,
-      warpAmp: channel.warpAmp ?? 0,
-    }, {
-      ...sphereOptions,
-      noiseChoices: ['clearTexture', channel.mode],
-      outputChannel: index + 1,
-    });
-  }
-
-  if (encodeGradient) {
-    await noiseBuilder.computeToTexture(width, height, {}, {
-      ...sphereOptions,
-      noiseChoices: ['computeNormal8'],
-      outputChannel: 0,
-    });
-  }
-
-  return noiseBuilder.get2DView(textureKey) || noiseBuilder.getCurrentView(textureKey);
-}
 
 async function bakeSurfaceTextures(layer, bakeOptions = {}) {
-  const options = bakeOptions.options
-    ? { ...layer.options, ...bakeOptions.options }
-    : layer.options;
-  const seed = layer.seed;
-  const quality = bakeOptions.quality || 'full';
-  const timingReport = bakeOptions.timingReport || null;
-  const waitForGpu = !!bakeOptions.waitForGpu;
-  const publishTiming = () => {
-    if (!timingReport || typeof bakeOptions.onTiming !== 'function') return;
-    try { bakeOptions.onTiming(timingReport.snapshot()); } catch {}
-  };
-  const finishStage = async (stage, detail = {}) => {
-    let gpuWaitMs = 0;
-    if (waitForGpu && typeof layer.queue?.onSubmittedWorkDone === 'function') {
-      const waitStarted = performance.now();
-      await layer.queue.onSubmittedWorkDone();
-      gpuWaitMs = performance.now() - waitStarted;
-    }
-    timingReport?.end(stage, { ...detail, gpuWaitMs });
-    publishTiming();
-    return gpuWaitMs;
-  };
-  const width = Math.max(128, Math.floor(options.surfaceMapWidth ?? 1024));
-  const height = Math.max(64, Math.floor(options.surfaceMapHeight ?? 512));
-  const detailWidth = Math.max(128, Math.floor(options.surfaceDetailWidth ?? 512));
-  const detailHeight = Math.max(64, Math.floor(options.surfaceDetailHeight ?? 256));
-  const nonce = options.resourceNonce || `mc33-${seed}`;
-  const keys = {
-    weather: `planet-cloud-surface-weather-${seed}-${nonce}`,
-    shape: `planet-cloud-surface-shape-${seed}-${nonce}`,
-    detail: `planet-cloud-surface-detail-${seed}-${nonce}`,
-  };
-  let stage = timingReport?.start(`${quality}-surface-weather-buffer-and-dispatch`, {
-    size: [width, height],
+  const options = { ...layer.options, ...bakeOptions.options };
+  layer.surfaceNoise ||= new PlanetCloudNoise(layer.device);
+  const key = `${options.resourceNonce || 'mc33'}-${bakeOptions.quality || 'full'}`;
+  const stage = bakeOptions.timingReport?.start('surface-3d-noise-buffer-compile-and-dispatch', {
+    shapeSize: options.surfaceShapeSize ?? 64,
+    weatherSize: [options.surfaceMapWidth ?? 512, options.surfaceMapHeight ?? 256],
   }, 'gpu-submit');
-  publishTiming();
-  const weatherView = await bakeSphericalMap(layer.noiseBuilder, {
-    width,
-    height,
-    textureKey: keys.weather,
-    seed,
-    channels: [
-      { mode: 'computeFBM', seedSalt: 101, zoom: 16, freq: 1.35, octaves: 6, gain: 0.5 },
-      { mode: 'computeBillow', seedSalt: 202, zoom: 13, freq: 1.8, octaves: 4, gain: 0.52 },
-      { mode: 'computeFBM', seedSalt: 303, zoom: 28, freq: 1.15, octaves: 3, gain: 0.48 },
-    ],
-  });
-  await finishStage(stage, { resourceKey: keys.weather });
-
-  stage = timingReport?.start(`${quality}-surface-shape-buffer-and-dispatch`, {
-    size: [width, height],
-  }, 'gpu-submit');
-  publishTiming();
-  const shapeView = await bakeSphericalMap(layer.noiseBuilder, {
-    width,
-    height,
-    textureKey: keys.shape,
-    seed,
-    channels: [
-      { mode: 'computeFBM', seedSalt: 404, zoom: 5.2, freq: 1.0, octaves: 5, gain: 0.56 },
-    ],
-    encodeGradient: true,
-  });
-  await finishStage(stage, { resourceKey: keys.shape });
-
-  stage = timingReport?.start(`${quality}-surface-detail-buffer-and-dispatch`, {
-    size: [detailWidth, detailHeight],
-  }, 'gpu-submit');
-  publishTiming();
-  const detailView = await bakeSphericalMap(layer.noiseBuilder, {
-    width: detailWidth,
-    height: detailHeight,
-    textureKey: keys.detail,
-    seed,
-    channels: [
-      { mode: 'computeBillow', seedSalt: 707, zoom: 24, freq: 1.4, octaves: 4, gain: 0.52 },
-    ],
-    encodeGradient: true,
-  });
-  await finishStage(stage, { resourceKey: keys.detail });
-
-  layer.resourceKeys = keys;
-  layer.textures = { weatherView, shapeView, detailView };
-  return { textures: layer.textures, resourceKeys: keys };
+  const maps = await layer.surfaceNoise.bake({key, seed:layer.seed,
+    shapeSize:options.surfaceShapeSize ?? 64,
+    weatherWidth:options.surfaceMapWidth ?? 512, weatherHeight:options.surfaceMapHeight ?? 256,
+    weatherStyle:options.cloudStyle});
+  if(layer.disposed){layer.surfaceNoise.release(key);throw new Error('MC33 layer disposed during texture preparation');}
+  if (bakeOptions.waitForGpu) await layer.queue.onSubmittedWorkDone();
+  layer.textures = {weatherView:maps.weatherView, shapeView:maps.shapeView, detailView:maps.shapeView};
+  layer.resourceKeys = {noise:key};
+  bakeOptions.timingReport?.end(stage);
+  bakeOptions.onTiming?.(bakeOptions.timingReport?.snapshot());
+  return {textures:layer.textures, resourceKeys:layer.resourceKeys};
 }
+
 
 function createBufferWithData(device, data, usage, label) {
   const buffer = device.createBuffer({
@@ -416,7 +310,7 @@ function createGpuResources(layer) {
   layer.counterBuffer = device.createBuffer({
     label: 'Planet cloud MC33 vertex counter',
     size: 4,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
   });
   layer.indirectBuffer = device.createBuffer({
     label: 'Planet cloud MC33 indirect draw',
@@ -431,7 +325,7 @@ function createGpuResources(layer) {
   layer.activeCounterBuffer = device.createBuffer({
     label: 'Planet cloud MC33 active-cell counter',
     size: 4,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
   });
   layer.extractDispatchBuffer = device.createBuffer({
     label: 'Planet cloud MC33 indirect extraction dispatch',
@@ -465,7 +359,7 @@ function createGpuResources(layer) {
   });
   layer.renderParamsBuffer = device.createBuffer({
     label: 'Planet cloud MC33 render params',
-    size: 144,
+    size: 160,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   layer.sampler = device.createSampler({
@@ -474,7 +368,8 @@ function createGpuResources(layer) {
     minFilter: 'linear',
     mipmapFilter: 'linear',
     addressModeU: 'repeat',
-    addressModeV: 'clamp-to-edge',
+    addressModeV: 'repeat',
+    addressModeW: 'repeat',
   });
 }
 
@@ -525,7 +420,7 @@ function writeComputeParams(layer, camera, elapsedSeconds, fieldBlend) {
   view.setFloat32(16, layer.radius, true);
   view.setFloat32(20, finiteNumber(options.cloudBottom, 1.6), true);
   view.setFloat32(24, finiteNumber(options.cloudTop, 6.0), true);
-  view.setFloat32(28, finiteNumber(options.surfaceCoverageThreshold, 0.42), true);
+  view.setFloat32(28, finiteNumber(options.params?.globalCoverage, 0.82), true);
   view.setFloat32(32, finiteNumber(options.surfaceHeightScale, 1.0), true);
   view.setFloat32(36, finiteNumber(options.surfaceMinThickness, 0.58), true);
   view.setFloat32(40, finiteNumber(options.surfaceMaxThickness, 2.35), true);
@@ -534,9 +429,12 @@ function writeComputeParams(layer, camera, elapsedSeconds, fieldBlend) {
   view.setFloat32(52, finiteNumber(options.surfaceLowPush, 0.028), true);
   view.setFloat32(56, finiteNumber(options.surfaceCurlPush, 0.015), true);
   view.setFloat32(60, finiteNumber(options.surfaceDetailPush, 0.0), true);
-  view.setFloat32(64, elapsedSeconds * finiteNumber(options.surfaceWeatherSpeed, 0.0045), true);
-  view.setFloat32(68, elapsedSeconds * finiteNumber(options.surfaceShapeSpeed, 0.0030), true);
-  view.setFloat32(72, elapsedSeconds * finiteNumber(options.surfaceDetailSpeed, -0.0060), true);
+  // Public spinSpeed is turns/second, as in the raymarch renderer. Explicit
+  // surface angular overrides remain radians/second for compatibility.
+  const windSpeed=finiteNumber(options.spinSpeed,0.00065)*2*Math.PI;
+  view.setFloat32(64, elapsedSeconds * finiteNumber(options.surfaceWeatherSpeed, windSpeed), true);
+  view.setFloat32(68, elapsedSeconds * finiteNumber(options.surfaceShapeSpeed, windSpeed), true);
+  view.setFloat32(72, elapsedSeconds * Math.max(0,finiteNumber(options.evolutionSpeed,0.03)), true);
   view.setFloat32(76, finiteNumber(options.surfaceNormalEpsilon, 0.035), true);
   writeVec3(view, 80, cameraPosition);
   view.setFloat32(92, Math.tan(fovY * 0.5), true);
@@ -569,15 +467,15 @@ function writeComputeParams(layer, camera, elapsedSeconds, fieldBlend) {
   view.setUint32(236, Math.min(2, Math.max(0, layer.fieldHistoryCount || 0)), true);
   view.setFloat32(240, Math.max(0, finiteNumber(options.surfaceVoxelPersistenceBand, 0.035)), true);
   view.setFloat32(244, clamp(finiteNumber(options.surfaceVoxelHistoryWeight, 0.82), 0, 0.98), true);
-  view.setFloat32(248, 0, true);
-  view.setFloat32(252, 0, true);
+  view.setFloat32(248, finiteNumber(options.tuning?.formType, 2), true);
+  view.setFloat32(252, finiteNumber(options.worldToUV, 2.4/layer.radius) * finiteNumber(options.transforms?.shapeScale, 0.44), true);
   layer.queue.writeBuffer(layer.computeParamsBuffer, 0, buffer);
   return { cameraPosition, cameraRight, cameraUp, cameraForward, fovY, aspect };
 }
 
 function writeRenderParams(layer, cameraValues, sunDirection, elapsedSeconds) {
   const options = layer.options;
-  const buffer = new ArrayBuffer(144);
+  const buffer = new ArrayBuffer(160);
   const view = new DataView(buffer);
   writeVec3(view, 0, cameraValues.cameraPosition);
   view.setFloat32(12, Math.tan(cameraValues.fovY * 0.5), true);
@@ -589,19 +487,24 @@ function writeRenderParams(layer, cameraValues, sunDirection, elapsedSeconds) {
   view.setFloat32(60, finiteNumber(options.surfaceFarPlane, layer.radius * 16), true);
   writeVec3(view, 64, normalize3(sunDirection, [0.65, 0.37, -0.65]));
   view.setFloat32(76, clamp(finiteNumber(options.surfaceOpacity, 0.995), 0, 1), true);
-  writeVec3(view, 80, options.surfaceLightColor || [1.30, 1.30, 1.22]);
+  writeVec3(view, 80, options.surfaceLightColor || options.params?.frontLightColor || [1.30, 1.30, 1.22]);
   view.setFloat32(92, finiteNumber(options.surfaceSilverStrength, 0.82), true);
-  writeVec3(view, 96, options.surfaceShadowColor || [0.34, 0.42, 0.56]);
+  writeVec3(view, 96, options.surfaceShadowColor || options.params?.shadowLightColor || [0.34, 0.42, 0.56]);
   view.setFloat32(108, finiteNumber(options.surfaceAmbient, 0.08), true);
   view.setFloat32(112, layer.radius, true);
-  view.setFloat32(116, finiteNumber(options.surfaceFragmentDetailScale, 1.0), true);
+  view.setFloat32(116, finiteNumber(options.worldToUV, 2.4/layer.radius) * finiteNumber(options.transforms?.shapeScale, 0.44), true);
   view.setFloat32(120, finiteNumber(options.surfaceFragmentDetailStrength, 0.38), true);
-  view.setFloat32(124, elapsedSeconds * finiteNumber(options.surfaceFragmentDetailSpeed, -0.018), true);
+  view.setFloat32(124, elapsedSeconds * finiteNumber(options.surfaceFragmentDetailSpeed, finiteNumber(options.surfaceShapeSpeed, finiteNumber(options.spinSpeed, 0.00065)*2*Math.PI)), true);
   const fallbackTerrainRadius = layer.radius + Math.max(0.32, layer.radius * 0.006);
-  view.setFloat32(128, Math.max(layer.radius, finiteNumber(options.surfaceTerrainOcclusionRadius, fallbackTerrainRadius)), true);
+  // A global maximum terrain height is not a depth map: treating the highest
+  // mountain as a solid planet erased every thin-layer cloud. Keep analytic
+  // horizon occlusion below the shell's base, independently of terrain peaks.
+  const shellOcclusionLimit=layer.radius+Math.max(0,finiteNumber(options.cloudBottom,1.6))*0.5;
+  view.setFloat32(128, Math.min(shellOcclusionLimit, Math.max(layer.radius, finiteNumber(options.surfaceTerrainOcclusionRadius, fallbackTerrainRadius))), true);
   view.setFloat32(132, Math.max(0, finiteNumber(options.surfaceTerrainDepthBias, 0.06)), true);
-  view.setFloat32(136, 0, true);
-  view.setFloat32(140, 0, true);
+  view.setFloat32(136, elapsedSeconds*Math.max(0,finiteNumber(options.evolutionSpeed,0.03)), true);
+  view.setFloat32(140, finiteNumber(options.tuning?.formType, 2), true);
+  view.setFloat32(144, elapsedSeconds*finiteNumber(options.surfaceWeatherSpeed,finiteNumber(options.spinSpeed,0.00065)*2*Math.PI), true);
   layer.queue.writeBuffer(layer.renderParamsBuffer, 0, buffer);
 }
 
@@ -657,9 +560,6 @@ function createBindGroups(layer) {
     label: `Planet cloud visible occupied tile bind group ${destinationIndex}`,
     layout: layer.pipelines.tilePipeline.getBindGroupLayout(0),
     entries: [
-      { binding: 0, resource: layer.textures.weatherView },
-      { binding: 1, resource: layer.textures.shapeView },
-      { binding: 3, resource: layer.sampler },
       { binding: 8, resource: { buffer: layer.computeParamsBuffer } },
       { binding: 17, resource: { buffer: layer.tileFlagBuffers[destinationIndex] } },
       { binding: 15, resource: { buffer: layer.statusBuffer } },
@@ -756,6 +656,7 @@ function createBindGroups(layer) {
       { binding: 2, resource: { buffer: layer.renderParamsBuffer } },
       { binding: 3, resource: layer.textures.detailView },
       { binding: 4, resource: layer.sampler },
+      { binding: 5, resource: layer.textures.weatherView },
     ],
   });
 }
@@ -810,7 +711,8 @@ function encodeSurfaceCompute(layer, encoder, {
     indirectPass.setBindGroup(0, layer.indirectBindGroup);
     indirectPass.dispatchWorkgroups(1);
     indirectPass.end();
-  } else if (projectVertices) {
+  }
+  if (projectVertices) {
     const projectPass = encoder.beginComputePass({ label: 'Planet cloud MC33 vertex projection pass' });
     projectPass.setPipeline(layer.pipelines.projectPipeline);
     projectPass.setBindGroup(0, layer.projectBindGroups[meshFieldIndex]);
@@ -877,16 +779,17 @@ export async function createPlanetCloudSurfaceLayer({
     surfaceTileFrustumGuard: 1.35,
     surfaceTileHorizonGuard: -0.22,
     surfaceTileRadialGuard: 1.10,
-    surfaceFieldUpdateHz: 42,
-    surfaceMeshUpdateHz: 1,
-    surfaceAnimateTopology: false,
+    surfaceFieldUpdateHz: 60,
+    surfaceMeshUpdateHz: 60,
+    surfaceComputeBudget: 0.35,
+    surfaceAnimateTopology: true,
     surfaceFieldResponseTime: 0.34,
     surfaceVoxelPersistenceBand: 0.035,
     surfaceVoxelHistoryWeight: 0.82,
     surfaceVertexProjection: true,
     surfaceProjectionStrength: 0.012,
     surfaceProjectionMaxStep: 0.004,
-    surfaceOcclusionRadiusScale: 1.04,
+    surfaceOcclusionRadiusScale: 1.0,
     surfaceTerrainOcclusionRadius: radius + Math.max(0.32, radius * 0.006),
     surfaceTerrainDepthBias: 0.06,
     surfaceHeightScale: 1.10,
@@ -895,11 +798,11 @@ export async function createPlanetCloudSurfaceLayer({
     surfaceDetailScale: [1.65, 1.65],
     surfaceCoverageThreshold: 0.42,
     surfaceMaxVertices: DEFAULT_MAX_VERTICES,
-    surfaceMaxActiveCells: 65000,
+    surfaceMaxActiveCells: 200000,
     surfaceSilverStrength: 0.82,
     surfaceAmbient: 0.08,
     surfaceFragmentDetailStrength: 0.34,
-    progressiveStartup: true,
+    progressiveStartup: false,
     bootstrapSurfaceMapWidth: 128,
     bootstrapSurfaceMapHeight: 64,
     bootstrapSurfaceDetailWidth: 128,
@@ -919,8 +822,8 @@ export async function createPlanetCloudSurfaceLayer({
     seed,
     progressive: mergedOptions.progressiveStartup !== false,
     fullResolution: {
-      map: [mergedOptions.surfaceMapWidth ?? 1024, mergedOptions.surfaceMapHeight ?? 512],
-      detail: [mergedOptions.surfaceDetailWidth ?? 512, mergedOptions.surfaceDetailHeight ?? 256],
+      map: [mergedOptions.surfaceMapWidth ?? 512, mergedOptions.surfaceMapHeight ?? 256],
+      shape: [mergedOptions.surfaceShapeSize ?? 64, mergedOptions.surfaceShapeSize ?? 64, mergedOptions.surfaceShapeSize ?? 64],
       angularCells: mergedOptions.surfaceAngularCells,
       radialCells: mergedOptions.surfaceRadialCells,
     },
@@ -928,8 +831,6 @@ export async function createPlanetCloudSurfaceLayer({
   const setupStage = startupTiming.start('surface-canvas-builder-and-layer-state', undefined, 'setup');
   const canvas = createOverlayCanvas(parent, sourceCanvas, mergedOptions);
   const colorFormat = navigator.gpu.getPreferredCanvasFormat?.() || 'bgra8unorm';
-  const ownsNoiseBuilder = !noiseBuilder;
-  const builder = noiseBuilder || new NoiseComputeBuilder(device, queue);
   try { builder.buildPermTable?.(seed); } catch {}
 
   const layer = {
@@ -944,8 +845,7 @@ export async function createPlanetCloudSurfaceLayer({
     contextConfigured: false,
     depthTexture: null,
     msaaTexture: null,
-    noiseBuilder: builder,
-    ownsNoiseBuilder,
+    noiseBuilder,
     options: mergedOptions,
     sampleCount: Number(mergedOptions.surfaceMsaaSamples) >= 4 ? 4 : 1,
     seed,
@@ -1075,7 +975,7 @@ export async function createPlanetCloudSurfaceLayer({
           if (layer.disposed) {
             if (layer.resourceKeys) {
               for (const key of Object.values(layer.resourceKeys)) {
-                try { layer.noiseBuilder?.destroyTexturePair?.(key); } catch {}
+                try { layer.surfaceNoise?.release(key); } catch {}
               }
             }
             layer.refining = false;
@@ -1116,7 +1016,7 @@ export async function createPlanetCloudSurfaceLayer({
           const bootstrapKeys = layer.bootstrapResourceKeys;
           if (bootstrapKeys) {
             for (const key of Object.values(bootstrapKeys)) {
-              try { layer.noiseBuilder?.destroyTexturePair?.(key); } catch {}
+              try { layer.surfaceNoise?.release(key); } catch {}
             }
           }
           layer.bootstrapResourceKeys = null;
@@ -1204,26 +1104,66 @@ export function updatePlanetCloudSurfaceOptions(layer, options = {}) {
   return layer.options;
 }
 
+export async function setPlanetCloudSurfaceStyle(layer, style) {
+  const previousOptions=layer.options, previousTextures=layer.textures, previousKeys=layer.resourceKeys;
+  const overrides=planetCloudStyleOptions(style,layer.radius);
+  layer.styleChanging=true;
+  try {
+    layer.styleRevision=(layer.styleRevision || 0)+1;
+    layer.options={...layer.options,...overrides,cloudStyle:style,cloudRenderMode:'mc33-shell',
+      resourceNonce:`mc33-style-${layer.styleRevision}`};
+    await bakeSurfaceTextures(layer,{waitForGpu:true});
+    if(layer.disposed)return null;
+    createBindGroups(layer);
+    updatePlanetCloudSurfaceOptions(layer);
+    layer.fieldValid=false;
+    layer.diagnosticsPublished=false;
+    layer.overflowReported=false;
+    if(previousKeys)for(const key of Object.values(previousKeys))layer.surfaceNoise.release(key);
+    return layer.options;
+  } catch(error) {
+    if(layer.resourceKeys !== previousKeys)for(const key of Object.values(layer.resourceKeys || {}))layer.surfaceNoise.release(key);
+    layer.options=previousOptions;layer.textures=previousTextures;layer.resourceKeys=previousKeys;
+    if(!layer.disposed)createBindGroups(layer);
+    throw error;
+  } finally {layer.styleChanging=false;}
+}
+
 export async function updatePlanetCloudSurfaceLayer(layer, { forceExtract = false } = {}) {
   if (!layer || layer.disposed || layer.options.enabled === false) return;
   // The bootstrap frame remains in the configured canvas while full maps and
   // field buffers are prepared; avoid queueing old-resolution extraction work.
-  if (layer.refining) return;
+  if (layer.refining || layer.styleChanging) return;
   ensureContext(layer);
 
   const now = performance.now();
-  const elapsedSeconds = now * 0.001;
+  const encodeStarted = now;
+  const elapsedSeconds = advancePlanetCloudTime(layer, now * 0.001);
   const camera = layer.getCameraState?.() || {};
   const cameraPositionForMask = normalizeVectorInput(camera.camPos, [0, 0, layer.radius * 4]);
   const requestedFaceMask = computeVisibleFaceMask(cameraPositionForMask, layer.options);
   const newlyVisibleFaces = requestedFaceMask & ~(layer.currentFieldFaceMask || 0);
-  const fieldUpdateHz = Math.max(1, finiteNumber(layer.options.surfaceFieldUpdateHz, 42));
-  const meshUpdateHz = Math.max(0.05, finiteNumber(layer.options.surfaceMeshUpdateHz, 1));
-  const fieldUpdateInterval = 1000 / fieldUpdateHz;
-  const meshUpdateInterval = 1000 / meshUpdateHz;
-  const updateField = forceExtract || !layer.fieldValid || newlyVisibleFaces !== 0 || now - layer.lastFieldUpdateTime >= fieldUpdateInterval;
-  const animatedTopologyDue = layer.options.surfaceAnimateTopology === true && now - layer.lastExtractionTime >= meshUpdateInterval;
-  const updateMesh = forceExtract || !layer.fieldValid || layer.topologyDirty === true || animatedTopologyDue;
+  const cameraForwardForMesh=normalize3(normalizeVectorInput(camera.fwd,[0,0,-1]));
+  const oldCamera=layer.meshCamera;
+  // Classification is view-dependent even if face culling is disabled. Refresh
+  // on a meaningful camera move, including when weather animation is paused.
+  const cameraChanged=oldCamera && (Math.hypot(...cameraPositionForMask.map((v,i)=>v-oldCamera.position[i]))>layer.radius*0.025 ||
+    cameraForwardForMesh.reduce((sum,v,i)=>sum+v*oldCamera.forward[i],0)<0.99);
+  const fieldUpdateHz = Math.max(0.05, finiteNumber(layer.options.surfaceFieldUpdateHz, 60));
+  const meshUpdateHz = Math.max(0.05, finiteNumber(layer.options.surfaceMeshUpdateHz, 60));
+  const budget=clamp(finiteNumber(layer.options.surfaceComputeBudget,0.35),0.01,1);
+  const budgetInterval=(layer.computeCompletionMs || 0)/budget;
+  const fieldUpdateInterval = Math.max(1000 / fieldUpdateHz,budgetInterval);
+  const meshUpdateInterval = Math.max(1000 / meshUpdateHz,budgetInterval);
+  const canCompute=forceExtract || !layer.computePending;
+  const animationActive=layer.options.animate !== false;
+  // RAF intervals jitter slightly around 16.67 ms. Requiring an exact >= would
+  // turn a 60 Hz target into every-other-frame updates on a 60 Hz display.
+  const meshTolerance=Math.min(2,meshUpdateInterval*0.08);
+  const fieldTolerance=Math.min(2,fieldUpdateInterval*0.08);
+  const animatedTopologyDue = animationActive && layer.options.surfaceAnimateTopology === true && now - layer.lastExtractionTime >= meshUpdateInterval-meshTolerance;
+  const updateMesh = canCompute && (forceExtract || !layer.fieldValid || newlyVisibleFaces !== 0 || cameraChanged || layer.topologyDirty === true || animatedTopologyDue);
+  const updateField = canCompute && (forceExtract || !layer.fieldValid || newlyVisibleFaces !== 0 || updateMesh || (animationActive && now - layer.lastFieldUpdateTime >= fieldUpdateInterval-fieldTolerance));
   const fieldDeltaSeconds = Number.isFinite(layer.lastFieldUpdateTime)
     ? Math.max(0.0001, (now - layer.lastFieldUpdateTime) * 0.001)
     : 1.0;
@@ -1238,7 +1178,7 @@ export async function updatePlanetCloudSurfaceLayer(layer, { forceExtract = fals
   const destinationFieldIndex = updateField ? (layer.currentFieldIndex + 1) % 3 : layer.currentFieldIndex;
   const destinationTileIndex = updateField ? 1 - layer.currentTileIndex : layer.currentTileIndex;
   const meshFieldIndex = updateField ? destinationFieldIndex : layer.currentFieldIndex;
-  const projectVertices = layer.fieldValid && updateField && !updateMesh && layer.options.surfaceVertexProjection !== false;
+  const projectVertices = (updateMesh || (layer.fieldValid && updateField)) && layer.options.surfaceVertexProjection !== false;
   const candidateCells = layer.angularCells * layer.angularCells * layer.radialCells * Math.max(1, layer.visibleFaceCount || 1);
 
   if (updateField || updateMesh) {
@@ -1260,7 +1200,48 @@ export async function updatePlanetCloudSurfaceLayer(layer, { forceExtract = fals
     projectVertices,
   });
   encodeRenderSurface(layer, encoder);
+  // Tiny, asynchronous diagnostic readback. Never wait for the GPU inside
+  // the animation loop, and never read the full vertex/voxel buffers.
+  let readback=null;
+  if(updateMesh && !layer.diagnosticPending && now-(layer.lastDiagnosticTime || -Infinity)>1000) {
+    readback=layer.device.createBuffer({label:'MC33 count/overflow diagnostic',size:24,
+      usage:GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ});
+    encoder.copyBufferToBuffer(layer.counterBuffer,0,readback,0,4);
+    encoder.copyBufferToBuffer(layer.activeCounterBuffer,0,readback,4,4);
+    encoder.copyBufferToBuffer(layer.statusBuffer,0,readback,8,16);
+    layer.diagnosticPending=true;layer.lastDiagnosticTime=now;
+  }
+  const encodeMs=performance.now()-encodeStarted;
+  const submitStarted=performance.now();
   layer.queue.submit([encoder.finish()]);
+  const submitMs=performance.now()-submitStarted;
+  // One in-flight refresh; never stall rendering or pile up extraction work.
+  // This is submit-to-completion latency (including queue contention), not a
+  // hardware timestamp. Use it conservatively to cap the refresh duty cycle.
+  if((updateField || updateMesh) && layer.queue.onSubmittedWorkDone) {
+    layer.computePending=true;
+    layer.queue.onSubmittedWorkDone().then(()=>{
+      if(!layer.disposed){
+        const completion=performance.now()-submitStarted;
+        layer.computeCompletionMs=layer.computeCompletionMs ? layer.computeCompletionMs*.7+completion*.3 : completion;
+        Object.assign(layer.performanceStats || {},{computeCompletionMs:layer.computeCompletionMs,computePending:false});
+      }
+    }).catch(()=>{}).finally(()=>{layer.computePending=false;});
+  }
+  if(readback)readback.mapAsync(GPUMapMode.READ).then(()=>{
+    const counts=new Uint32Array(readback.getMappedRange());
+    if(layer.disposed)return;
+    const vertices=Math.min(counts[0],layer.maxVertices);
+    layer.meshDiagnostics={vertexCount:vertices,triangleCount:vertices/3,requestedVertexCount:counts[0],activeCellCount:counts[1],
+      vertexOverflow:!!counts[2],activeCellOverflow:!!counts[3]};
+    Object.assign(layer.performanceStats || {},layer.meshDiagnostics);
+    if(!layer.diagnosticsPublished){console.info('[MC33 MESH]',JSON.stringify(layer.meshDiagnostics));layer.diagnosticsPublished=true;}
+    if((counts[2] || counts[3]) && !layer.overflowReported){
+      console.warn('[MC33] mesh capacity reached; increase surfaceMaxVertices / surfaceMaxActiveCells',layer.meshDiagnostics);
+      layer.overflowReported=true;
+    }
+  }).catch(error=>{if(!layer.disposed)console.warn('MC33 diagnostic readback failed',error);})
+    .finally(()=>{readback.destroy();layer.diagnosticPending=false;});
 
   if (updateField) {
     layer.currentFieldIndex = destinationFieldIndex;
@@ -1274,9 +1255,24 @@ export async function updatePlanetCloudSurfaceLayer(layer, { forceExtract = fals
   if (updateMesh) {
     layer.topologyDirty = false;
     layer.lastExtractionTime = now;
+    layer.meshCamera={position:cameraPositionForMask.slice(),forward:cameraForwardForMesh.slice()};
+  }
+
+  // Report delivered cadence as well as the requested/budgeted ceilings. This
+  // exposes driver backpressure or a slow scene without any extra GPU readback.
+  const rates=layer.refreshWindow ||= {start:now,frames:0,fields:0,meshes:0};
+  rates.frames++;rates.fields+=Number(updateField);rates.meshes+=Number(updateMesh);
+  if(now-rates.start>=1000){
+    const seconds=(now-rates.start)*0.001;
+    layer.measuredRates={observedRenderHz:rates.frames/seconds,observedFieldUpdateHz:rates.fields/seconds,observedMeshUpdateHz:rates.meshes/seconds};
+    layer.refreshWindow={start:now,frames:0,fields:0,meshes:0};
   }
 
   layer.performanceStats = {
+    ...layer.meshDiagnostics,
+    ...layer.measuredRates,
+    cpuEncodeMs:encodeMs,
+    submitMs,
     mode: 'mc33-shell',
     msaaSamples: layer.sampleCount,
     angularCells: layer.angularCells,
@@ -1293,6 +1289,11 @@ export async function updatePlanetCloudSurfaceLayer(layer, { forceExtract = fals
     maxVertices: layer.maxVertices,
     fieldUpdateHz,
     meshUpdateHz,
+    effectiveFieldUpdateHz:1000/fieldUpdateInterval,
+    effectiveMeshUpdateHz:1000/meshUpdateInterval,
+    computeCompletionMs:layer.computeCompletionMs || 0,
+    computePending:!!layer.computePending,
+    cachedFieldNormals:true,
     fieldBlend,
     fieldUpdated: updateField,
     meshUpdated: updateMesh,
@@ -1305,27 +1306,16 @@ export async function updatePlanetCloudSurfaceLayer(layer, { forceExtract = fals
     isoSignHysteresis: finiteNumber(layer.options.surfaceIsoHysteresis, 0.0),
     tileRadialBounds: true,
     worldSpaceFieldHistory: true,
-    uses3DNoiseTextures: false,
+    uses3DNoiseTextures: true,
   };
 }
 
 export function disposePlanetCloudSurfaceLayer(layer) {
   if (!layer || layer.disposed) return;
   layer.disposed = true;
+  layer.surfaceNoise?.destroy();
   destroyGpuResources(layer);
   try { layer.depthTexture?.destroy?.(); } catch {}
   try { layer.msaaTexture?.destroy?.(); } catch {}
   try { layer.canvas?.remove?.(); } catch {}
-  if (layer.ownsNoiseBuilder) {
-    try { layer.noiseBuilder?.destroyAllTexturePairs?.(); } catch {}
-  } else if (layer.resourceKeys) {
-    for (const key of Object.values(layer.resourceKeys)) {
-      try { layer.noiseBuilder?.destroyTexturePair?.(key); } catch {}
-    }
-  }
-  if (!layer.ownsNoiseBuilder && layer.bootstrapResourceKeys) {
-    for (const key of Object.values(layer.bootstrapResourceKeys)) {
-      try { layer.noiseBuilder?.destroyTexturePair?.(key); } catch {}
-    }
-  }
 }

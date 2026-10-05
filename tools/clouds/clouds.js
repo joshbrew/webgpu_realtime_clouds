@@ -1,18 +1,52 @@
 // clouds.js
 // CloudComputeBuilder matching updated clouds.wgsl uniform layout (CloudOptions, CloudParams, NoiseTransforms, CloudTuning)
 
-import cloudWGSL from "./clouds.wgsl";
-import previewWGSL from "./cloudsRender.wgsl";
+import cloudWGSL from "./shaders/clouds.wgsl";
+import commonWGSL from "./shaders/cloudCommon.wgsl";
+import layerWGSL from "./shaders/cloudLayer.wgsl";
+import resolveWGSL from "./shaders/cloudResolve.wgsl";
+import scratchWGSL from "./shaders/cloudScratch.wgsl";
+import rayOutputWGSL from "./shaders/cloudRayOutput.wgsl";
+import fieldWGSL from "./shaders/cloudFields.wgsl";
+import planetWGSL from "./shaders/cloudPlanet.wgsl";
+import gasAppearanceWGSL from "./shaders/planetGasAppearance.wgsl";
+import previewWGSL from "./shaders/cloudsRender.wgsl";
 
 const CLOUD_GPU_CACHE = new WeakMap();
+const INLINE_LAYER_OUTPUT = `fn beginLayerSample(pix: vec2<i32>) {}
+fn storeLayerSample(pix: vec2<i32>, color: vec4<f32>, farHistory: f32, historyActive: bool) {
+  resolveCloudColor(pix, color, farHistory, historyActive);
+}`;
+
+function createTimedCloudModule(device, label, code, timing) {
+  const started = performance.now();
+  const module = device.createShaderModule({ label, code });
+  Object.assign(timing, { sourceBytes: code.length, createMs: performance.now() - started, validationMs: null, status: "created" });
+  if (typeof module.getCompilationInfo === "function") {
+    const validationStarted = performance.now();
+    module.getCompilationInfo().then(info => {
+      timing.validationMs = performance.now() - validationStarted;
+      const errors = info.messages.filter(message => message.type === "error");
+      timing.status = errors.length ? "error" : "validated";
+      if (errors.length) timing.error = errors.map(message => message.message).join("\n");
+    }).catch(error => {
+      timing.validationMs = performance.now() - validationStarted;
+      timing.status = "error";
+      timing.error = String(error?.message || error);
+    });
+  }
+  return module;
+}
 
 function getCloudGpuCache(device) {
   let cache = CLOUD_GPU_CACHE.get(device);
   if (!cache) {
     cache = {
       module: null,
+      fieldModule: null,
       moduleTiming: null,
       computeTimings: new Map(),
+      flatStagesByFormat: new Map(),
       previewModule: null,
       bgl1: null,
       samplers: null,
@@ -360,6 +394,10 @@ export class CloudComputeBuilder {
         outputAlphaFeather: 0.50,
         sparsity: 0.42,
         definition: 0.62,
+        formType: 0,
+        puffScale: 3.6,
+        aoStrength: 0,
+        towerHeightVariation: 0.35,
       },
     };
 
@@ -560,43 +598,51 @@ export class CloudComputeBuilder {
     return spherical ? 1 : 0;
   }
 
-  _currentComputeVariantKey() {
+  _currentComputeVariantKey({ coarseFactor = 1 } = {}) {
     const mode = Math.max(0, Math.min(2, this._currentComputeMode()));
     const customPos = this._dvOptions.getUint32(0, true) !== 0;
     const writeRGB = this._dvOptions.getUint32(8, true) !== 0;
     // Read the packed integer, exactly as the GPU does (including <= 0 inputs).
     // Adaptive lighting only adds to this stride, so detailed probes cannot run
     // when it is > 1. Do not compile their large call graph for that case.
-    const detailedLighting = this._dvTuning.getInt32(8, true) <= 1;
-    return mode | (customPos ? 4 : 0) | (writeRGB ? 8 : 0) | (detailedLighting ? 16 : 0);
+    const useFields = mode === 0 && this._dvTuning.getFloat32(240, true) > 0;
+    const planetStyle = mode !== 0 && this._planetStyleMode === true && this._dvTuning.getFloat32(240, true) > 0.5 && (this._dvView?.getFloat32(92,true) ?? 1) <= 1.5;
+    const detailedLighting = !useFields && !planetStyle && this._dvTuning.getInt32(8, true) <= 1;
+    const divider = Math.max(1, coarseFactor | 0);
+    const scratchBytes = Math.max(1, Math.ceil((this.width || 1) / divider)) * Math.max(1, Math.ceil((this.height || 1) / divider)) * Math.max(1, this.layers || 1) * 32;
+    const stagedResolve = mode === 0 && scratchBytes <= (this.device.limits?.maxStorageBufferBindingSize ?? 134217728);
+    return mode | (customPos ? 4 : 0) | (writeRGB ? 8 : 0) | (detailedLighting ? 16 : 0) | (stagedResolve ? 32 : 0) | (useFields ? 64 : 0) | (planetStyle ? 128 : 0);
   }
 
   _computePipelineDescriptorForKey(key = this._currentComputeVariantKey()) {
     const mode = key & 3;
     const isSpherical = mode !== 0;
-    const entryPoint = isSpherical ? "computeCloudSphere" : "computeCloudBox";
+    const entryPoint = (key & 128) ? "computeCloudPlanet" : isSpherical ? "computeCloudSphere" : "computeCloudBox";
     return {
-      layout: this._computePipelineLayout,
+      layout: (key & 96) ? this._getFlatStageSetup().layout : this._computePipelineLayout,
       compute: {
-        module: this.module,
+        module: (key & 128) ? this._getPlanetShaderModule() : (key & 64) ? this._getFieldShaderModule() : (key & 32) ? this._getStagedLayerShaderModule() : this.module,
         entryPoint,
         constants: {
           CLOUD_IS_SPHERICAL: isSpherical ? 1 : 0,
           CLOUD_USE_CUSTOM_POS: (key & 4) ? 1 : 0,
           CLOUD_WRITE_RGB: (key & 8) ? 1 : 0,
           CLOUD_DETAILED_LIGHTING: (key & 16) ? 1 : 0,
+          CLOUD_STAGED_RESOLVE: (key & 32) ? 1 : 0,
+          CLOUD_USE_FIELDS: (key & 64) ? 1 : 0,
         },
       },
     };
   }
 
-  _beginComputePipelineTiming(key, async) {
+  _beginComputePipelineTiming(key, async, entryPoint = (key & 128) ? "computeCloudPlanet" : (key & 3) ? "computeCloudSphere" : "computeCloudBox") {
     const started = performance.now();
     const timing = {
       key,
       format: this.outFormat,
-      entryPoint: (key & 3) ? "computeCloudSphere" : "computeCloudBox",
+      entryPoint,
       detailedLighting: !!(key & 16),
+      sharedFields: typeof key === "number" ? !!(key & 64) : entryPoint !== "resolveCloudFlat",
       async,
       status: "compiling",
       compileMs: null,
@@ -615,7 +661,12 @@ export class CloudComputeBuilder {
     const cache = getCloudGpuCache(this.device);
     return {
       activeKey: this._currentComputeVariantKey(),
+      installedKey: this._computePipelineKey,
       module: cache.moduleTiming ? { ...cache.moduleTiming } : null,
+      stagedModule: cache.stagedModuleTiming ? { ...cache.stagedModuleTiming } : null,
+      fieldModule: cache.fieldModuleTiming ? { ...cache.fieldModuleTiming } : null,
+      resolveModule: cache.resolveModuleTiming ? { ...cache.resolveModuleTiming } : null,
+      planetModule: cache.planetModuleTiming ? { ...cache.planetModuleTiming } : null,
       variants: [...cache.computeTimings.values()].map(timing => ({ ...timing })),
     };
   }
@@ -676,20 +727,30 @@ export class CloudComputeBuilder {
     }
   }
 
-  ensureComputePipelineReady() {
-    const key = this._currentComputeVariantKey();
+  ensureComputePipelineReady(dispatch = {}) {
+    const key = this._currentComputeVariantKey(dispatch);
     if (this.pipeline && this._computePipelineKey === key) return this.pipeline;
     this.pipeline = this._ensureComputePipelineForKey(key);
+    if (key & 32) this._ensureFlatStagePipeline("resolveCloudFlat");
+    if (key & 64) {
+      this._ensureFlatStagePipeline("buildCloudDensityField");
+      this._ensureFlatStagePipeline("buildCloudLightField");
+    }
     this._computePipelineKey = key;
     return this.pipeline;
   }
 
-  async ensureComputePipelineReadyAsync() {
-    const key = this._currentComputeVariantKey();
+  async ensureComputePipelineReadyAsync(dispatch = {}) {
+    const key = this._currentComputeVariantKey(dispatch);
     const pipelines = this._computePipelines;
     if (this.pipeline && this._computePipelineKey === key) return this.pipeline;
-    const pipeline = await this._ensureComputePipelineForKeyAsync(key);
-    if (this._computePipelines === pipelines && this._currentComputeVariantKey() === key) {
+    const [pipeline] = await Promise.all([
+      this._ensureComputePipelineForKeyAsync(key),
+      (key & 32) ? this._ensureFlatStagePipelineAsync("resolveCloudFlat") : null,
+      (key & 64) ? this._ensureFlatStagePipelineAsync("buildCloudDensityField") : null,
+      (key & 64) ? this._ensureFlatStagePipelineAsync("buildCloudLightField") : null,
+    ]);
+    if (this._computePipelines === pipelines && this._currentComputeVariantKey(dispatch) === key) {
       this.pipeline = pipeline;
       this._computePipelineKey = key;
     }
@@ -702,10 +763,235 @@ export class CloudComputeBuilder {
     useCustomPos = false,
     writeRGB = true,
     sunStride = this._dvTuning.getInt32(8, true),
+    formType = this._dvTuning.getFloat32(240, true),
+    planetStyleMode = this._planetStyleMode === true,
   } = {}) {
     const mode = aurora || spherical ? 1 : 0;
-    const key = mode | (useCustomPos ? 4 : 0) | (writeRGB ? 8 : 0) | ((sunStride | 0) <= 1 ? 16 : 0);
-    return this._ensureComputePipelineForKeyAsync(key);
+    const fields = mode === 0 && formType > 0;
+    const planetStyle = mode !== 0 && !aurora && planetStyleMode && formType > 0.5;
+    const key = mode | (useCustomPos ? 4 : 0) | (writeRGB ? 8 : 0) | (!fields && !planetStyle && (sunStride | 0) <= 1 ? 16 : 0) | (mode === 0 ? 32 : 0) | (fields ? 64 : 0) | (planetStyle ? 128 : 0);
+    const [pipeline] = await Promise.all([
+      this._ensureComputePipelineForKeyAsync(key),
+      (key & 32) ? this._ensureFlatStagePipelineAsync("resolveCloudFlat") : null,
+      fields ? this._ensureFlatStagePipelineAsync("buildCloudDensityField") : null,
+      fields ? this._ensureFlatStagePipelineAsync("buildCloudLightField") : null,
+    ]);
+    return pipeline;
+  }
+
+  _getPlanetShaderModule() {
+    const cache=getCloudGpuCache(this.device);
+    if(!cache.planetModule)cache.planetModule=createTimedCloudModule(this.device,'cloud-planet-styles',commonWGSL+'\n'+scratchWGSL+'\n'+gasAppearanceWGSL+'\n'+planetWGSL+'\n'+resolveWGSL+'\n'+INLINE_LAYER_OUTPUT,cache.planetModuleTiming={});
+    return cache.planetModule;
+  }
+
+  _getFlatStageSetup() {
+    const cache = getCloudGpuCache(this.device).flatStagesByFormat;
+    if (cache.has(this.outFormat)) return cache.get(this.outFormat);
+    const bgl = this.device.createBindGroupLayout({ entries: [
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "3d" } },
+      { binding: 2, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "3d" } },
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
+      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+    ] });
+    const densityBgl = this.device.createBindGroupLayout({ entries: [
+      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      { binding: 5, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: "rgba16float", viewDimension: "3d" } },
+    ] });
+    const lightBgl = this.device.createBindGroupLayout({ entries: [
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "3d" } },
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
+      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      { binding: 6, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: "rgba16float", viewDimension: "3d" } },
+    ] });
+    const setup = {
+      bgl,
+      densityBgl, lightBgl,
+      sampler: this.device.createSampler({ minFilter: "linear", magFilter: "linear", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge", addressModeW: "clamp-to-edge" }),
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.bgl0, this.bgl1, bgl] }),
+      densityLayout: this.device.createPipelineLayout({ bindGroupLayouts: [this.bgl0, this.bgl1, densityBgl] }),
+      lightLayout: this.device.createPipelineLayout({ bindGroupLayouts: [this.bgl0, this.bgl1, lightBgl] }),
+      pipelines: new Map(), promises: new Map(),
+    };
+    cache.set(this.outFormat, setup);
+    return setup;
+  }
+
+  _flatStageDescriptor(entryPoint) {
+    const setup = this._getFlatStageSetup();
+    const fields = entryPoint !== "resolveCloudFlat";
+    return {
+      label: entryPoint,
+      layout: entryPoint === "buildCloudDensityField" ? setup.densityLayout : entryPoint === "buildCloudLightField" ? setup.lightLayout : setup.layout,
+      compute: { module: fields ? this._getFieldShaderModule() : this._getResolveShaderModule(), entryPoint, constants: { CLOUD_IS_SPHERICAL: 0, CLOUD_USE_FIELDS: fields ? 1 : 0 } },
+    };
+  }
+
+  _ensureFlatStagePipeline(entryPoint) {
+    const setup = this._getFlatStageSetup();
+    if (setup.pipelines.has(entryPoint)) return setup.pipelines.get(entryPoint);
+    const finish = this._beginComputePipelineTiming(entryPoint, false, entryPoint);
+    try {
+      const pipeline = this.device.createComputePipeline(this._flatStageDescriptor(entryPoint));
+      setup.pipelines.set(entryPoint, pipeline);
+      finish();
+      return pipeline;
+    } catch (error) { finish(error); throw error; }
+  }
+
+  async _ensureFlatStagePipelineAsync(entryPoint) {
+    const setup = this._getFlatStageSetup();
+    if (setup.pipelines.has(entryPoint)) return setup.pipelines.get(entryPoint);
+    if (setup.promises.has(entryPoint)) return setup.promises.get(entryPoint);
+    const descriptor = this._flatStageDescriptor(entryPoint);
+    const async = typeof this.device.createComputePipelineAsync === "function";
+    const finish = this._beginComputePipelineTiming(entryPoint, async, entryPoint);
+    const pending = Promise.resolve().then(() => async ? this.device.createComputePipelineAsync(descriptor) : this.device.createComputePipeline(descriptor))
+      .then(pipeline => { setup.pipelines.set(entryPoint, pipeline); finish(); return pipeline; })
+      .catch(error => { finish(error); throw error; })
+      .finally(() => { setup.promises.delete(entryPoint); });
+    setup.promises.set(entryPoint, pending);
+    return pending;
+  }
+
+  _getFlatStageBindGroup() {
+    this._ensureFlatFieldResources();
+    const bytes = (this._computePipelineKey & 32) ? Math.max(1, this.width * this.height * this.layers) * 32 : 32;
+    if (!this._resolveScratch || this._resolveScratch.size < bytes) {
+      const old = this._resolveScratch;
+      this._resolveScratch = this.device.createBuffer({ label: "cloud-ray-radiance", size: bytes, usage: GPUBufferUsage.STORAGE });
+      this._flatStageBindGroup = null;
+      if (old) this.queue.onSubmittedWorkDone().then(() => old.destroy()).catch(() => {});
+    }
+    if (!this._flatStageBindGroup) this._flatStageBindGroup = this.device.createBindGroup({
+      layout: this._getFlatStageSetup().bgl,
+      entries: [
+        { binding: 0, resource: { buffer: this._resolveScratch } },
+        { binding: 1, resource: this._fieldResources.densityView },
+        { binding: 2, resource: this._fieldResources.lightView },
+        { binding: 3, resource: this._getFlatStageSetup().sampler },
+        { binding: 4, resource: { buffer: this._fieldParamsBuffer } },
+      ],
+    });
+    return this._flatStageBindGroup;
+  }
+
+  _getFieldShaderModule() {
+    const cache = getCloudGpuCache(this.device);
+    if (!cache.fieldModule) cache.fieldModule = createTimedCloudModule(this.device, "cloud-rounded-fields",
+      commonWGSL + "\n" + scratchWGSL + "\n" + cloudWGSL + "\n" + resolveWGSL + "\n" + fieldWGSL,
+      cache.fieldModuleTiming = {});
+    return cache.fieldModule;
+  }
+
+  _getStagedLayerShaderModule() {
+    const cache = getCloudGpuCache(this.device);
+    if (!cache.stagedModule) {
+      const code = commonWGSL + "\n" + scratchWGSL + "\n" + layerWGSL + "\n" + rayOutputWGSL;
+      cache.stagedModule = createTimedCloudModule(this.device, "cloud-layer-raymarch", code, cache.stagedModuleTiming = {});
+    }
+    return cache.stagedModule;
+  }
+
+  _getResolveShaderModule() {
+    const cache = getCloudGpuCache(this.device);
+    return cache.resolveModule ||= createTimedCloudModule(this.device, "cloud-temporal-resolve", commonWGSL + "\n" + scratchWGSL + "\n" + resolveWGSL, cache.resolveModuleTiming = {});
+  }
+
+  invalidateCloudFields() {
+    this._fieldDensitySignature = null;
+    this._fieldLightSignature = null;
+  }
+
+  // Arbitrary-volume examples clip the same cached noise/lighting fields. The
+  // rotation is geometry, not camera motion, and never resets the wind domain.
+  setVolumeMask({ shape = this._state.volumeMask?.shape ?? "box", rotationAngle = this._state.volumeMask?.rotationAngle ?? 1.05 } = {}) {
+    if (!["box", "torus", "gallery"].includes(shape)) throw new Error(`Unknown cloud volume: ${shape}`);
+    this._state.volumeMask = { shape, rotationAngle: Number.isFinite(rotationAngle) ? rotationAngle : 1.05 };
+  }
+
+  // Optional continuous weather morphology. All profiles share cached fields.
+  // Zero weights preserve every standalone preset and arbitrary volume.
+  setWeatherProfile({shelf=0,deck=0,wisps=0,cirrus=0,fluctus=0,asperitas=0} = {}) {
+    const keys=['shelf','deck','wisps','cirrus','fluctus','asperitas'];
+    const values=[shelf,deck,wisps,cirrus,fluctus,asperitas].map(v=>Number.isFinite(v)?Math.min(1,Math.max(0,v)):0);
+    const scale=Math.max(1,values.reduce((sum,v)=>sum+v,0));
+    this._state.weatherProfile=Object.fromEntries(keys.map((key,i)=>[key,values[i]/scale]));
+  }
+
+  _ensureFlatFieldResources() {
+    const active = this._currentComputeVariantKey() & 64;
+    const dimensions = active ? [128, 64, 128] : (this._fieldResources?.dimensions || [1, 1, 1]);
+    if (this._fieldResources?.dimensions.join() === dimensions.join()) return;
+    const old = this._fieldResources;
+    const create = label => this.device.createTexture({ label, dimension: "3d", size: dimensions, format: "rgba16float", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING });
+    const density = create("cloud-density-field");
+    const light = create("cloud-shadow-ao-field");
+    this._fieldResources = { dimensions, density, light, densityView: density.createView(), lightView: light.createView() };
+    this._fieldParamsBuffer ||= this.device.createBuffer({ label: "cloud-field-bounds", size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this._fieldParamsAB ||= new ArrayBuffer(80);
+    const setup = this._getFlatStageSetup();
+    this._fieldDensityBg = this.device.createBindGroup({ layout: setup.densityBgl, entries: [
+      { binding: 4, resource: { buffer: this._fieldParamsBuffer } }, { binding: 5, resource: this._fieldResources.densityView },
+    ] });
+    this._fieldLightBg = this.device.createBindGroup({ layout: setup.lightBgl, entries: [
+      { binding: 1, resource: this._fieldResources.densityView }, { binding: 3, resource: setup.sampler },
+      { binding: 4, resource: { buffer: this._fieldParamsBuffer } }, { binding: 6, resource: this._fieldResources.lightView },
+    ] });
+    this._flatStageBindGroup = null;
+    this.invalidateCloudFields();
+    if (old) { this._retireTexture(old.density); this._retireTexture(old.light); }
+  }
+
+  _encodeFlatFields(pass, timings) {
+    this._ensureFlatFieldResources();
+    const started = performance.now();
+    const { dimensions } = this._fieldResources;
+    const dv = new DataView(this._fieldParamsAB);
+    for (let i = 0; i < 3; i++) {
+      dv.setFloat32(i * 4, this._state.box.center[i] - this._state.box.half[i], true);
+      dv.setFloat32(16 + i * 4, this._state.box.half[i] * 2, true);
+      dv.setUint32(32 + i * 4, dimensions[i], true);
+    }
+    const mask = this._state.volumeMask;
+    const arbitrary = mask?.shape === "torus" || mask?.shape === "gallery";
+    const profile = this._state.weatherProfile;
+    dv.setFloat32(12, arbitrary ? 0 : profile?.shelf || 0, true);
+    dv.setFloat32(28, arbitrary ? 0 : profile?.deck || 0, true);
+    dv.setFloat32(48, mask?.shape === "gallery" ? 2 : mask?.shape === "torus" ? 1 : 0, true);
+    dv.setFloat32(52, arbitrary ? mask.rotationAngle : 0, true);
+    dv.setFloat32(56, 0.58, true); // major radius / smallest half extent
+    dv.setFloat32(60, arbitrary ? 0.22 : profile?.wisps || 0, true); // tube radius, or high-wisp weight
+    for (const [i,key] of ['cirrus','fluctus','asperitas'].entries()) {
+      dv.setFloat32(64+i*4, arbitrary ? 0 : profile?.[key] || 0, true);
+    }
+    this._writeIfChanged("fieldParams", this._fieldParamsBuffer, this._fieldParamsAB);
+    // AO is a lighting blend, not geometry. Changing its strength or the camera
+    // must not rebake either field.
+    const densitySignature = [this._abParams, this._abNTransform, this._abTuning.slice(0, 248), this._abTuning.slice(252), this._abBox, this._fieldParamsAB].map(ab => this._sum32(ab)).concat(
+      this._getResId(this.weatherView), this._getResId(this.shape3DView), this._getResId(this.detail3DView),
+      this._dvView.getFloat32(96, true), this._dvView.getFloat32(92, true),
+    ).join("|");
+    const densityChanged = densitySignature !== this._fieldDensitySignature;
+    const lightSignature = densitySignature + "|" + this._state.light.sunDir.join("|");
+    const lightChanged = densityChanged || lightSignature !== this._fieldLightSignature;
+    const dispatch = entry => {
+      const encodeStarted = performance.now();
+      pass.setPipeline(this._ensureFlatStagePipeline(entry));
+      pass.setBindGroup(0, this._currentBg0);
+      pass.setBindGroup(1, this._currentBg1);
+      pass.setBindGroup(2, entry === "buildCloudDensityField" ? this._fieldDensityBg : this._fieldLightBg);
+      pass.dispatchWorkgroups(...dimensions.map(n => Math.ceil(n / 4)));
+      timings.push({ stage: entry, encodeMs: performance.now() - encodeStarted, dispatched: true, dimensions });
+    };
+    if (densityChanged) dispatch("buildCloudDensityField");
+    else timings.push({ stage: "buildCloudDensityField", encodeMs: 0, dispatched: false, cached: true });
+    if (lightChanged) dispatch("buildCloudLightField");
+    else timings.push({ stage: "buildCloudLightField", encodeMs: 0, dispatched: false, cached: true });
+    this._fieldDensitySignature = densitySignature;
+    this._fieldLightSignature = lightSignature;
+    timings.push({ stage: "field-cache-check", encodeMs: performance.now() - started });
   }
 
   ensureUpsamplePipelineReady(format = this.outFormat) {
@@ -1229,9 +1515,10 @@ export class CloudComputeBuilder {
     const deviceCache = getCloudGpuCache(d);
     if (!deviceCache.module) {
       const started = performance.now();
-      deviceCache.module = d.createShaderModule({ label: "cloud-raymarch", code: cloudWGSL });
+      const code = commonWGSL + "\n" + scratchWGSL + "\n" + layerWGSL + "\n" + resolveWGSL + "\n" + INLINE_LAYER_OUTPUT;
+      deviceCache.module = d.createShaderModule({ label: "cloud-raymarch", code });
       const timing = deviceCache.moduleTiming = {
-        sourceBytes: cloudWGSL.length,
+        sourceBytes: code.length,
         createMs: performance.now() - started,
         validationMs: null,
         status: "created",
@@ -1388,7 +1675,9 @@ export class CloudComputeBuilder {
     this._dummy2DDepthView = this._dummy2DDepth.createView({ dimension: "2d" });
     this.queue.writeTexture(
       { texture: this._dummy2DMotion },
-      new Uint8Array([128]),
+      // Motion is decoded as a direct pixel/UV offset, not a signed UNORM.
+      // 128 meant a half-pixel horizontal shift on every stationary frame.
+      new Uint8Array([0]),
       { bytesPerRow: 1 },
       { width: 1, height: 1, depthOrArrayLayers: 1 },
     );
@@ -1474,6 +1763,7 @@ export class CloudComputeBuilder {
 
   // -------------------- UBO setters --------------------
   setOptions(opts = {}) {
+    if (typeof opts.planetStyleMode === 'boolean') this._planetStyleMode = opts.planetStyleMode;
     const s = this._state.options;
 
     if (_has(opts, "useCustomPos")) s.useCustomPos = !!opts.useCustomPos;
@@ -2106,8 +2396,10 @@ export class CloudComputeBuilder {
     putF(232, s.sparsity ?? 0.42);
     putF(236, s.definition ?? 0.62);
 
-    for (let i = 240; i < this._abTuning.byteLength; i += 4)
-      dv.setUint32(i, 0, true);
+    putF(240, Math.max(0, Math.min(7, s.formType ?? 0)));
+    putF(244, Math.max(0.75, s.puffScale ?? 3.6));
+    putF(248, Math.max(0, Math.min(1, s.aoStrength ?? 0)));
+    putF(252, Math.max(0, Math.min(0.9, s.towerHeightVariation ?? 0.35)));
 
     this._writeIfChanged("tuning", this.tuningBuffer, this._abTuning);
   }
@@ -2731,15 +3023,9 @@ export class CloudComputeBuilder {
     this._makeBindGroups();
 
     const enc = this.device.createCommandEncoder();
-    const pipeline = this.ensureComputePipelineReady();
     for (let layer = 0; layer < this.layers; ++layer) {
       this.setLayerIndex(layer);
-      const pass = enc.beginComputePass();
-      pass.setPipeline(pipeline);
-      pass.setBindGroup(0, this._currentBg0);
-      pass.setBindGroup(1, this._currentBg1);
-      pass.dispatchWorkgroups(this._wgX, this._wgY, 1);
-      pass.end();
+      this._encodeCurrentComputePass(enc);
     }
     this.queue.submit([enc.finish()]);
     if (wait && typeof this.queue.onSubmittedWorkDone === "function")
@@ -2948,12 +3234,27 @@ export class CloudComputeBuilder {
       fraction: compactShape ? Math.min(1, compactShape.updatedPixels / fullPixels) : 1,
       tile: compactShape ? compactShape.tile : 1,
     };
+    const pipeline = this.ensureComputePipelineReady();
+    const stageBindGroup = (this._computePipelineKey & 96) ? this._getFlatStageBindGroup() : null;
+    const timings = [];
     const pass = enc.beginComputePass();
-    pass.setPipeline(this.ensureComputePipelineReady());
+    if (this._computePipelineKey & 64) this._encodeFlatFields(pass, timings);
+    const rayStarted = performance.now();
+    pass.setPipeline(pipeline);
     pass.setBindGroup(0, this._currentBg0);
     pass.setBindGroup(1, this._currentBg1);
+    const staged = !!(this._computePipelineKey & 32);
+    if (stageBindGroup) pass.setBindGroup(2, stageBindGroup);
     pass.dispatchWorkgroups(compactShape ? compactShape.wgX : this._wgX, compactShape ? compactShape.wgY : this._wgY, 1);
+    timings.push({ stage: "cloud-raymarch", encodeMs: performance.now() - rayStarted, dispatched: true });
+    if (staged) {
+      const resolveStarted = performance.now();
+      pass.setPipeline(this._ensureFlatStagePipeline("resolveCloudFlat"));
+      pass.dispatchWorkgroups(compactShape ? compactShape.wgX : this._wgX, compactShape ? compactShape.wgY : this._wgY, 1);
+      timings.push({ stage: "cloud-temporal-resolve", encodeMs: performance.now() - resolveStarted, dispatched: true });
+    }
     pass.end();
+    this._lastStageTimings = timings;
   }
 
   encodeDispatchPasses(enc, { coarseFactor = 1, reconstructAtPresentation = false } = {}) {
@@ -3051,6 +3352,7 @@ export class CloudComputeBuilder {
         directFullResReconstruction: !!reconstructAtPresentation,
         previewView: this._renderSourceView,
         interleaveStats: this._lastInterleaveStats,
+        stageTimings: this._lastStageTimings,
         restoreAfterSubmit: () => {
           this._bg0Dirty = true;
         },
@@ -3063,6 +3365,7 @@ export class CloudComputeBuilder {
       coarseFactor: 1,
       restoreAfterSubmit: null,
       interleaveStats: this._lastInterleaveStats,
+      stageTimings: this._lastStageTimings,
     };
   }
 
@@ -3544,8 +3847,11 @@ export class CloudComputeBuilder {
     dv.setUint32(0, layerIndex, true);
     dv.setUint32(4, compositeQuality, true);
     dv.setFloat32(8, styleShadowDarkness, true);
-    dv.setFloat32(12, 0.0, true);
+    // The field raymarch already shades its volume. Keep the legacy finishing
+    // pass for layer/spherical clouds, rather than painting over these normals.
+    dv.setFloat32(12, (this._currentComputeVariantKey() & 64) !== 0 ? 1.0 : 0.0, true);
     writeVec3Padded(dv, 16, camPos);
+    dv.setFloat32(28, Math.max(0,Math.min(1,opts.nightAmount ?? 0)), true);
     writeVec3Padded(dv, 32, right);
     writeVec3Padded(dv, 48, up);
     writeVec3Padded(dv, 64, fwd);
@@ -3554,7 +3860,9 @@ export class CloudComputeBuilder {
     dv.setFloat32(88, exposure, true);
     dv.setFloat32(92, sunBloom, true);
     writeVec3Padded(dv, 96, sunDir);
+    dv.setFloat32(108, Math.max(0,Math.min(1,opts.celestialVisibility ?? 1)), true);
     writeVec3Padded(dv, 112, skyColor);
+    dv.setFloat32(124, opts.skyCycle ? 1 : 0, true);
     dv.setUint32(128, gradeStyle, true);
     dv.setFloat32(132, styleShadowStrength, true);
     dv.setFloat32(136, styleColorLift, true);

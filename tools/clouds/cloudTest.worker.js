@@ -4,6 +4,8 @@
 import { NoiseComputeBuilder } from "../noise/noiseCompute.js";
 import { CloudComputeBuilder } from "./clouds.js";
 import { CloudTimingReport } from "./cloudTiming.js";
+import { normalizeWeatherCycle, sampleWeatherCycle, cyclePreview, WEATHER_MAP_COUNT } from "./weather/cloudWeatherCycle.js";
+import { CloudWeatherGPU } from "./weather/cloudWeatherGPU.js";
 
 let device = null,
   queue = null,
@@ -140,6 +142,50 @@ let loopEnabled = false,
 let pendingResizePayload = null;
 let pendingResizeSerial = 0;
 let loopStopWaiters = [];
+let volumeRotationAngle = 1.05;
+let lastVolumeShape = "box";
+let weatherCycle = normalizeWeatherCycle();
+let weatherCycleSeconds = 0, weatherCycleGPU = null, weatherCycleState = null;
+let weatherCycleLastPost = -1, weatherCycleBlendCount = 0;
+
+async function configureWeatherCycle(config) {
+  const next = normalizeWeatherCycle(config);
+  if (next.enabled) {
+    if (!lastRunPayload) throw new Error('Render a scene before starting the weather cycle');
+    weatherCycleGPU ||= new CloudWeatherGPU(device);
+    const base = lastRunPayload.weatherParams || {};
+    // Green selects storm families. Keep its authored domain/time stable while
+    // the six red coverage maps evolve, rather than clearing it or reseeding
+    // cells at each blend. All enabled channels remain setup-only work.
+    const billow = lastRunPayload.billowParams || {};
+    const weatherB = lastRunPayload.weatherBParams || null;
+    const signature = JSON.stringify({base,billow,weatherB});
+    if (weatherCycleGPU.signature !== signature) {
+      const report = new CloudTimingReport('weather-cycle-prebake',{maps:WEATHER_MAP_COUNT,size:weatherCycleGPU.size});
+      const views=[];
+      for(let i=0;i<WEATHER_MAP_COUNT;i++) {
+        const key='weather-cycle-'+i;
+        const stage=report.start('weather-map-'+i,undefined,'gpu-submit');
+        await bakeWeather2D({...base,time:(base.time||0)+i*1.25},true,billow,weatherB,{
+          key,width:weatherCycleGPU.size,height:weatherCycleGPU.size,assign:false,debug:false,waitForGpu:false,
+        });
+        views.push(nb.get2DView(key,{dimension:'2d-array'}));
+        report.end(stage);
+      }
+      await weatherCycleGPU.prepare(views,signature);
+      log('[WEATHER CYCLE PREBAKE]',report.finish());
+    }
+    // Updating periods does not reset the clock or regenerate textures.
+    if(!weatherCycle.enabled || next.startHour!==weatherCycle.startHour) weatherCycleSeconds=0;
+    weatherCycleGPU.lastTick=-1;
+  }
+  weatherCycle=next;
+  weatherCycleState=null;
+  lastAppliedTuningSignature='';
+  cb?.invalidateCloudFields();
+  invalidateReprojectionHistory();
+  return {enabled:next.enabled,cachedMaps:weatherCycleGPU?.groups.length||0,weatherSeconds:next.weatherSeconds,daySeconds:next.daySeconds};
+}
 
 // NoiseTransforms (world-space offsets/scales + per-axis scaling)
 let shapeOffsetWorld = [0, 0, 0],
@@ -735,6 +781,7 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
     noise.weather.dirty = false;
     return { width, height, key, baseMs: 0, gMs: 0, bMs: 0, gpuWaitMs: 0, totalMs: 0 };
   }
+  if (assign) cb?.invalidateCloudFields?.();
 
   const T0 = performance.now();
 
@@ -1081,6 +1128,7 @@ async function bakeShape128(shapeParams = {}, force = false, bakeOptions = {}) {
     if (showDebug) renderDebugIfEnabled("slices");
     return { size, id, baseMs: 0, bandsMs: [0, 0, 0], gpuWaitMs: 0, totalMs: 0 };
   }
+  if (assign) cb?.invalidateCloudFields?.();
 
   const T0 = performance.now();
 
@@ -1174,6 +1222,7 @@ async function bakeDetail32(detailParams = {}, force = false, bakeOptions = {}) 
     if (showDebug) renderDebugIfEnabled("slices");
     return { size, id, bandsMs: [0, 0, 0], gpuWaitMs: 0, totalMs: 0 };
   }
+  if (assign) cb?.invalidateCloudFields?.();
 
   const T0 = performance.now();
 
@@ -1435,7 +1484,7 @@ function pushTransformsToCloudBuilder() {
 
 function syncBaseInputMaps() {
   if (!cb) return;
-  const weatherView = noise.weather.arrayView;
+  const weatherView = weatherCycle.enabled && weatherCycleGPU?.view ? weatherCycleGPU.view : noise.weather.arrayView;
   const blueView = noise.blue.arrayView;
   const shape3DView = noise.shape128.view3D;
   const detail3DView = noise.detail32.view3D;
@@ -1637,12 +1686,16 @@ function cloudViewSignature(preview, box, aspect) {
   ].join("|");
 }
 
-function renderUniformSignature(preview, aspect, layerIndex, cloudParams = {}, cloudBox = null, outputWidth = MAIN_W, outputHeight = MAIN_H) {
+function renderUniformSignature(preview, aspect, layerIndex, cloudParams = {}, cloudBox = null, outputWidth = MAIN_W, outputHeight = MAIN_H, fieldLighting = false) {
   const cam = preview?.cam || {};
   const sun = preview?.sun || {};
   const renderBox = cloudBox || previewCloudBox(preview || {});
   return [
     layerIndex,
+    fieldLighting ? 1 : 0,
+    preview?.skyCycle ? 1 : 0,
+    signatureScalar(preview?.nightAmount || 0),
+    signatureScalar(preview?.celestialVisibility ?? 1),
     signatureScalar(cam.x || 0),
     signatureScalar(cam.y || 0),
     signatureScalar(cam.z || 0),
@@ -1866,6 +1919,9 @@ function makeColorSignature(arr, fallback = [1, 1, 1]) {
 function makeViewSignature(preview, w, h) {
   const cam = preview?.cam || {};
   const sun = preview?.sun || {};
+  // Evolving weather/light is expected motion, not a camera cut. Keeping its
+  // colors in this invalidation key reset sparse history on every cycle frame.
+  if(preview?.weatherCycle) return ['weather-cycle',w,h,cam.x,cam.y,cam.z,cam.yawDeg,cam.pitchDeg,cam.fovYDeg,previewRenderScaleDivider(preview),preview.temporalCellRate].join('|');
   return [
     roundSig(cam.x),
     roundSig(cam.y),
@@ -2001,6 +2057,21 @@ async function runFrame({
     };
   } catch {}
 
+  // Derive a frame from the manual payload; never store evolving values back
+  // into it. Stopping the cycle therefore restores the authored scene.
+  if (weatherCycle.enabled && weatherCycleGPU?.groups.length) {
+    weatherCycleState=sampleWeatherCycle(weatherCycleSeconds,weatherCycle);
+    preview=cyclePreview(preview||{},weatherCycleState,weatherCycle.timeOfDay);
+    cloudParams={...cloudParams,...weatherCycleState.cloudParams};
+    if(weatherCycle.timeOfDay) Object.assign(cloudParams,{
+      frontLightColor:weatherCycleState.lightColor,sunColor:weatherCycleState.lightColor,
+      shadowLightColor:weatherCycleState.shadowColor,
+    });
+    const stage=frameReport.start('weather-map-blend',undefined,'gpu-submit');
+    const blended=weatherCycleGPU.blend(weatherCycleState,weatherCycleSeconds);
+    if(blended) { weatherCycleBlendCount++; cb?.invalidateCloudFields(); }
+    frameReport.end(stage,{cached:!blended,maps:6});
+  }
   const setupStage = frameReport.start("builder-uniform-buffer-setup", undefined, "buffering");
   if (tuning && typeof tuning === "object") mergeTuningPatch(tuning);
   const cloudBox = previewCloudBox(preview);
@@ -2008,6 +2079,10 @@ async function runFrame({
   ensureCloudBuilder();
   const builderMs = performance.now() - builderStarted;
   applyWorkerTuning(cloudBox);
+  if(weatherCycle.enabled && weatherCycleState) {
+    cb.setTuning({...autoThickBoxTuning(cloudBox),...workerTuning,...weatherCycleState.tuning});
+    lastAppliedTuningSignature='';
+  }
 
   let outputAllocationMs = 0;
   let historyAllocationMs = 0;
@@ -2208,6 +2283,14 @@ async function runFrame({
   }
 
   const cloudSig = cloudSceneSignature(cloudBox, cloudParams || {});
+  const volumeShape = preview?.volumeShape || "box";
+  if (volumeShape !== lastVolumeShape) {
+    if (volumeShape === "torus") volumeRotationAngle = 1.05;
+    if (volumeShape === "gallery") volumeRotationAngle = 2.0;
+    lastVolumeShape = volumeShape;
+  }
+  cb.setVolumeMask({ shape: volumeShape, rotationAngle: volumeRotationAngle });
+  cb.setWeatherProfile(weatherCycle.enabled ? weatherCycleState?.fieldProfile : undefined);
   if (cloudSig !== lastCloudSceneSignature) {
     cb.setBox(cloudBox);
     cb.setParams(cloudParams || {});
@@ -2314,7 +2397,7 @@ async function runFrame({
     // Await the current variant too so a quality change cannot synchronously
     // compile an un-warmed pipeline in dispatch encoding.
     const variantStarted = performance.now();
-    await cb.ensureComputePipelineReadyAsync();
+    await cb.ensureComputePipelineReadyAsync({ coarseFactor: effectiveCoarseFactor });
     warmupTimings = {
       ...warmupTimings,
       currentVariantWaitMs: performance.now() - variantStarted,
@@ -2326,7 +2409,7 @@ async function runFrame({
   if (bootstrapPreviewMode && typeof cb._ensureBootstrapComputePipeline === "function") {
     cb._ensureBootstrapComputePipeline("rgba16float");
   } else if (typeof cb.ensureComputePipelineReady === "function") {
-    cb.ensureComputePipelineReady();
+    cb.ensureComputePipelineReady({ coarseFactor: effectiveCoarseFactor });
   }
   const tP1 = performance.now();
   const tAll0 = performance.now();
@@ -2385,7 +2468,7 @@ async function runFrame({
   } else {
     const { pipe, bgl, samp, format } = regularRenderPipeline;
     const layerIndex = Math.max(0, Math.min((cb?.layers || 1) - 1, preview?.layer || 0));
-    const renderSig = renderUniformSignature(preview, aspect, layerIndex, cloudParams || {}, cloudBox, MAIN_W, MAIN_H);
+    const renderSig = renderUniformSignature(preview, aspect, layerIndex, cloudParams || {}, cloudBox, MAIN_W, MAIN_H, (cb._currentComputeVariantKey() & 64) !== 0);
     if (renderSig !== lastRenderUniformSignature) {
       cb._writeRenderUniforms({
         layerIndex,
@@ -2401,6 +2484,9 @@ async function runFrame({
         box: cloudBox,
         exposure: preview?.exposure || 1.0,
         skyColor: preview?.sky || [0.5, 0.6, 0.8],
+        skyCycle: !!preview?.skyCycle,
+        nightAmount: preview?.nightAmount || 0,
+        celestialVisibility: preview?.celestialVisibility ?? 1,
         sunBloom: preview?.sun?.bloom || 0.0,
         compositeQuality: 2,
         gradeStyle: preview?.gradeStyle ?? 1,
@@ -2510,6 +2596,7 @@ async function runFrame({
     temporalCellRate: workerTemporalCellRate,
     temporalCellPhase: workerReproj?.temporalCellPhase ?? 0,
     interleaveStats: encodedDispatch.interleaveStats || null,
+    computeStages: encodedDispatch.stageTimings || [],
     frame: submittedFrameCount,
   };
 
@@ -2520,6 +2607,9 @@ async function runFrame({
   frameReport.record("history-texture-allocation", historyAllocationMs, undefined, "buffering");
   frameReport.record("command-encoder-create", timings.commandEncoderMs, undefined, "dispatch");
   frameReport.record("cloud-dispatch-encode", timings.computeMs, { coarseFactor: cf }, "dispatch");
+  for (const stage of timings.computeStages) {
+    frameReport.record(stage.stage, stage.encodeMs, stage, "dispatch");
+  }
   frameReport.record("render-pipeline-ready", timings.renderPipelineMs, undefined, "pipeline");
   frameReport.record("preview-render-encode", timings.renderMs, undefined, "dispatch");
   frameReport.record("command-buffer-finish", timings.commandFinishMs, undefined, "dispatch");
@@ -2639,6 +2729,8 @@ function startLoop() {
       try {
         const dt = Math.max(0, (t0 - prevTime) / 1000);
         prevTime = t0;
+        if(weatherCycle.enabled) weatherCycleSeconds+=Math.min(dt,.25);
+        volumeRotationAngle += dt * (lastVolumeShape==='gallery' ? 1.0 : 0.22);
 
         shapeOffsetWorld[0] += shapeVel[0] * dt;
         shapeOffsetWorld[1] += shapeVel[1] * dt;
@@ -2732,6 +2824,10 @@ function startLoop() {
             resetReprojection: lastRunPayload?.reproj?.resetHistory,
           },
         });
+        if(weatherCycle.enabled && weatherCycleState && Math.floor(weatherCycleSeconds)!==weatherCycleLastPost) {
+          weatherCycleLastPost=Math.floor(weatherCycleSeconds);
+          postMessage({type:'weather-cycle-state',data:{label:weatherCycleState.label,hour:weatherCycleState.hour,moon:weatherCycleState.moon,elapsed:weatherCycleSeconds,cachedMaps:weatherCycleGPU.groups.length,blendCount:weatherCycleBlendCount}});
+        }
       }
     }
 
@@ -3107,6 +3203,11 @@ async function _handleMessage(ev) {
       return;
     }
 
+    if (type === "setWeatherCycle") {
+      await ensureDevice();
+      respond(true, await configureWeatherCycle(payload));
+      return;
+    }
     if (type === "setLiveFrameState") {
       await ensureDevice();
       try {

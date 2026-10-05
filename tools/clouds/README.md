@@ -8,6 +8,53 @@ The tuning playground uses `NoiseComputeBuilder` from [`webgpu_noise_compute_tex
 
 ## Try it
 
+The flat-volume playground includes **Weather simulation → Evolving weather**.
+It loops smoothly through twelve systems: broken/fair cumulus, developing towers,
+anvil storms, Rain Shelf, widespread rain banks, overcast/breaking stratus,
+wispy high clouds, feather cirrus, asperitas and clearing cumulus. Storm cells keep their identities among lower cumulus;
+the wind continues to scroll the population. Weather and day/night periods are
+independent. The optional day/night clock moves the directional source through
+sunrise, daylight, sunset and moonlight, with twilight sky colors and stars.
+Pause with the animation button; disabling the cycle restores the previous
+scene and its animation state. This is an artistic weather director, not a
+physical atmosphere simulation, and does not alter the planetary renderer.
+
+Six 256² weather maps are baked once on entry and cached in bounded named slots.
+A small GPU blend updates one stable texture at 10 Hz (~3.5 MiB total RGBA16F
+map storage); shape/detail textures are reused. There are no per-tick noise
+rebakes, CPU readbacks, extra cloud-ray samples, or new shader variants. Existing
+density/light fields still update as weather, wind and directional light change.
+The mature anvil phase shares the standalone preset's shaping, breakup,
+extinction and occlusion settings from `weather/cloudAnvilLook.js`. Cached maps retain
+the authored green storm-selection channel with a stable domain/time across
+all six coverage maps, preserving the varied storm population during blending.
+Cell scale and height variation remain fixed throughout the loop; coverage and
+development transition smoothly without rebuilding the clouds' anatomy.
+
+Shelf, stratus and high-wisp density blend in that same fixed volume; the tall
+clouds dissipate while lower decks develop, rather than scaling towers into
+pancakes. Fully layered phases skip the convective cell loop. Adding these
+systems does not increase the six-map cache or add passes/ray samples. The Rain
+Shelf phase represents cloud morphology, not rendered precipitation particles.
+Its folded banks borrow the standalone layer's shape-band remap and ridge/valley
+breakup, with gentler shell erosion that preserves a thick connected interior.
+Two additional voxel-filtered texture reads run only in shelf-bearing density
+bakes, never along screen rays. Their independent co-moving domain leaves
+cumulus/anvil texture scale unchanged during transitions; the standalone Rain
+Shelf preset is unchanged.
+Cycle preparation and map submissions are included in the timing reports.
+Moonlit cloud contrast adapts smoothly instead of crushing the dim volumes to
+black. The cached-volume ray path also uses stable, decorrelated integer jitter
+to avoid diagonal sampling bands without an additional texture fetch.
+
+**Layer preset → Arbitrary Volume Gallery** surrounds the torus with a cube,
+ellipsoid, capsule and octahedron. They rotate independently at different speeds
+using the same cached density/light and raymarch stages; no separate meshes or
+per-shape rendering passes are used.
+The fast gallery rotations refresh all rays at the selected coarse resolution
+to avoid stale interleave bands; leaving the gallery restores the previous
+temporal ray budget. Ordinary cloud presets keep their existing interleave.
+
 [https://webgpuclouds.netlify.app/](https://webgpuclouds.netlify.app/)
 
 ## Related projects
@@ -39,6 +86,10 @@ The tuning playground uses `NoiseComputeBuilder` from [`webgpu_noise_compute_tex
 ---
 
 ## Install and run
+
+Run the build/dev commands from the shared `noiseCompute` project root (two
+directories above this folder). The renderer and demos use its bundler to load
+WGSL as text and produce the separate worker bundle.
 
 ```bash
 npm install
@@ -81,19 +132,87 @@ Use a current Chromium-based browser with:
 
 ---
 
-## Active files
+## File layout
 
 ```text
-clouds.js                CloudComputeBuilder library.
-cloudTiming.js           Structured live startup/frame timing reports.
-clouds.wgsl              Volumetric cloud compute shader.
-cloudsRender.wgsl        Preview/composite shader.
-cloudTest.worker.js      Worker-owned WebGPU demo backend.
-cloudTestThreaded.js     Main-thread playground UI controller.
-clouds.html              Playground UI markup.
+clouds.js                      CloudComputeBuilder library entry point.
+cloudTestThreaded.js            Flat playground UI entry point.
+cloudTest.worker.js             Worker-owned WebGPU demo backend.
+clouds.html                    Playground markup.
+cloudDemoNavigation.js         Flat / planet demo navigation.
+cloudTiming.js                 Startup/frame timing reports.
+cloudVolumeMips.js             Filtered volume mip generation.
+planetClouds.js                Planet raymarch layer entry point.
+planetCloudSurface.js          Planet MC33 mesh layer entry point.
+planetCloudNoise.js            Planet noise and gas curl baking.
+planetCloudStyles.js           Shared planet style presets.
+planetCloudSimStyles.js        Planet simulation preset integration.
+planetCloudColors.js           Live color / HDR brightness helpers.
+planetCloudMotion.js           Shared planet weather motion.
+mc33Tables.js                  MC33 lookup tables.
+weather/
+  cloudAnvilLook.js            Shared standalone / cycle anvil look.
+  cloudWeatherCycle.js         Weather and time-of-day director.
+  cloudWeatherGPU.js           Cached weather-map blending.
+shaders/
+  cloudCommon.wgsl             Shared uniforms, sampling and lighting.
+  cloudLayer.wgsl              Original layer/spherical raymarch / Rain Shelf.
+  clouds.wgsl                  Cached-field flat raymarch.
+  cloudFields.wgsl             Density and shadow/AO field entry points.
+  cloudPlanet.wgsl             Compact styled planet raymarch.
+  cloudScratch.wgsl            Shared raymarch/resolve storage layout.
+  cloudRayOutput.wgsl          Staged raymarch output.
+  cloudResolve.wgsl            Temporal resolve.
+  cloudsRender.wgsl            Preview/composite.
+  cloudWeatherBlend.wgsl       Weather-map blend.
+  planetCloudSurfaceMC33.wgsl  Planet mesh extraction.
+  planetCloudSurfaceRender.wgsl Planet mesh rendering.
+  planetGasAppearance.wgsl     Shared gas-planet palette.
+tests/
+  *.test.mjs                  Node regression tests (no GPU required).
+  browser/                    Manual WebGPU checks / demo review server.
 ```
 
-Treat the root files as the active implementation. Older experiment folders are only for comparison.
+Public renderer, demo and planet integration entry points remain at their
+existing paths. Shaders are grouped under `shaders/`; weather-only modules live
+under `weather/`. This is a file-layout change, not a rendering change.
+
+## Testing
+
+From this `tools/clouds` folder:
+
+```bash
+node --test tests/*.test.mjs
+```
+
+Tests cover preset parity, phase continuity, cache/pipeline behavior, planet
+styles, MC33, temporal history and local import paths. To check the complete
+demo and worker bundles, run `npm run build` from the `noiseCompute` project root.
+
+For the manual WebGPU anvil check:
+
+```bash
+node tests/browser/serveWeatherAnvil.mjs
+```
+
+Open `http://127.0.0.1:8766/check` to compare density, lighting and rendered pixels
+against the standalone anvil with identical inputs. `/demo` is the actual flat
+demo with only its weather clock held at the mature anvil phase for visual
+review; enable **Evolving weather** to view it. Wind still runs normally.
+Stop the server with Ctrl+C when finished.
+
+`http://127.0.0.1:8766/planet-gas` checks the production Hail Mary weather bake
+across three seeds, reports equal-area rust/thread coverage, and previews the
+shared palette on a diagnostic globe (not the full cloud/terrain compositor).
+For repeatable full-simulation review, start the same server with
+`PLANET_REVIEW=1` and open `/demo?demo=planet`. That test-only mode selects Hail
+Mary with terrain seed 17 and holds the sun fixed; ordinary production weather
+shaders, cloud animation, terrain and camera controls are unchanged.
+
+The check requires a WebGPU-capable browser and the project's existing esbuild
+installation (local esbuild or the Windows global tinybuild dependency).
+`ESBUILD_MODULE` can point to another existing esbuild installation. Bundled
+diagnostic outputs stay in a temporary directory, not the source tree.
 
 ---
 
@@ -107,7 +226,7 @@ The renderer is a compute-based volumetric cloud pass.
 4. Evaluate sun transmittance and phase lighting at protected intervals.
 5. Accumulate color and alpha into an output storage texture.
 6. Optionally reuse temporal history for animated/reprojected rendering.
-7. Optionally composite the output through `cloudsRender.wgsl`.
+7. Optionally composite the output through `shaders/cloudsRender.wgsl`.
 
 The renderer includes performance-oriented shader logic for large and tall boxes:
 
@@ -651,6 +770,36 @@ The complete startup trace is exposed as `window.cloudStartupTiming` and is also
 `pipelineWarmup.computePipelines` now reports shader module creation/validation and each compute variant's `compileMs`, entrypoint, quality flag, and status. The same structured-cloneable object is available from `CloudComputeBuilder.getComputePipelineTimings()`. These are API wall times, not GPU execution timestamps; cached variants retain their original compile measurement. A large warmup `computeMs` with a small frame dispatch/queue wait means pipeline compilation, not texture buffering or raymarch resolution, is delaying startup.
 
 Normal/exposure probes use compact loops to avoid repeatedly expanding the density/warp call graph during compilation. The regular pipeline excludes detailed density lighting only when the uploaded `sunStride > 1`, where that branch was already unreachable. Stride 1 (and lower values) selects the full lighting variant; tuning changes are awaited before worker dispatch. This does not introduce a separate low-quality first cloud image. Run the variant/cache regression tests with `node --test tests/cloudPipeline.test.mjs`.
+
+### Rounded flat-volume clouds
+
+Fair Cumulus, Broken Cumulus, Towering Cu, and Cumulonimbus Anvil use a hybrid of rounded growth envelopes and Rain Shelf-style volumetric noise. Individual billows grow outward in all axes and gain density gradually, with upper tiers developing after the lower ones. The full tower height stays fixed: weather does not stretch a pancake into a tall cloud. Wider lower shoulders and randomly leaning upper tiers avoid a repeated straight column. Cumulonimbus Anvil is a mixed weather population: stable random material-cell identities select 24% for tall storms, while other cells produce lower cumulus. Storm shoulders feed broad, shallow, staggered outflow fans before the upper turrets can hide their silhouette. Anvil amount and exaggeration control lateral spread, and the same volumetric breakup carves both canopy and body. The preset camera frames this scattered population more closely rather than presenting the box as one distant object. Cell classification travels with wind and never switches with evolving weather.
+
+The shape base is remapped against its three FBM bands, and detail scallops/valleys carve density throughout the volume, not just the skin of solid ellipsoids. Independently advected detail also bends the scaffold and the shape-sampling domain, producing continuous billowing without height pumping. Cached lighting normals follow this noise-shaped signed field, independently of young-billow opacity limits. Detail uses a volume-appropriate scale (`0.04` times the thin-layer detail transform) so voxel filtering retains meaningful structure instead of collapsing to the final 1x1 mip. Y transforms preserve their sign but use square-root compression to avoid exaggerated horizontal rings on tall towers. All of this reuses the existing single shape/detail samples per density voxel, adding no raymarch noise or lighting probes. Tenuous output alpha and premultiplied radiance fade smoothly before temporal history using Min Alpha, attenuating pale scaffold outlines without a hard birth cutoff.
+
+Developed rounded clouds retain connected optical mass beneath that breakup. A smooth interior support follows the noisy body and each billow's development limit; it gradually adds core density as maturity rises from 0.20 to 1.00. Fine and shadow density share this support, so the thicker body also casts thicker volume shadows. It is not a compositing alpha boost, and newborn puffs/outer wisps remain soft. Broad shape noise samples at `0.35` times the layer transform, while fine detail deformation is gentler; high-frequency noise no longer shreds the entire body. Noise still modulates interior density and lighting as well as the silhouette. These adjustments only affect cached flat-volume fields, not Rain Shelf or Wispy High.
+
+Shape wind translates the entire cell lattice and its surface noise together (`world center = material center - shapeOffsetWorld.xz`). Weather is sampled in the co-moving domain, with its own slower offset controlling development. Per-voxel edge fading allows drifting cells to enter and leave the box without whole-center culling pops. Noise is filtered to the field's voxel footprint, without applying the thin layer's vertical/anvil distortions a second time. Preset cameras frame the volume from outside. Returning to a layer preset restores the saved layer camera, original thin volume, and original lighting. Wispy High keeps gentle erosion, no additive opacity boost, and a low alpha cutoff so translucent wisps survive. Rain Shelf's density and lighting path is unchanged. Preset changes pause an active animation until baking and a fresh full frame finish, then resume it.
+
+Rounded forms split work into `buildCloudDensityField`, `buildCloudLightField`, a small field-reading `computeCloudBox`, and `resolveCloudFlat`. These dispatches share bindings/resources and execute in one compute pass and queue submission, with no CPU readback between them. Density and shadow/AO use two `128 x 64 x 128` RGBA16F textures (16 MiB combined), allocated lazily only when a rounded form is selected. Moving the camera reuses both fields; changing the sun rebuilds lighting only; changing scene/noise inputs rebuilds both. In-place noise rebakes explicitly invalidate the fields.
+
+The lighting texture stores filterable sun-facing and sky-facing responses in RG, sun visibility in B and ambient visibility in A. It does not interpolate compressed normal coordinates: their encoding seam previously caused moving patches to flip shading. Broad form gradients are evaluated over 1.5 voxels, and empty cells bordering density also receive lighting to avoid a full-sun discontinuity at moving edges. Sun integration uses midpoint samples at approximately two per crossed density voxel, bounded to 16–48 samples during the cached bake; each screen-space ray step still reads one density and one lighting sample. This fixes temporal lighting stability without increasing texture sizes or adding passes. The grid remains fixed to the box, not a camera-relative fine-grid/clipmap; close fly-through detail is still limited by its world-space voxel size.
+
+The Puffs controls expose size, height variation, and ambient occlusion. AO takes twelve neighboring density probes (six directions at two radii), weighted toward the outward hemisphere, during the cached lighting bake, not during each ray step. This emphasizes creases between billows instead of uniformly darkening opaque interiors. Changing AO strength blends that cached term without rebaking. A low-order scattering fill reuses cached sun visibility to reveal shaded billows without additional texture probes. Ray jitter reads the existing blue-noise map once per pixel, avoiding diagonal stripes from a correlated screen hash. Rounded preset cameras initially show sunlit shoulders; backlit angles remain available through camera controls. These changes affect rounded forms only, leaving the default layer look and call graph intact.
+
+Rounded flat clouds use volume-aware preview finishing: the compositor retains their premultiplied volume radiance rather than reconstructing a painted surface from screen-space alpha. Broad noise folds drive cached normals, with stronger crease AO and less ambient fill, so shadow-side billows retain depth. A lighter aerial-fog treatment avoids washing out that lighting. Exposure, shadow contrast/darkness, color lift, saturation and lit/shadow tints still shape the result; the legacy screen-space rim/edge styling belongs to the layer compositor. The mode flag reuses render-uniform padding (the buffer remains 304 bytes), and changing forms refreshes it even when the camera and grade are unchanged. No new field samples, passes or bindings are needed. Rain Shelf and spherical clouds retain their original finishing path.
+
+Rounded presets start scrolling automatically after baking and presenting a coherent first frame. Stop Reproject Anim pauses the current scene. The cell population is generated from an unbounded co-moving lattice, not a finite spawn list or a group wrapped back to its starting position. Incoming cells get their own seeded forms, weather and heights; their silhouettes fade through the fixed box edges. Coverage now supports a fuller spread of developed clouds across the volume, while sparsity still leaves irregular gaps. The worker advances wind using elapsed time without resetting offsets each frame.
+
+Select **Rotating Cloud Donut** in the layer preset menu for an arbitrary-volume example. Its rotating torus boundary clips a fully 3D, independently scrolling noise population, not an extruded horizontal cloud layer or a marching-cubes mesh. The hole remains empty; cached lighting follows the moving boundary and noisy cloud folds. Rotation runs at 0.22 radians/second, initialized to a readable tilted view when entering the example. Leaving it restores the previous horizontal bounds and clears the torus mask. Other rounded presets still use the square volume and Rain Shelf remains unchanged.
+
+`CloudComputeBuilder.setVolumeMask({ shape: "torus", rotationAngle: 1.05 })` configures the example; `shape: "box"` removes it. Partial updates retain existing values. A 64-byte field uniform includes mask parameters in the density/light cache signature, so rotating the boundary rebakes both fields while an irrelevant box rotation does not. `cloudTorusDistance` is the small signed-distance mask to replace when adding another arbitrary shape. There are no extra raymarch texture probes or CPU readbacks.
+
+Flat raymarch and temporal resolve also use separate shader modules, passing unquantized f32 radiance through a 32-byte-per-pixel scratch buffer. Outputs exceeding the device's storage-binding limit retain inline resolve. `computeStages` in worker frame timings records density/light dispatches or cache hits, raymarch encoding, and temporal resolve encoding. Stage `encodeMs` values are CPU/API times; GPU queue completion remains separately reported. Pipeline timings list each entrypoint's compilation wall time. Cold driver compilation and disk-cache hits must be compared separately.
+
+The maintained WebGPU anvil parity check and visual review server live in
+`tests/browser/`; see [Testing](#testing). The older `.compile-diagnostics`
+experiment snapshots/server are not included in this source tree.
 
 ## Preview
 
@@ -1210,82 +1359,163 @@ Set `auroraGradientSeed` for a repeatable palette. Set `auroraPaletteFamily` to 
 
 ## Planet cloud MC33 shell mode
 
-Planet clouds can use a GPU MC33 surface pipeline while aurora continues to use the volumetric raymarcher.
+The planet simulation starts in regular raymarch mode. Its bottom-left **Clouds: Raymarch / Clouds: MC33 Shell** button switches renderers and caches the inactive one. Rebaking terrain preserves the selected renderer. Aurora remains raymarched independently.
 
-```js
-const cloudLayer = await createPlanetCloudLayer({
-  device,
-  queue,
-  noiseBuilder,
-  parent,
-  sourceCanvas,
-  getCameraState,
-  getSunDir,
-  radius,
-  atmosphereRadius,
-  options: {
-    cloudRenderMode: 'mc33-shell',
-    seed: 12345,
+MC33 now uses the fast `PlanetCloudNoise` setup baker: a periodic 64³ Cartesian shape texture and spherical weather map. Scaling/rotation happen in 3D, not longitude UV, so the field and its detail do not reset at the sphere seam. The signed field follows the regular planet presets, including thin layers, oversized diorama puffs, hemisphere coverage, scattered clouds and gas bands. Changing the style updates both cached renderers.
 
-    surfaceAngularCells: 64,
-    surfaceRadialCells: 12,
-    surfaceMeshUpdateHz: 20,
-    surfaceMaxVertices: 1_200_000,
+The thin realistic MC33 mesh additionally hides texture tiling with an oblique Cartesian domain, broad noise warping and a second rotated, offset sample at an incommensurate scale. Contrast compensation retains dense cloud patches. This costs two extra shape reads per field point, not per output vertex; normal projection still uses the cached field. Other mesh styles and the regular raymarcher retain their existing sampling cost. All domains remain continuous across longitude and cube-face boundaries and move with the cloud material, not the camera.
 
-    surfaceCoverageThreshold: 0.49,
-    surfaceHeightScale: 1.0,
-    surfaceMinThickness: 0.55,
-    surfaceMaxThickness: 2.6,
-    surfaceBulgeStrength: 1.25,
-    surfaceCavityStrength: 0.42,
+Swirling gas giant uses a separately compiled, cached `gasWeatherNoise` bake. Two smooth-noise gradient octaves drive tangential sphere-curl backtracing, plus seeded vortices and fine filament bands over broad zonal banks. This is the spherical counterpart of the flat curl-FBM technique, not a per-frame fluid simulation or a longitude-space curl warp. The resulting weather texture is shared by raymarch and MC33; the latter also samples its pigment in the fragment shader so fine curls need not become extra triangles. Neighboring latitude bands drift east/west at slightly different speeds, without north/south texture rotation. Differential shear is bounded to 0.12 radians, preserving the baked curls during long animation sessions rather than stretching them into stripes. Aurora and other styles keep their existing motion. Gas curl computation and integration run only during baking; frame work is texture sampling and a small zonal shear calculation.
 
-    surfaceLowPush: 0.030,
-    surfaceCurlPush: 0.017,
-    surfaceDetailPush: 0.010,
-  },
-});
-```
+Default quality remains 96 angular cells per cube face, 11 radial cells, 900,000 vertex capacity and 200,000 active-cell capacity. Field evaluation, compacted MC33 extraction and smooth cached-field normal projection target 60 Hz; the mesh is drawn at the display frame rate. Only one refresh can be in flight, and queue contention lowers the refresh rate to respect a 35% compute budget. A small scheduling tolerance prevents RAF timing jitter from accidentally halving the mesh rate. Camera visibility changes still refresh paused clouds. All stages reuse their GPU buffers. Extraction reserves vertices with one atomic addition per cell instead of a globally contended compare/exchange retry loop; partial overflow reservations emit complete triangles, and draw/dispatch counts are safely clamped.
 
-The surface pipeline evaluates a closed scalar field directly from spherical weather, shape, and detail textures. It does not create or sample a 3D noise texture. Shape and detail gradients are baked once into their 2D textures, then sampled during extraction. Low- and high-frequency gradients displace sampling coordinates differently through shell depth, producing bulbous sections, folds, undercuts, and concave cavities before MC33 extracts the zero surface.
-
-The compute dispatch is limited in three stages:
-
-1. CPU face selection removes cubed-sphere faces pointing away from the camera.
-2. GPU frustum and planetary-horizon tests remove invisible shell cells.
-3. A cheap weather/shape coverage sample removes empty cells before the eight MC33 corner evaluations.
-
-Buffers and spatial resolution stay fixed while the camera moves. Camera motion only changes visibility tests and projection. The generated mesh is rendered at the overlay canvas resolution with full-resolution depth, lighting, and animated detail-normal sampling.
-
-Useful runtime controls:
+Styled clouds now use slow common wind (`spinSpeed: 0.00065` turns/second, roughly one revolution per 26 minutes) plus independent Cartesian billow evolution (`evolutionSpeed: 0.03`). Evolution deforms the existing periodic volume without extra texture reads or rebaking. Setting `spinSpeed: 0` leaves evolving clouds stationary; `evolutionSpeed: 0` keeps their shapes fixed. `animate: false` pauses both. Renderer toggles transfer the local animation clock instead of restarting it. Legacy/custom and aurora motion are unchanged. Explicit `surfaceWeatherSpeed` / `surfaceShapeSpeed` overrides retain radians/second units.
 
 ```js
 updatePlanetCloudLayerOptions(cloudLayer, {
-  surfaceMeshUpdateHz: 30,
-  surfaceCoverageThreshold: 0.53,
-  surfaceBulgeStrength: 1.5,
-  surfaceCavityStrength: 0.55,
-  surfaceLowPush: 0.038,
+  surfaceAngularCells: 96,
+  surfaceRadialCells: 11,
+  surfaceFieldUpdateHz: 60,
+  surfaceMeshUpdateHz: 60,
+  surfaceComputeBudget: 0.35,
+  surfaceAnimateTopology: true,
+  surfaceMaxVertices: 900000,
+  surfaceMaxActiveCells: 200000,
+  params: { globalCoverage: 0.82 },
 });
+await setPlanetCloudStyle(cloudLayer, 'diorama');
 ```
 
-`surfaceAngularCells` and `surfaceRadialCells` change lattice density without changing any camera-dependent quality state. `surfaceMaxVertices` determines persistent GPU arena capacity and should be selected when the layer is created.
+In the planet simulation's advanced cloud JSON, optional `surface` settings forward these MC33-specific options. Spatial resolution remains fixed as the camera moves. Optional tile culling uses conservative shell bounds rather than a 2D occupancy heuristic that could remove 3D puffs.
 
-### MC33 shell v2: stable field and compacted extraction
+`layer.startupTiming` reports setup, async pipeline preparation, noise buffering/dispatch, allocation and first presentation. `layer.performanceStats` includes CPU encoding/submission times, requested and drawn vertex counts, triangle/active-cell counts, overflow flags, requested/effective refresh rates, observed render/field/mesh rates over one-second windows and `computeCompletionMs`. The latter is asynchronous submit-to-completion latency including shared-queue contention, not a hardware GPU timestamp. Counts use a 24-byte asynchronous GPU readback at most once per second; no GPU wait is inserted into the animation loop. Overflow emits a warning rather than silently hiding missing geometry.
 
-The surface path now evaluates the layered 2D cloud field once per cubed-sphere lattice point and stores it in ping-pong GPU buffers. Object-space exponential smoothing stabilizes topology without screen-space temporal history.
+Analytic planet occlusion is kept below the cloud base so a tall mountain cannot erase an entire thin layer. This remains a spherical horizon approximation, not per-pixel terrain-depth occlusion. Near-plane triangles use normal GPU clipping when flying through the shell.
+
+The old 2D extrusion controls (`surfaceBulgeStrength`, `surfaceCavityStrength`, `surfaceLowPush`, etc.) no longer define the new 3D morphology; use the shared planet style, shell, coverage and shape scale settings instead.
+
+### Convective shape variation and spherical filtering
+
+Towering Cu and storm cells now vary their base breadth independently of crown
+width, including broad lower banks and narrower columns. Material-cell seeds
+also vary billow aspect, lean, orientation, canopy thickness and downwind reach.
+Those identities move with the wind; they do not get reselected per frame.
+Fair cumulus and the original Rain Shelf retain their existing density closure.
+The field still uses its 3×3 cell neighborhood and existing shape/detail samples.
+A soft footprint bound includes the noisy outer lobes so wide clouds cannot pop
+when a cell leaves that neighborhood.
+
+The raymarched planet shell samples shape and detail in continuous, rotated
+Cartesian coordinates, rather than fading or resampling them at a longitude
+seam. Spherical weather scale blends neighboring integer longitude windings;
+fractional scale settings remain seamless. Longitude scales below one retain
+one full winding. Aurora ribbon/color frequencies are periodic, and its march
+no longer snaps sample radii to discrete shell slices.
+
+`CloudVolumeMips` builds reusable filtered 3D mip chains after planetary noise
+bakes, not during camera updates. The shell's visible texture LOD follows actual
+texel footprint, retaining close detail and filtering subpixel erosion. This
+uses an additional mipmapped copy of each shape/detail volume (roughly 18 MiB
+for a 128³ rgba16float volume); obsolete copies are released with their layers.
+
+Validation: `node --test tests/*.test.mjs`, including sphere seam/filtering and
+planet surface regressions. Orbit/close captures and GPU timestamp comparisons
+from the earlier `/sphere` experiment required diagnostic snapshots that are
+not included here; the maintained browser check does not provide that route.
+Cloud-pass timings are not full planet-scene FPS or cold startup measurements.
+
+### Cloud variety and regular planet styles
+
+The flat lab adds feather cirrus and a connected, rolling asperitas ceiling.
+The automatic weather loop now visits twelve states using the same six cached
+weather maps. Kelvin–Helmholtz remains a manual **Experimental** preset; its
+curling shapes are still too regular for the automatic cycle. Storm cells vary
+their height, width and selection independently and share broken feeder banks.
+The original Rain Shelf closure is unchanged.
+
+Regular raymarched planets have a **Planet cloud style** selector:
+
+The shared demo entry now has bottom-right **Flat clouds / Planet clouds** links
+(`?demo=flat` or `?demo=planet`). A switch navigates to a fresh document so the
+previous GPU scene and worker are released. The planet simulation starts with
+the thin realistic raymarch style; choose the other styles at the top of its
+Clouds controls. Style switches prepare cloud maps without rebuilding terrain,
+update the nested settings editor, and preserve the independent aurora settings.
+
+- Thin realistic layer (`realistic`)
+- Big diorama clouds (`diorama`)
+- Cloudy hemisphere (`hemisphere`)
+- A few puffy clouds (`scattered`)
+- Jupiter / curled storms (`gas_giant`): cream/rust banks, an elliptical storm and fine curls
+- Neptune / blue storm bands (`neptune`): deep blue, calmer jets, a dark oval and pale ice-cloud streaks
+- Hail Mary / green-orange swirls (`hail_mary`): predominantly green with scattered rusty-orange weather regions and fine curling filaments
+- Current / custom clouds (`legacy`)
+
+Pass `options.cloudStyle` when creating a layer, or switch an existing layer:
 
 ```js
-updatePlanetCloudLayerOptions(cloudLayer, {
-  surfaceFieldUpdateHz: 30,
-  surfaceMeshUpdateHz: 20,
-  surfaceFieldResponseTime: 0.12,
-  surfaceVertexProjection: true,
-  surfaceProjectionStrength: 0.55,
-  surfaceProjectionMaxStep: 0.22,
-    surfaceOcclusionRadiusScale: 0.985,
-});
+await setPlanetCloudStyle(cloudLayer, 'gas_giant');
 ```
 
-Visible cells are classified against the stored field, sign-changing cells are compacted, and extraction uses an indirect dispatch over that compacted list. Between MC33 rebuilds, the existing vertices are projected toward the current field so scrolling textures do not appear as a low-rate sequence of frozen meshes.
+Use this asynchronous API, not `updatePlanetCloudLayerOptions`, to change a
+style: it prepares the new maps, keeps the last completed image visible and
+then swaps the bindings. Failed bakes restore the previous style. Camera
+movement does not rebake maps. Set `showCloudStyleControl: false` to hide the
+selector. Unspecified styles retain the caller's existing/custom settings.
+MC33 uses the same presets and baked pigment maps. Aurora remains independent.
 
-`layer.performanceStats` includes `fieldPointCount`, `candidateCells`, `maxActiveCells`, `fieldUpdated`, `meshUpdated`, and `vertexProjection`.
+In the planet simulation, the Clouds tab starts with live **Lit color** and
+**Shadow color** pickers, separate HDR brightness controls, and ray/mesh opacity.
+They update existing uniforms without rebaking terrain or cloud textures and
+stay synchronized with style changes and the advanced RGB controls. Gas presets
+retain their pigment palettes; these colors tint their lighting. The renderer
+switch sits at the bottom right, above demo navigation and clear of the sidebar.
+Hail Mary's default opacity is 0.78 for raymarch and 0.72 for MC33, giving its
+green/orange atmosphere more presence while retaining some terrain visibility.
+
+All seven non-legacy styles share the compact `computeCloudPlanet` entrypoint. Their
+small setup-only shape and weather shaders produce smooth, periodic noise;
+gas bands include localized spherical vortices. Shape/detail use filtered 3D
+mips and continuous Cartesian coordinates. Coverage and gas bands rotate in
+a continuous spherical domain. Rounded radial profiles keep the large puffs
+from reading as straight-sided slabs. Lighting normals use the unsaturated
+shape field, preserving relief inside opaque clouds with the same three shape
+reads. Close views refresh those normals more often while sun probes remain
+capped at three. The new presets
+disable the visibly different bootstrap image and unused legacy noise warmups.
+
+The gas variants share one lazy setup pipeline, selected by a bake uniform.
+Jupiter has unequal, locally disturbed belts, pale equatorial zones, ochre
+poles and a distinctly red storm core. Neptune takes a shorter bake path:
+gentle blue variation, a few thin broken ice-cloud lanes and a small dark spot,
+without the giant-eddy integration. Its lighting is predominantly radial so
+the quiet atmosphere does not look like lumpy blue terrain; the raymarcher also
+skips the unnecessary three shape-normal probes. Hail Mary adds a small-scale
+curl octave and eighteen uneven local vortices to the broad flow. A separate
+low-frequency noise field selects scattered rusty-orange regions, replacing
+the previous half-planet red/green split. Long oblique threads follow the
+backtraced flow at two scales; gentler integration keeps them resolved instead
+of folding into sub-texel speckles. Its moss/emerald palette has warm orange-red
+patches and restrained yellow-green highlights, without latitude stripes.
+Lower extinction and translucent raymarch
+and mesh presets let the mountain surface show through instead of replacing it
+with an opaque neon shell. These extra curl calculations are still setup-only.
+Their palette is shared between raymarch and MC33 in `shaders/planetGasAppearance.wgsl`;
+switching variants adds no frame-time texture reads or render pipelines. Oval
+storms are warped in a continuous Cartesian tangent frame. The expensive curl
+integration remains setup-only, and the motion preserves each band's latitude.
+
+Planet temporal history is allocated at the actual coarse raymarch dimensions,
+not the reconstructed overlay size. Changing that size seeds one full fresh
+frame before interleaving resumes; this avoids a smaller corner-copy ghost when
+the camera stops. `performanceStats.historyWidth`, `historyHeight` and
+`historyWarmupActive` expose those decisions without GPU readback.
+An absent motion-vector input is zero; the old half-UNORM fallback shifted
+stationary history horizontally by half a pixel every frame.
+
+The earlier `/planet-styles` experiment used a simple diagnostic globe for
+orbit/inside captures, GPU timestamps and seam probes; its server/snapshots are
+not included here. Use **Planet clouds** in the shared demo to review the actual
+planet simulation. The layer's startup timing object and performance stats
+remain available for measuring setup and cloud-pass work separately from
+whole-scene FPS.
