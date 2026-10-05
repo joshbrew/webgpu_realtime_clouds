@@ -64,6 +64,7 @@ temporal ray budget. Ordinary cloud presets keep their existing interleave.
 
 ## Demo videos
 
+- [5/29 demo](https://www.youtube.com/watch?v=RzTn9s-vdfE)
 - [5/7 demo](https://www.youtube.com/watch?v=HtLoZ3gxX-E)
 - [5/6 demo](https://www.youtube.com/watch?v=ShBe7HvlEb8)
 
