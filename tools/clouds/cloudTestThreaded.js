@@ -7,6 +7,7 @@ import html from "./clouds.html";
 import wrkr from "./cloudTest.worker.js";
 import { CloudTimingReport, logCloudTimingReport } from "./cloudTiming.js";
 import { ANVIL_FORM, ANVIL_PRESET_VALUES } from './weather/cloudAnvilLook.js';
+import { CLOUD_FIELD_QUALITIES, normalizeCloudFieldQuality } from './cloudFieldQuality.js';
 
 let worker;
 
@@ -1301,6 +1302,8 @@ function createCloudQuickDock() {
       <label class="cloud-quick-field"><span>Layer preset</span><select id="quick-layer-preset"></select></label>
       <label class="cloud-quick-field"><span>Color grade</span><select id="quick-grade"></select></label>
       <label class="cloud-quick-field"><span>Render divider <b id="quick-render-scale-label">4</b></span><input id="quick-render-scale" type="range" min="1" max="8" step="1" value="4"></label>
+      <label class="cloud-quick-field"><span>Fluffy cloud detail</span><select id="quick-field-quality" title="Independent 3D shape and lighting fidelity, not screen resolution. High costs about 3.4× volume work (54 MiB); Screenshot costs 8× (128 MiB). Rain Shelf and planets are unaffected."></select></label>
+      <label class="cloud-quick-field"><span>Sky span (X/Z)</span><input id="quick-sky-span" type="number" min="4" max="512" step="6" value="36" title="Full horizontal box width in world units. Sets X and Z together without changing height, puff size or wind. Advanced Cloud Box controls allow separate X/Z extents. Wider boxes spread the same voxels over more space; raise cloud detail for close views."></label>
       <button type="button" id="quick-render-button">Render</button>
       <button type="button" id="quick-rebake-button">Rebake</button>
     </div>
@@ -1346,6 +1349,13 @@ function dispatchInput(id) {
 function populateCloudQuickDock() {
   cloneOptions("v-layer-preset", "quick-layer-preset");
   cloneOptions("v-grade", "quick-grade");
+  cloneOptions("v-field-quality", "quick-field-quality");
+  setFieldValue("quick-field-quality", $("v-field-quality")?.value || preview.fieldQuality || "balanced");
+  if (document.activeElement !== $("quick-sky-span")) {
+    const halfX = Number($("v-box-hx")?.value || preview.box?.half?.[0] || 18);
+    const halfZ = Number($("v-box-hz")?.value || preview.box?.half?.[2] || 18);
+    setFieldValue("quick-sky-span", Math.max(halfX, halfZ) * 2);
+  }
   setFieldValue("quick-layer-preset", $("v-layer-preset")?.value || preview.layerPreset || "custom");
   setFieldValue("quick-grade", $("v-grade")?.value || preview.gradeStyle || 0);
   const scale = String($("v-render-scale-divider")?.value || preview.renderScaleDivider || 4);
@@ -1407,8 +1417,24 @@ function wireCloudQuickDock() {
     dispatchInput("v-render-scale-divider");
   });
   $("quick-render-button")?.addEventListener("click", () => $("render")?.click());
+  $("quick-field-quality")?.addEventListener("change", () => {
+    setFieldValue("v-field-quality", $("quick-field-quality").value);
+    $("v-field-quality")?.dispatchEvent(new Event("change", { bubbles: true }));
+    updateCloudQuickDockState();
+  });
+  const updateSkySpan = () => {
+    const value = Number($("quick-sky-span").value);
+    if (!Number.isFinite(value) || value < 4) return;
+    const half = Math.min(512, value) * 0.5;
+    setFieldValue("v-box-hx", half);
+    setFieldValue("v-box-hz", half);
+    // Install both extents before requesting one coherent frame update.
+    dispatchInput("v-box-hx");
+  };
+  $("quick-sky-span")?.addEventListener("input", updateSkySpan);
+  $("quick-sky-span")?.addEventListener("change", updateSkySpan);
   $("quick-rebake-button")?.addEventListener("click", () => $("rebake-all")?.click());
-  ["pass", "v-layer-preset", "v-grade", "v-render-scale-divider"].forEach((id) => {
+  ["pass", "v-layer-preset", "v-grade", "v-render-scale-divider", "v-field-quality", "v-box-hx", "v-box-hz"].forEach((id) => {
     $(id)?.addEventListener("change", updateCloudQuickDockState);
     $(id)?.addEventListener("input", updateCloudQuickDockState);
   });
@@ -2117,6 +2143,7 @@ function organizeSidebarControlGroups() {
     { label: "Preset", columns: 1, fields: [{ id: "v-layer-preset", label: "Layer" }] },
     { label: "Grade", columns: 1, fields: [{ id: "v-grade", label: "Color" }] },
     { label: "Render", columns: 2, fields: [{ id: "v-render-scale-divider", label: "Raymarch" }, { id: "v-temporal-cell-rate", label: "Temporal" }] },
+    { label: "Volume detail", columns: 1, fields: [{ id: "v-field-quality", label: "Fluffy clouds" }] },
   ]);
   appendControlGroup(previewPanel, "Camera", [
     { label: "Cam", columns: 3, fields: [{ id: "v-cx", label: "X" }, { id: "v-cy", label: "Y" }, { id: "v-cz", label: "Z" }] },
@@ -2713,6 +2740,7 @@ function injectPreviewLookControls() {
         </select>
       </label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Raymarch Resolution Divider / Full-res Output</span><input id="v-render-scale-divider" type="number" step="1" min="1" max="8" title="Controls the internal cloud raymarch resolution. The final canvas remains full resolution and reconstructs from this buffer. 1 = full-resolution raymarch, 4 = default performance mode."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Fluffy Cloud Detail</span><select id="v-field-quality" title="Density and lighting cache resolution, independent of render divider. High: 192×96×192 / 54 MiB / ~3.4× volume work. Screenshot: 256×128×256 / 128 MiB / 8× volume work. Pause animation for stills; use render divider 1 and temporal interleave Off for clean screenshots.">${Object.entries(CLOUD_FIELD_QUALITIES).map(([key,value])=>`<option value="${key}">${value.label}</option>`).join('')}</select></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Temporal Interleave</span><select id="v-temporal-cell-rate" title="Compact history-backed screen interleave. After the first history frame, only a rotated 8x8 scattered subset is dispatched as cloud rays; previous history is copied forward for the rest."><option value="1">Off / full quality</option><option value="2">1 / 2 rays per frame</option><option value="4">1 / 4 rays per frame</option><option value="8">1 / 8 rays per frame</option><option value="16">1 / 16 rays per frame</option><option value="32">1 / 32 rays per frame</option><option value="64">1 / 64 rays per frame</option></select></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Floor</span><input id="v-alpha-floor" type="number" step="0.005" min="0" max="0.24" title="Composite alpha floor. Faint cloud alpha below this threshold fades out before sky compositing, reducing glow haze without running the removed cream resolve."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Density</span><input id="v-fog-density" type="number" step="0.01" min="0" max="2" title="Atmospheric depth fog strength. The active color grade controls the fog color family."></label>
@@ -3354,6 +3382,7 @@ function syncPreviewLookInputs() {
   setFieldValue("v-layer-preset", preview.layerPreset || "custom");
   setFieldValue("v-grade", preview.gradeStyle);
   setFieldValue("v-render-scale-divider", preview.renderScaleDivider ?? 4);
+  setFieldValue("v-field-quality", preview.fieldQuality || "balanced");
   setFieldValue("v-temporal-cell-rate", normalizeTemporalCellRate(preview.temporalCellRate ?? 1));
   setFieldValue("v-alpha-floor", preview.alphaFloor ?? 0.0);
   setFieldValue("v-fog-density", preview.fogDensity ?? DEFAULT_FOG_PROFILE.fogDensity);
@@ -3947,6 +3976,7 @@ function readPreview() {
   preview.layerPreset = $("v-layer-preset")?.value || preview.layerPreset || "custom";
   preview.gradeStyle = u32("v-grade", preview.gradeStyle);
   preview.renderScaleDivider = normalizeRenderScaleDivider(u32("v-render-scale-divider", preview.renderScaleDivider ?? 4));
+  preview.fieldQuality = normalizeCloudFieldQuality($("v-field-quality")?.value || preview.fieldQuality);
   preview.temporalCellRate = normalizeTemporalCellRate(u32("v-temporal-cell-rate", preview.temporalCellRate ?? 1));
   preview.alphaFloor = Math.max(0, Math.min(0.24, num("v-alpha-floor", preview.alphaFloor ?? 0.0)));
   preview.sunTint[0] = clamp01(num("v-sun-r", preview.sunTint[0]));

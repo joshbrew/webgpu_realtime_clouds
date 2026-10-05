@@ -1921,7 +1921,7 @@ function makeViewSignature(preview, w, h) {
   const sun = preview?.sun || {};
   // Evolving weather/light is expected motion, not a camera cut. Keeping its
   // colors in this invalidation key reset sparse history on every cycle frame.
-  if(preview?.weatherCycle) return ['weather-cycle',w,h,cam.x,cam.y,cam.z,cam.yawDeg,cam.pitchDeg,cam.fovYDeg,previewRenderScaleDivider(preview),preview.temporalCellRate].join('|');
+  if(preview?.weatherCycle) return ['weather-cycle',w,h,cam.x,cam.y,cam.z,cam.yawDeg,cam.pitchDeg,cam.fovYDeg,previewRenderScaleDivider(preview),preview.temporalCellRate,preview.fieldQuality || 'balanced'].join('|');
   return [
     roundSig(cam.x),
     roundSig(cam.y),
@@ -1934,6 +1934,7 @@ function makeViewSignature(preview, w, h) {
     roundSig(sun.bloom, 1000),
     roundSig(preview?.exposure, 1000),
     previewRenderScaleDivider(preview),
+    preview?.fieldQuality || 'balanced',
     preview?.gradeStyle ?? 0,
     makeColorSignature(preview?.sky, [0.5, 0.6, 0.8]),
     makeColorSignature(preview?.sunTint, [1, 1, 1]),
@@ -2291,6 +2292,7 @@ async function runFrame({
   }
   cb.setVolumeMask({ shape: volumeShape, rotationAngle: volumeRotationAngle });
   cb.setWeatherProfile(weatherCycle.enabled ? weatherCycleState?.fieldProfile : undefined);
+  cb.setFieldQuality(preview?.fieldQuality || 'balanced');
   if (cloudSig !== lastCloudSceneSignature) {
     cb.setBox(cloudBox);
     cb.setParams(cloudParams || {});

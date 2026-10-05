@@ -4,7 +4,8 @@ import test from 'node:test';
 
 // Exercise the real builder methods without requiring a GPU or WGSL bundler.
 const source = (await readFile(new URL('../clouds.js', import.meta.url), 'utf8'))
-  .replace(/^import (\w+) from "\.\/[^" ]+\.wgsl";$/gm, 'const $1 = "";');
+  .replace(/^import (\w+) from "\.\/[^" ]+\.wgsl";$/gm, 'const $1 = "";')
+  .replace('"./cloudFieldQuality.js"',JSON.stringify(new URL('../cloudFieldQuality.js',import.meta.url).href));
 const { CloudComputeBuilder } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 function fixture(device = {}) {
@@ -26,6 +27,29 @@ function fixture(device = {}) {
   builder.setTuning({ sunStride: 4 });
   return builder;
 }
+
+test('flat field fidelity replaces both cached textures without changing shader variants',()=>{
+  globalThis.GPUTextureUsage={TEXTURE_BINDING:4,STORAGE_BINDING:8};
+  globalThis.GPUBufferUsage={UNIFORM:64,COPY_DST:8};
+  const allocated=[],retired=[];
+  const b=fixture({createTexture(desc){const texture={desc,createView:()=>({texture})};allocated.push(texture);return texture;},createBuffer:desc=>({desc}),createBindGroup:desc=>({desc})});
+  b._retireTexture=t=>retired.push(t);
+  b.setTuning({formType:3});const key=b._currentComputeVariantKey();
+  b._ensureFlatFieldResources();const original=b._fieldResources;
+  assert.deepEqual(original.dimensions,[128,64,128]);
+  b.setFieldQuality('balanced');b._ensureFlatFieldResources();assert.equal(allocated.length,2);
+  b.setFieldQuality('high');assert.equal(b._fieldResources,original,'allocate only at the next frame encode');
+  b._fieldDensitySignature=b._fieldLightSignature='old';b._flatStageBindGroup={};
+  b._ensureFlatFieldResources();assert.deepEqual(b._fieldResources.dimensions,[192,96,192]);
+  assert.deepEqual(retired,[original.density,original.light]);
+  assert.equal(b._fieldDensitySignature,null);assert.equal(b._fieldLightSignature,null);assert.equal(b._flatStageBindGroup,null);
+  b.setFieldQuality('ultra');b._ensureFlatFieldResources();assert.deepEqual(b._fieldResources.dimensions,[256,128,256]);
+  assert.equal(b._currentComputeVariantKey(),key,'no new quality pipeline or screen-size variant');
+  b.setTuning({formType:0});const count=allocated.length;b.setFieldQuality('low');b._ensureFlatFieldResources();
+  assert.equal(allocated.length,count,'the legacy layer does not allocate higher-detail fields');
+  b.setTuning({formType:3});b._ensureFlatFieldResources();assert.deepEqual(b._fieldResources.dimensions,[96,48,96]);
+  assert.throws(()=>b.setFieldQuality('bad'),RangeError);assert.equal(b._state.fieldQuality,'low');
+});
 
 test('variant follows the uploaded stride and preserves all mode bits', () => {
   const builder = fixture();
@@ -230,7 +254,8 @@ test('hybrid clouds use volume noise for density, billow deformation and cached 
 
 test('anvil scenes mix stable storm cells with lower cumulus and keep upper turrets below the canopy', async () => {
   const shader = await readFile(new URL('../shaders/cloudFields.wgsl', import.meta.url), 'utf8');
-  assert.match(shader, /stormCell = cloudCellRandom\(id, 237\.9\) < mix_f\(0\.12, 0\.36, saturate\(weather.g\)\)/);
+  assert.match(shader, /stormCell = cloudCellRandom\(id, 237\.9\) < 0\.27/);
+  assert.doesNotMatch(shader, /stormCell = [^;]*weather\./);
   assert.match(shader, /anvil = select\(C\.cloudAnvilAmount > 0\.65, stormCell, stormSystem\)/);
   assert.match(shader, /mix_f\(0\.22, 0\.54, r0\), stormSystem && !stormCell/);
   assert.match(shader, /stormHeight = mix_f\(0\.52, 1\.0/);

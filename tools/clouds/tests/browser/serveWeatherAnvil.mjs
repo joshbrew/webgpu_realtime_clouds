@@ -17,7 +17,13 @@ const {build}=esbuild;
 const temp=await mkdtemp(join(tmpdir(),'cloud-anvil-check-'));
 const source=x=>fileURLToPath(new URL(x,import.meta.url));
 const loader={'.wgsl':'text','.glsl':'text','.html':'text'};
-await build({entryPoints:[source('./weatherAnvil.js')],outfile:join(temp,'check.js'),bundle:true,format:'esm',platform:'browser',loader});
+// Optional negative control for the identity regression. Only the diagnostic
+// bundle is changed; the production shader and /demo remain untouched.
+const checkPlugins=process.env.CLOUD_POP_BASELINE==='1'?[{name:'old-storm-identity',setup(b){
+ b.onLoad({filter:/cloudFields\.wgsl$/},async({path})=>({loader:'text',contents:(await readFile(path,'utf8'))
+  .replace('cloudCellRandom(id, 237.9) < 0.27','cloudCellRandom(id, 237.9) < mix_f(0.12, 0.36, saturate(weather.g))')}));
+}}]:[];
+await build({entryPoints:[source('./weatherAnvil.js')],outfile:join(temp,'check.js'),bundle:true,format:'esm',platform:'browser',loader,plugins:checkPlugins});
 await build({entryPoints:[source('./planetGas.js')],outfile:join(temp,'planet-gas.js'),bundle:true,format:'esm',platform:'browser',loader});
 await build({entryPoints:[source('../../cloudTest.worker.js')],outfile:join(temp,'worker.js'),bundle:true,format:'iife',platform:'browser',loader});
 await build({entryPoints:[source('../../../../index.js')],outfile:join(temp,'demo.js'),bundle:true,format:'esm',platform:'browser',loader,
@@ -41,11 +47,11 @@ createServer(async(req,res)=>{
   const routes={'/check.js':'check.js','/demo.js':'demo.js','/worker.js':'worker.js','/planet-gas.js':'planet-gas.js'};
   if(!routes[path]){res.writeHead(404).end();return;}
   let body=await readFile(join(temp,routes[path]),'utf8');
-  if(path==='/worker.js'){
+  if(path==='/worker.js'&&process.env.WEATHER_REVIEW_LIVE!=='1'){
    // Freeze only the weather director at its mature anvil phase for review;
    // ordinary animation/wind and the production shader remain unchanged.
    body=body.replace('weatherCycleState = sampleWeatherCycle(weatherCycleSeconds, weatherCycle);','weatherCycleSeconds = 105; weatherCycleState = sampleWeatherCycle(weatherCycleSeconds, weatherCycle);');
   }
   res.writeHead(200,{'content-type':'text/javascript','cache-control':'no-store'}).end(body);
  }catch(error){res.writeHead(500).end(String(error));}
-}).listen(8766,'127.0.0.1',()=>console.log('Weather anvil verification: http://127.0.0.1:8766/check and /demo'));
+}).listen(Number(process.env.CLOUD_REVIEW_PORT||8766),'127.0.0.1',()=>console.log(`Weather anvil verification: http://127.0.0.1:${process.env.CLOUD_REVIEW_PORT||8766}/check and /demo`));

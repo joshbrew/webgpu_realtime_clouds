@@ -21,7 +21,10 @@ test('planetary domains bypass flat anvil/vertical resampling and repeat the act
 test('storm variants have independently broad bases without new texture probes or larger neighborhoods',async()=>{
  const code=await readFile(new URL('../shaders/cloudFields.wgsl',import.meta.url),'utf8');
  assert.match(code,/convective = anvil \|\| \(TUNE.formType >= 1.5 && TUNE.formType < 2.5\)/);
- assert.match(code,/broadBase = select\(0.0, .*variant\), convective\)/);
+ assert.match(code,/widthVariant = cloudCellRandom\(id, 383.1\)/);
+ assert.match(code,/broadBase = select\(0.0, 1.0 - smoothstep\(0.30,0.58,widthVariant\), convective\)/);
+ assert.match(code,/mix_f\(0.68, 1.35, cloudCellRandom\(id, 361.7\)\)/);
+ assert.match(code,/stormHeight, anvil\) \* mix_f\(1.0, 0.85, broadBase\)/);
  assert.match(code,/mix_f\(1.14,1.95,broadBase\)/);
  assert.match(code,/cellStructure = select\(structure,/);
  assert.match(code,/lobeAspect = select\(1.0,/);

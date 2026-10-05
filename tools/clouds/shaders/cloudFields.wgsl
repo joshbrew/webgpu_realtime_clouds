@@ -78,20 +78,26 @@ fn roundedCloudBody(p: vec3<f32>, shape: vec4<f32>, detail: vec3<f32>) -> vec3<f
       let weatherScale = select(NTransform.weatherScale, 1.0, NTransform.weatherScale == 0.0);
       // Sample weather in the co-moving domain, not underneath a stationary
       // lattice. Its separate slow offset can evolve cells without wind itself
-      // pumping their height or switching their identity.
+      // pumping their height. Anatomy is selected independently below.
       let weather = wrap2D(weather2D, samp2D, weatherUV_from(vec3<f32>(materialCenterXZ.x, B.center.y, materialCenterXZ.y), weatherScale), 0i, 0.0);
       // A storm scene is a population, not a wall of identical thunderheads.
       // Stable material-cell identity selects scattered convective storms;
       // the remaining cells form lower fair-weather cumulus in the same box.
       // Selection travels with wind and does not toggle as weather evolves.
-      let stormCell = cloudCellRandom(id, 237.9) < mix_f(0.12, 0.36, saturate(weather.g));
+      // Never compare the identity seed with moving weather: that replaced
+      // small cumulus with a full thunderhead in one frame at the threshold.
+      // Weather controls continuous development, not this cell's anatomy.
+      let stormCell = cloudCellRandom(id, 237.9) < 0.27;
       let anvil = select(C.cloudAnvilAmount > 0.65, stormCell, stormSystem);
       let convective = anvil || (TUNE.formType >= 1.5 && TUNE.formType < 2.5);
       // Material-cell variation survives wind and weather transitions. Rotate
       // the anatomy, not the noise, so adjacent storms have different outflow
       // directions without seams or another texture lookup per lobe.
       let variant = cloudCellRandom(id, 312.7);
-      let broadBase = select(0.0, 1.0 - smoothstep(0.18,0.46,variant), convective);
+      // Independent width seed: broad storms need not share noise/lean variants.
+      // 30% have a full broad base; another 28% span intermediate widths.
+      let widthVariant = cloudCellRandom(id, 383.1);
+      let broadBase = select(0.0, 1.0 - smoothstep(0.30,0.58,widthVariant), convective);
       let aspect = select(1.0, mix_f(0.85, 1.15, variant), convective);
       let turn = cloudCellRandom(id, 329.1) * 6.283185;
       let cs = cos(turn); let sn = sin(turn);
@@ -121,11 +127,11 @@ fn roundedCloudBody(p: vec3<f32>, shape: vec4<f32>, detail: vec3<f32>) -> vec3<f
       // Weather-organized storm families share feeder banks, not a regiment of
       // equally tall stalks. Cell-local height/width remain stable under wind.
       let stormHeight = mix_f(0.52, 1.0, cloudCellRandom(id, 347.3));
-      let columnHeight = layerHeight * heightFraction * select(1.0, stormHeight, anvil)
+      let columnHeight = layerHeight * heightFraction * select(1.0, stormHeight, anvil) * mix_f(1.0, 0.85, broadBase)
         * select(1.0, mix_f(0.22, 0.54, r0), stormSystem && !stormCell);
       let base = FIELD.gridMin.y + layerHeight * 0.07;
       let radiusXZ = cellSize * mix_f(0.29, select(0.43, 0.40, anvil), r0)
-        * select(1.0, mix_f(0.78, 1.28, cloudCellRandom(id, 361.7)), convective);
+        * select(1.0, mix_f(0.68, 1.35, cloudCellRandom(id, 361.7)), convective);
       // The existing per-voxel edge fade lets drifting cells enter/leave the
       // volume smoothly. Rejecting whole centers here would make them pop.
       let coreGrowth = max(0.03, sqrt(smoothstep(0.0, 0.65, maturity)));

@@ -11,6 +11,7 @@ import fieldWGSL from "./shaders/cloudFields.wgsl";
 import planetWGSL from "./shaders/cloudPlanet.wgsl";
 import gasAppearanceWGSL from "./shaders/planetGasAppearance.wgsl";
 import previewWGSL from "./shaders/cloudsRender.wgsl";
+import { CLOUD_FIELD_QUALITIES } from "./cloudFieldQuality.js";
 
 const CLOUD_GPU_CACHE = new WeakMap();
 const INLINE_LAYER_OUTPUT = `fn beginLayerSample(pix: vec2<i32>) {}
@@ -904,6 +905,14 @@ export class CloudComputeBuilder {
     this._fieldLightSignature = null;
   }
 
+  setFieldQuality(quality = 'balanced') {
+    if (!Object.hasOwn(CLOUD_FIELD_QUALITIES, quality)) throw new RangeError(`Unknown cloud field quality: ${quality}`);
+    if ((this._state.fieldQuality || 'balanced') === quality) return;
+    this._state.fieldQuality = quality;
+    // Allocation is deferred to the next encode, not interleaved with a frame.
+    // The dimension uniform invalidates both fields when resources are replaced.
+  }
+
   // Arbitrary-volume examples clip the same cached noise/lighting fields. The
   // rotation is geometry, not camera motion, and never resets the wind domain.
   setVolumeMask({ shape = this._state.volumeMask?.shape ?? "box", rotationAngle = this._state.volumeMask?.rotationAngle ?? 1.05 } = {}) {
@@ -922,7 +931,7 @@ export class CloudComputeBuilder {
 
   _ensureFlatFieldResources() {
     const active = this._currentComputeVariantKey() & 64;
-    const dimensions = active ? [128, 64, 128] : (this._fieldResources?.dimensions || [1, 1, 1]);
+    const dimensions = active ? CLOUD_FIELD_QUALITIES[this._state.fieldQuality || 'balanced'].dimensions : (this._fieldResources?.dimensions || [1, 1, 1]);
     if (this._fieldResources?.dimensions.join() === dimensions.join()) return;
     const old = this._fieldResources;
     const create = label => this.device.createTexture({ label, dimension: "3d", size: dimensions, format: "rgba16float", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING });
