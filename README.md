@@ -7,83 +7,6 @@ The core renderer is `CloudComputeBuilder` in `clouds.js`. It consumes a weather
 The tuning playground uses `NoiseComputeBuilder` from [`webgpu_noise_compute_textures`](https://github.com/joshbrew/webgpu_noise_compute_textures) to generate the input textures on the GPU.
 
 ## [Try it](https://webgpuclouds.netlify.app/)
-https://webgpuclouds.netlify.app/
-
-The flat-volume playground includes **Weather simulation → Evolving weather**.
-It loops smoothly through twelve systems: broken/fair cumulus, developing towers,
-anvil storms, Rain Shelf, widespread rain banks, overcast/breaking stratus,
-wispy high clouds, feather cirrus, asperitas and clearing cumulus. Storm cells keep their identities among lower cumulus;
-the wind continues to scroll the population. Weather and day/night periods are
-independent. The optional day/night clock moves the directional source through
-sunrise, daylight, sunset and moonlight, with twilight sky colors and stars.
-Morning light is peach/gold and evening light is warmer copper. The selected
-color override keeps its palette while allowing this low-sun warmth through.
-Pause with the animation button; disabling the cycle restores the previous
-scene and its animation state. This is an artistic weather director, not a
-physical atmosphere simulation, and does not alter the planetary renderer.
-
-**Color Grade** also offers thirteen reference looks: Cobalt Moon, Rosewater Dusk,
-Porcelain Daylight, Lavender Pearl, Silver Indigo, Copper Atmosphere, and the
-illustrated Molten Gold, Gilded Violet, Electric Cyan, Solar Copper Classic, Lavender Ink, Silver Outline and Cobalt Ink.
-The classic copper look recalls the earlier amber sky, brown shadows and cream
-edges; Copper Atmosphere is its softer natural counterpart. These change only
-color, light and finishing: cloud shape, puff size, noise, wind, camera and
-render quality stay selected independently. Illustrated looks keep the same 3D
-volume lighting, with stronger palette bands and illuminated translucent rims.
-
-**Cloud shading** is independent of both morphology and Color Grade. Choose
-**Soft volume · Anvil / Weather** for continuous ray-lit shading, or
-**Sculpted · Rain Shelf** for the layered relief and sharper silver edges from
-the older screenshots. Either finish works on Rain Shelf, standalone puffs /
-anvils, and the evolving weather system, without rebaking or changing cloud
-shape. Auto retains each form's original finish. Reference palettes temper the
-sculpted finish's contrast and silver/rim amplification; sculpted puffs also
-retain part of their physical volume radiance instead of flattening every fold.
-
-Selecting a grade or shading finish enables **Weather simulation → Use selected color / lighting
-style**. With evolving weather, this overrides automatic sky and lighting colors
-while weather morphology, both clocks and sun/moon direction continue. The
-palette darkens at night, and directional light still fades at the horizon.
-Uncheck the override to return to automatic time-of-day colors. Disabling
-day/night retains manual light direction and color. New looks are authored in
-`cloudLookPresets.js`; no extra textures, ray samples or shader variants are used.
-
-Six 256² weather maps are baked once on entry and cached in bounded named slots.
-A small GPU blend updates one stable texture at 10 Hz (~3.5 MiB total RGBA16F
-map storage); shape/detail textures are reused. There are no per-tick noise
-rebakes, CPU readbacks, extra cloud-ray samples, or new shader variants. Existing
-density/light fields still update as weather, wind and directional light change.
-The mature anvil phase shares the standalone preset's shaping, breakup,
-extinction and occlusion settings from `weather/cloudAnvilLook.js`. Cached maps retain
-the authored green channel with a stable domain/time across all six coverage
-maps. Storm identity is now selected independently by the material-cell seed,
-so map advection cannot abruptly replace cumulus with a full thunderhead.
-Cell scale and height variation remain fixed throughout the loop; coverage and
-development transition smoothly without rebuilding the clouds' anatomy.
-
-Shelf, stratus and high-wisp density blend in that same fixed volume; the tall
-clouds dissipate while lower decks develop, rather than scaling towers into
-pancakes. Fully layered phases skip the convective cell loop. Adding these
-systems does not increase the six-map cache or add passes/ray samples. The Rain
-Shelf phase represents cloud morphology, not rendered precipitation particles.
-Its folded banks borrow the standalone layer's shape-band remap and ridge/valley
-breakup, with gentler shell erosion that preserves a thick connected interior.
-Two additional voxel-filtered texture reads run only in shelf-bearing density
-bakes, never along screen rays. Their independent co-moving domain leaves
-cumulus/anvil texture scale unchanged during transitions; the standalone Rain
-Shelf preset is unchanged.
-Cycle preparation and map submissions are included in the timing reports.
-Moonlit cloud contrast adapts smoothly instead of crushing the dim volumes to
-black. The cached-volume ray path also uses stable, decorrelated integer jitter
-to avoid diagonal sampling bands without an additional texture fetch.
-
-**Layer preset → Arbitrary Volume Gallery** surrounds the torus with a cube,
-ellipsoid, capsule and octahedron. They rotate independently at different speeds
-using the same cached density/light and raymarch stages; no separate meshes or
-per-shape rendering passes are used.
-The fast gallery rotations refresh all rays at the selected coarse resolution
-to avoid stale interleave bands; leaving the gallery restores the previous
-temporal ray budget. Ordinary cloud presets keep their existing interleave.
 
 [https://webgpuclouds.netlify.app/](https://webgpuclouds.netlify.app/)
 
@@ -99,6 +22,10 @@ temporal ray budget. Ordinary cloud presets keep their existing interleave.
 
 # Screenshots
 
+<img  width="800" alt="cloud-wide-fine-traversal" src="https://github.com/user-attachments/assets/969c6765-d9a4-479f-9d4e-159a7b8563c6" />
+<img  width="800" alt="Screenshot 2026-10-04 121156" src="https://github.com/user-attachments/assets/ee527653-a534-4d2a-a4bc-fb98e4d52d96" />
+<img width="1854" height="1615" alt="Screenshot 2026-10-04 135801" src="https://github.com/user-attachments/assets/355a93cc-2d9f-47be-a93c-333ef27437c6" />
+<img  width="800" alt="Screenshot 2026-10-04 121303" src="https://github.com/user-attachments/assets/74983f29-ed81-40af-a2d7-d53ba1cd4244" />
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/85a8a9e9-8cc8-41e1-bd49-d9fa5681ba0b" />
 <img width="800" alt="Screenshot 2026-06-06 172156" src="https://github.com/user-attachments/assets/36306a95-fda1-4f0a-8a09-7c8dc0115241" />
 <img width="800" alt="Screenshot 2026-05-29 105041" src="https://github.com/user-attachments/assets/96fae4fd-ba58-42bb-a2a0-728086c8c8b5" />
