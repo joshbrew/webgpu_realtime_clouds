@@ -15,6 +15,7 @@ import {
   updatePlanetCloudLayerOptions,
   disposePlanetCloudLayer,
 } from '../clouds/planetClouds.js';
+import {stylePlanetPanel,planetDisclosure} from '../clouds/planetPanelUi.js';
 import {PLANET_CLOUD_STYLES,planetCloudSimStylePatch} from '../clouds/planetCloudSimStyles.js';
 import {REFERENCE_LOOK_PRESETS,SCULPTED_LOOK_IDS} from '../clouds/cloudLookPresets.js';
 import {cloudColorStrength,cloudColorHex,cloudColorFromHex,scaleCloudColor} from '../clouds/planetCloudColors.js';
@@ -1739,12 +1740,12 @@ function makeCompactInput({ label, value, type = 'number', step = 'any', min = n
     input.style.accentColor = '#84b8ff';
   }
 
-  input.addEventListener(type === 'color' ? 'input' : 'change', () => {
+  input.addEventListener(!isSelect && (type === 'color' || type === 'number' || type === 'text') ? 'input' : 'change', () => {
     let next;
     if (isCheckbox) next = !!input.checked;
     else if (type === 'number') {
       next = Number(input.value);
-      if (!Number.isFinite(next)) next = 0;
+      if (input.value.trim() === '' || !Number.isFinite(next)) return;
     } else {
       next = input.value;
     }
@@ -1967,7 +1968,7 @@ function createTweakPanel(options = {}) {
   header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px';
 
   const title = document.createElement('div');
-  title.innerHTML = '<strong>Planet + Cloud Mixer</strong><br><span>Texture and stack changes rebake manually.</span>';
+  title.innerHTML = '<strong>Planet studio</strong><br><span>Presets preview automatically. Apply manual edits when ready.</span>';
   title.style.cssText = 'font-size:11px;line-height:1.2';
   title.querySelector('span').style.cssText = 'color:rgba(226,238,255,0.62);font-size:10px';
 
@@ -2145,6 +2146,10 @@ function createTweakPanel(options = {}) {
 
   let liveCloudApplyHandler = typeof options.onCloudLiveApply === 'function' ? options.onCloudLiveApply : null;
   let liveCloudApplyTimer = 0;
+  let liveCloudValue = clonePlain(clouds.value);
+  let liveCloudApplyChain = Promise.resolve();
+  let pendingEdits = false;
+  let pendingCloudTextures = false;
   const editorPathInputs = new WeakMap();
 
   function registerEditorPathInput(editor, path, control, type = 'number', index = null) {
@@ -2194,7 +2199,11 @@ function createTweakPanel(options = {}) {
       const entries = map.get(key);
       if (!entries) return;
       const current = getPathValue(value, key, '');
-      for (const entry of entries) writeInputValue(entry.input, entry.type, current, entry.index);
+      for (const entry of entries) {
+        // Keep the active text/number field's caret and partial formatting.
+        if (path && entry.input === document.activeElement && ['number','text','vec3','colorStrength'].includes(entry.type)) continue;
+        writeInputValue(entry.input, entry.type, current, entry.index);
+      }
     };
     if (path && map.has(path)) {
       syncOne(path);
@@ -2205,28 +2214,40 @@ function createTweakPanel(options = {}) {
 
   function shouldLiveApplyCloudPath(path = '', meta = {}) {
     if (meta.forceCloudLiveApply) return true;
-    if (!path) return false;
-    return !isCloudTextureBakePath(path);
+    if (!path || isCloudTextureBakePath(path)) return false;
+    return (editorPathInputs.get(clouds)?.get(path) || [])
+      .some(({type}) => ['select','checkbox'].includes(type));
+  }
+
+  function setPendingEdits() {
+    pendingEdits = true;
+    rebakeButton.textContent = 'Apply edits •';
+    status.textContent = 'Manual changes pending. Choose Apply edits to update the render.';
+  }
+
+  function markApplied() {
+    liveCloudValue = clonePlain(clouds.value);
+    pendingEdits = false;
+    pendingCloudTextures = false;
+    rebakeButton.textContent = 'Apply edits';
   }
 
   function scheduleCloudLiveApply(label, path = '', meta = {}) {
-    if (!liveCloudApplyInput?.checked || !liveCloudApplyHandler) return false;
-    if (!shouldLiveApplyCloudPath(path, meta)) {
-      status.textContent = `${label} updated in JSON. Texture-related change; use Cloud texture rebake or Rebake same seed.`;
-      return false;
-    }
-
+    if (!liveCloudApplyHandler) return false;
+    const cloudConfig = clonePlain(liveCloudValue);
     window.clearTimeout(liveCloudApplyTimer);
-    liveCloudApplyTimer = window.setTimeout(async () => {
-      try {
-        await liveCloudApplyHandler({ label, path });
-        status.textContent = path === 'cloudStyle'
-          ? `${label} applied. Cloud maps prepared; planet terrain was not rebuilt.`
-          : `${label} live-applied to existing cloud uniforms. No planet/noise texture rebake.`;
-      } catch (err) {
-        console.error(err);
-        status.textContent = `Cloud live apply failed: ${err?.message || err}`;
-      }
+    liveCloudApplyTimer = window.setTimeout(() => {
+      // Serialize bakes so an older selection cannot finish after the latest.
+      liveCloudApplyChain = liveCloudApplyChain.catch(() => {}).then(async () => {
+        try {
+          status.textContent = 'Previewing ' + label.toLowerCase() + '…';
+          await liveCloudApplyHandler({label, path, cloudConfig});
+          status.textContent = label + ' applied.' + (pendingEdits ? ' Manual edits still pending.' : '');
+        } catch (err) {
+          console.error(err);
+          status.textContent = 'Preset preview failed: ' + (err?.message || err);
+        }
+      });
     }, 80);
     return true;
   }
@@ -2237,14 +2258,20 @@ function createTweakPanel(options = {}) {
       mutator(value);
       editor.setValue(value);
       syncEditorPathInputs(editor, meta.path || '');
-      if (editor === clouds && scheduleCloudLiveApply(label, meta.path || '', meta)) {
-        status.textContent = `${label} updated; live cloud apply queued.`;
+      if (editor === clouds && shouldLiveApplyCloudPath(meta.path || '', meta)) {
+        // Keep unrelated manual values staged while applying this preset to
+        // the last rendered configuration as well as the editable draft.
+        mutator(liveCloudValue);
+        if (scheduleCloudLiveApply(label, meta.path || '', meta)) {
+          status.textContent = label + ' preview queued.';
+        }
       } else {
-        status.textContent = `${label} updated in editor. Click Rebake same seed to apply.`;
+        if (editor === clouds && (!meta.path || isCloudTextureBakePath(meta.path))) pendingCloudTextures = true;
+        setPendingEdits();
       }
       return true;
     } catch (err) {
-      editor.showError(new Error(`${label} edit failed:\n${err.message || err}`));
+      editor.showError(new Error(label + ' edit failed:\n' + (err.message || err)));
       return false;
     }
   }
@@ -2486,7 +2513,7 @@ function createTweakPanel(options = {}) {
 
   const cloudQuick = makeCompactControlPanel(
     'Cloud quick controls',
-    'Live cloud colors and opacity; shell, texture size, motion, and interleave shortcuts.',
+    'Manual values wait for Apply edits.',
   );
 
   function addCloudControl(path, label, type = 'number', step = 'any', opts = {}) {
@@ -2515,9 +2542,10 @@ function createTweakPanel(options = {}) {
     },{forceCloudLiveApply:true});
     syncCloudLookInputs();
   }
-  addCloudControl('style.colorPresetId','Color / lighting','select','any',{
+  const quickColorPreset = addCloudControl('style.colorPresetId','Lighting preset','select','any',{
     options:Object.keys(CLOUD_LIGHTING_COLOR_PRESETS).map(id=>({value:id,label:CLOUD_COLOR_PRESET_LABELS[id]||id}))
-  }).input.addEventListener('change',event=>applyCloudColorLook(event.target.value));
+  });
+  quickColorPreset.input.addEventListener('change',event=>applyCloudColorLook(event.target.value));
 
   addCloudControl('render.opacity', 'Ray opacity', 'number', '0.01', {min:0,max:1});
   addCloudControl('surface.surfaceOpacity', 'Mesh opacity', 'number', '0.01', {min:0,max:1});
@@ -2759,7 +2787,8 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     syncAuroraLookInputs();
     status.textContent = 'Synced aurora lighting/color controls from the JSON editor.';
   });
-  auroraLookPanel.grid.append(auroraColorPresetSelect.wrap, applyAuroraPresetButton, syncAuroraLookButton);
+  auroraColorPresetSelect.input.addEventListener('change', () => applyAuroraPresetButton.click());
+  auroraLookPanel.grid.append(auroraColorPresetSelect.wrap, syncAuroraLookButton);
 
   addAuroraLookControl('aurora.style.exposure', 'exposure', 'number', '0.01');
   addAuroraLookControl('aurora.tuning.directLightBlend', 'directBlend', 'number', '0.01');
@@ -3169,7 +3198,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     syncCloudLookInputs();
     status.textContent = 'Synced cloud lighting/color controls from the JSON editor.';
   });
-  cloudLookPanel.grid.append(colorPresetSelect.wrap, applyColorPresetButton, syncCloudLookButton);
+  cloudLookPanel.grid.append(syncCloudLookButton);
 
   addCloudLookControl('style.exposure', 'exposure', 'number', '0.01');
   addCloudLookControl('params.sunBloom', 'sunBloom', 'number', '0.01');
@@ -3588,7 +3617,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     'March cost, empty skipping, alpha shaping, sparsity, definition, and overlay.',
   );
   const planetCloudStyleSelect = makeCompactInput({
-    label:'Planet cloud style',type:'select',value:clouds.value.cloudStyle || 'realistic',
+    label:'Cloud shape preset',type:'select',value:clouds.value.cloudStyle || 'realistic',
     options:PLANET_CLOUD_STYLES.map(s=>({value:s.id,label:s.label})),
     onChange:(style)=>{
       updateEditorValue(clouds,'Planet cloud style',(cfg)=>{
@@ -3599,7 +3628,14 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
       syncEditorPathInputs(clouds);
     },
   });
-  cloudQuick.grid.prepend(planetCloudStyleSelect.wrap);
+  const presetPanel = document.createElement('div');
+  presetPanel.id = 'planet-presets';
+  const presetHint = document.createElement('span');
+  presetHint.textContent = 'Choose a preset to preview it immediately.';
+  presetHint.style.cssText = 'font-size:11px;color:#a6c4df';
+  presetPanel.append(planetCloudStyleSelect.wrap, quickColorPreset.wrap, presetHint);
+  planetCloudStyleSelect.input.id = 'planet-shape-preset';
+  quickColorPreset.input.id = 'planet-lighting-preset';
   registerEditorPathInput(clouds,'cloudStyle',planetCloudStyleSelect,'select');
 
   function addCloudMarchControl(path, label, type = 'number', step = 'any', opts = {}) {
@@ -3680,16 +3716,10 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
   const cloudSection = document.createElement('div');
   cloudSection.style.cssText = 'display:grid;gap:6px';
   cloudSection.append(
-    cloudQuick.box,
-    cloudParamsPanel.box,
-    cloudLookPanel.box,
-    cloudTransformPanel.box,
-    cloudMarchPanel.box,
-    auroraQuick.box,
-    auroraParamsPanel.box,
-    auroraLookPanel.box,
-    auroraTransformPanel.box,
-    auroraMarchPanel.box,
+    planetDisclosure('Opacity, color & resolution', cloudQuick.box),
+    planetDisclosure('Cloud lighting & color', cloudParamsPanel.box, cloudLookPanel.box),
+    planetDisclosure('Cloud shape, motion & quality', cloudTransformPanel.box, cloudMarchPanel.box),
+    planetDisclosure('Aurora', auroraQuick.box, auroraParamsPanel.box, auroraLookPanel.box, auroraTransformPanel.box, auroraMarchPanel.box),
     clouds.element,
   );
 
@@ -3699,7 +3729,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     { key: 'planetNoise', label: 'Terrain', node: noiseSection },
     { key: 'mixer', label: 'Mixer', node: remixSection },
     { key: 'clouds', label: 'Clouds', node: cloudSection },
-    { key: 'reference', label: 'Refs', node: reference.element },
+    { key: 'reference', label: 'Reference', node: reference.element },
   ];
 
   const tabButtons = {};
@@ -3748,7 +3778,8 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
 
   const rebakeButton = document.createElement('button');
   rebakeButton.type = 'button';
-  rebakeButton.textContent = 'Rebake same seed';
+  rebakeButton.textContent = 'Apply edits';
+  rebakeButton.id = 'planet-apply-edits';
 
   const randomButton = document.createElement('button');
   randomButton.type = 'button';
@@ -3794,16 +3825,6 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     button.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:6px;background:rgba(255,255,255,0.08);color:#e8eefc;padding:4px 5px;font:10px system-ui,sans-serif;cursor:pointer;min-width:0';
   }
 
-  const liveCloudRow = document.createElement('label');
-  liveCloudRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:5px;font:10px system-ui,sans-serif;color:rgba(226,238,255,0.76)';
-  const liveCloudApplyInput = document.createElement('input');
-  liveCloudApplyInput.type = 'checkbox';
-  liveCloudApplyInput.checked = true;
-  liveCloudApplyInput.style.cssText = 'width:13px;height:13px;accent-color:#84b8ff';
-  const liveCloudText = document.createElement('span');
-  liveCloudText.textContent = 'live-apply non-texture cloud settings';
-  liveCloudRow.append(liveCloudApplyInput, liveCloudText);
-
   const localRow = document.createElement('div');
   localRow.style.cssText = [
     'display:grid',
@@ -3824,14 +3845,26 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
   localRow.append(localNameInput, savedSelect);
 
   const status = document.createElement('div');
-  status.textContent = 'Ready. Edit JSON, then rebake manually.';
+  status.id = 'planet-edit-status';
+  status.setAttribute('role','status');
+  status.textContent = 'Ready. Presets preview automatically; manual edits wait for Apply.';
   status.style.cssText = 'font-size:10px;color:rgba(226,238,255,0.68);white-space:pre-wrap';
 
-  actionRow.append(rebakeButton, randomButton, rebakeCloudButton, currentStackButton, resetButton, validateButton, exportButton, importButton, saveLocalButton, loadLocalButton, deleteLocalButton);
-  body.append(tabRow, sectionHost, actionRow, liveCloudRow, localRow, status);
+  actionRow.append(randomButton, rebakeCloudButton, currentStackButton, resetButton, validateButton, exportButton, importButton, saveLocalButton, loadLocalButton, deleteLocalButton);
+  const editActions = document.createElement('div');
+  editActions.id = 'planet-edit-actions';
+  editActions.append(rebakeButton, status);
+  body.append(presetPanel, tabRow, sectionHost,
+    planetDisclosure('Save, import & rebuild tools', actionRow, localRow), editActions);
+  for (const editor of [planetRender, planetNoise, planetStack, clouds]) {
+    editor.textarea.addEventListener('input', () => {
+      if (editor === clouds) pendingCloudTextures = true;
+      setPendingEdits();
+    });
+  }
   header.append(title, collapse);
   panel.append(header, body);
-  setActiveSection('mixer');
+  setActiveSection('clouds');
 
   let collapsed = false;
   collapse.addEventListener('click', () => {
@@ -3932,7 +3965,8 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     planetNoise.setValue(s.planetNoise || makePlanetNoiseEditorOptions(merged));
     planetStack.setValue(Array.isArray(s.planetStack) ? s.planetStack : makePlanetNoiseStackEditorOptions(merged));
     clouds.setValue(s.clouds || makeCloudEditorOptions(merged));
-    status.textContent = 'Imported snapshot into editors. Nothing rebaked yet.';
+    setPendingEdits();
+    status.textContent = 'Snapshot loaded. Choose Apply edits to preview it.';
     refreshStackSelect();
     syncSelectedStackInputs();
     syncEditorPathInputs(planetRender);
@@ -4122,7 +4156,8 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     planetNoise.setValue(makePlanetNoiseEditorOptions(nextOptions));
     planetStack.setValue(makePlanetNoiseStackEditorOptions(nextOptions));
     clouds.setValue(makeCloudEditorOptions(nextOptions));
-    status.textContent = 'Editors reset. Nothing rebaked yet.';
+    setPendingEdits();
+    status.textContent = 'Defaults loaded. Choose Apply edits to preview them.';
     refreshStackSelect();
     syncSelectedStackInputs();
     syncEditorPathInputs(planetRender);
@@ -4140,6 +4175,13 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     element: panel,
     editors: { planetRender, planetNoise, planetStack, clouds, reference },
     buttons: { rebakeButton, randomButton, rebakeCloudButton, currentStackButton, resetButton, validateButton, exportButton, importButton, saveLocalButton, loadLocalButton, deleteLocalButton },
+    markApplied,
+    hasPendingCloudTextures: () => pendingCloudTextures,
+    async flushPresetPreview() {
+      // Flush a selection made just before Apply, then wait for all bakes.
+      window.clearTimeout(liveCloudApplyTimer);
+      await liveCloudApplyChain;
+    },
     setCloudLiveApply(handler) {
       liveCloudApplyHandler = typeof handler === 'function' ? handler : null;
     },
@@ -4222,7 +4264,8 @@ function createContainer(options = {}) {
   ].join(';');
 
   const title = document.createElement('div');
-  title.textContent = 'WGSL Planet Mesh Test';
+  title.textContent = 'Planet clouds';
+  title.dataset.panelTitle = '';
   title.style.cssText = 'font-weight:700;font-size:10px;margin-bottom:4px;letter-spacing:0.02em';
 
   const status = document.createElement('div');
@@ -4269,7 +4312,8 @@ function createContainer(options = {}) {
   const tweakPanel = createTweakPanel(options);
 
   actions.append(rerenderButton, disposeButton);
-  hud.append(title, status, actions, info, tweakPanel.element);
+  hud.append(title, status, tweakPanel.element, planetDisclosure('Scene diagnostics', info, actions));
+  stylePlanetPanel(hud);
   container.append(canvas, hud);
   parent.appendChild(container);
 
@@ -5139,16 +5183,18 @@ export async function noisePlanetTest(options = {}) {
   async function rebakeFromTweakPanel({ newSeed = false } = {}) {
     const panel = ui.tweakPanel;
     try {
+      await panel.flushPresetPreview();
       const nextOptions = panel.readOptions({ newSeed });
       panel.setStatus(newSeed ? 'Rebaking with a new seed...' : `Rebaking seed ${nextOptions.seed} from JSON editors...`);
       await renderPlanet({
         ...nextOptions,
         _fromTweakPanel: true,
-        _preserveCloudTextures: !newSeed,
+        _preserveCloudTextures: !newSeed && !panel.hasPendingCloudTextures(),
       });
+      panel.markApplied();
       panel.setStatus(newSeed
         ? `Rebaked ${new Date().toLocaleTimeString()} with new seed and fresh cloud textures.`
-        : `Rebaked ${new Date().toLocaleTimeString()} with same seed; preserved existing baked cloud textures. Use Rebake cloud textures for texture/noise changes.`
+        : `Rebaked ${new Date().toLocaleTimeString()} with same seed; manual edits applied.`
       );
     } catch (err) {
       console.error(err);
@@ -5158,8 +5204,8 @@ export async function noisePlanetTest(options = {}) {
     }
   }
 
-  ui.tweakPanel.setCloudLiveApply(async () => {
-    const nextOptions = ui.tweakPanel.readOptions({ newSeed: false });
+  ui.tweakPanel.setCloudLiveApply(async ({cloudConfig}) => {
+    const nextOptions = {...mergedOptions, seed:runtime.currentSeed, clouds:cloudConfig};
     await applyPlanetCloudLiveSettings(runtime, nextOptions, { resetHistory: false });
     await applyPlanetAuroraLiveSettings(runtime, nextOptions, { resetHistory: false });
   });
@@ -5183,7 +5229,8 @@ export async function noisePlanetTest(options = {}) {
       ui.tweakPanel.setStatus('Rebaking cloud and aurora weather/shape/detail textures only...');
       await rebakePlanetCloudTexturesOnly(runtime, nextOptions);
       await rebakePlanetAuroraTexturesOnly(runtime, nextOptions);
-      ui.tweakPanel.setStatus('Cloud and aurora textures rebaked only. Planet mesh/terrain was not regenerated.');
+      ui.tweakPanel.markApplied();
+      ui.tweakPanel.setStatus('Cloud and aurora textures updated.');
     } catch (err) {
       console.error(err);
       ui.tweakPanel.setStatus(`Cloud texture rebake failed: ${err?.message || err}`);

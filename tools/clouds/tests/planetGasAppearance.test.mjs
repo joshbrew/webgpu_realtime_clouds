@@ -63,7 +63,7 @@ test('Hail Mary has isolated warm weather regions and curl-carried threads, not 
  assert.match(noise,/if\(mode==3u\)\{direction=hailMaryVortices/);
  const palette=await readFile(new URL('../shaders/planetGasAppearance.wgsl',import.meta.url),'utf8');
  const alien=palette.slice(palette.indexOf('if(form>=6.5)'),palette.indexOf('if(form>=5.5)'));
- assert.match(alien,/\.48,\.16,\.022/);
+ assert.match(alien,/1\.12,\.48,\.045/);
  assert.doesNotMatch(alien,/textureSample|for\s*\(/);
 });
 

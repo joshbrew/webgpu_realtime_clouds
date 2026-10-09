@@ -35,8 +35,9 @@ test('styled planet warmup skips unused legacy shape and weather entries',async(
 
 test('styled planet close normals stay cheap and weather rotates in a continuous domain',async()=>{
  const source=await readFile(new URL('../shaders/cloudPlanet.wgsl',import.meta.url),'utf8');
- assert.match(source,/var wind=NTransform.weatherOffsetWorld/);
- assert.match(source,/sphereUVFromWorld\(sphericalDriftedWorld\(p,wind\)\)/);
+ assert.match(source,/let wind=NTransform.weatherOffsetWorld/);
+ assert.match(source,/moved=sphericalDriftedWorld\(p,wind\)/);
+ assert.match(source,/gasWeatherDirection\(normalize\(p-B.center\)/);
  assert.match(source,/min\(sunStride,2\)/);
  assert.match(source,/clamp\(TUNE.sunSteps,1,3\)/);
  assert.doesNotMatch(source,/frameIndex.*planetPixelRandom|planetPixelRandom.*frameIndex/);

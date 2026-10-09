@@ -41,9 +41,6 @@ struct VertexOut {
 @group(0) @binding(5) var weatherTex: texture_2d_array<f32>;
 
 const PI: f32 = 3.141592653589793;
-fn gasZonalAngle(latitude:f32,wind:f32)->f32 {
- return wind+sin(wind*.7)*sin(latitude*14.0)*.12;
-}
 
 fn direction_to_uv(dir: vec3<f32>) -> vec2<f32> {
   let lon = atan2(dir.z, dir.x);
@@ -158,8 +155,7 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
   body += mix(coolShadow, warmLight, 0.34) * backTransmission * 0.035;
   body += coolShadow * params.ambient * 0.14;
   if(params.formType>=4.5){
-    let windAngle=gasZonalAngle(radial.y,params.weatherTime);
-    let d=vec3<f32>(radial.x*cos(windAngle)-radial.z*sin(windAngle),radial.y,radial.x*sin(windAngle)+radial.z*cos(windAngle));
+    let d=gasWeatherDirection(radial,params.weatherTime,params.formType);
     let inset=.5/f32(textureDimensions(weatherTex).y);
     let uv=vec2<f32>(fract(atan2(d.z,d.x)/(2.0*PI)),clamp(acos(clamp(d.y,-1.0,1.0))/PI,inset,1.0-inset));
     let weather=textureSampleLevel(weatherTex,linearSampler,uv,0,0.0);

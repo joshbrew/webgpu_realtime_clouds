@@ -12,19 +12,15 @@ fn planetEvolvingDomain(p:vec3<f32>,phase:f32)->vec3<f32> {
  return p+vec3<f32>(.018,.011,-.014)*phase+warp*.055;
 }
 fn planetPhase(p:vec3<f32>)->f32 {return (length(p-B.center)-V.planetRadius-V.cloudBottom)/max(V.cloudTop-V.cloudBottom,EPS);}
-fn gasZonalAngle(latitude:f32,wind:f32)->f32 {
- return wind+sin(wind*.7)*sin(latitude*14.0)*.12;
-}
 fn planetWeather(p:vec3<f32>)->vec4<f32> {
  // Rotate the unit-sphere domain, not the equirectangular UV. Gas bands and
  // coverage travel with the shell without sliding through a longitude seam.
- var wind=NTransform.weatherOffsetWorld;
+ let wind=NTransform.weatherOffsetWorld;
+ var moved=sphericalDriftedWorld(p,wind);
  if(TUNE.formType>=4.5){
-  let latitude=normalize(p-B.center).y;
-  // Zonal flow stays at its latitude; neighboring jets shear east/west.
-  wind=vec3<f32>(gasZonalAngle(latitude,wind.x*6.283185307)/6.283185307,0,0);
+  moved=B.center+gasWeatherDirection(normalize(p-B.center),wind.x*6.283185307,TUNE.formType);
  }
- let uv=sphereUVFromWorld(sphericalDriftedWorld(p,wind));
+ let uv=sphereUVFromWorld(moved);
  let latitudeScale=axisOrOne3(NTransform.weatherAxisScale).z*max(NTransform.weatherScale,EPS);
  return wrap2D(weather2D,samp2D,(uv-vec2<f32>(.5))*vec2<f32>(1,latitudeScale)+vec2<f32>(.5),0,0.0);
 }

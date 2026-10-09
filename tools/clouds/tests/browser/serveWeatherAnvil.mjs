@@ -25,6 +25,7 @@ const checkPlugins=process.env.CLOUD_POP_BASELINE==='1'?[{name:'old-storm-identi
 }}]:[];
 await build({entryPoints:[source('./weatherAnvil.js')],outfile:join(temp,'check.js'),bundle:true,format:'esm',platform:'browser',loader,plugins:checkPlugins});
 await build({entryPoints:[source('./planetGas.js')],outfile:join(temp,'planet-gas.js'),bundle:true,format:'esm',platform:'browser',loader});
+await build({entryPoints:[source('./planetFlowBenchmark.js')],outfile:join(temp,'planet-flow-benchmark.js'),bundle:true,format:'esm',platform:'browser',loader});
 await build({entryPoints:[source('../../cloudTest.worker.js')],outfile:join(temp,'worker.js'),bundle:true,format:'iife',platform:'browser',loader});
 await build({entryPoints:[source('../../../../index.js')],outfile:join(temp,'demo.js'),bundle:true,format:'esm',platform:'browser',loader,
  plugins:[{name:'test-worker-url',setup(b){
@@ -37,14 +38,14 @@ const html=script=>`<!doctype html><meta charset="utf-8"><title>Weather anvil ve
 createServer(async(req,res)=>{
  try{
   const path=new URL(req.url,'http://localhost').pathname;
-  if(path==='/check'||path==='/demo'||path==='/planet-gas'){
-   let page=path==='/demo'?html('/demo.js').replace('<pre id="result">Checking…</pre>',''):html(path==='/planet-gas'?'/planet-gas.js':'/check.js');
+  if(path==='/check'||path==='/demo'||path==='/planet-gas'||path==='/planet-flow-benchmark'){
+   let page=path==='/demo'?html('/demo.js').replace('<pre id="result">Checking…</pre>',''):html(path==='/planet-flow-benchmark'?'/planet-flow-benchmark.js':path==='/planet-gas'?'/planet-gas.js':'/check.js');
    // A repeatable actual-simulation review: fixed terrain seed and sun only.
    // Production shader, noise, scene and camera remain the real demo.
    if(path==='/demo'&&process.env.PLANET_REVIEW==='1')page=page.replace('<script type="module"','<script>window.NOISE_PLANET_TEST_OPTIONS={seed:17,clouds:{cloudStyle:"hail_mary"}};</script><script type="module"');
    res.writeHead(200,{'content-type':'text/html'}).end(page);return;
   }
-  const routes={'/check.js':'check.js','/demo.js':'demo.js','/worker.js':'worker.js','/planet-gas.js':'planet-gas.js'};
+  const routes={'/check.js':'check.js','/demo.js':'demo.js','/worker.js':'worker.js','/planet-gas.js':'planet-gas.js','/planet-flow-benchmark.js':'planet-flow-benchmark.js'};
   if(!routes[path]){res.writeHead(404).end();return;}
   let body=await readFile(join(temp,routes[path]),'utf8');
   if(path==='/worker.js'&&process.env.WEATHER_REVIEW_LIVE!=='1'){

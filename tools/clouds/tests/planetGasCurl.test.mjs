@@ -15,13 +15,15 @@ test('gas curls bake in a lazy separate entry and use seam-free tangent gradient
  assert.doesNotMatch(setup,/entryPoint:'gasWeatherNoise'/);
 });
 
-test('both gas renderers shear along latitude without moving the poles or changing latitude',async()=>{
+test('gas renderers share bounded spherical flow while Neptune keeps its zonal shear',async()=>{
  const files=await Promise.all(['shaders/cloudPlanet.wgsl','shaders/planetCloudSurfaceMC33.wgsl','shaders/planetCloudSurfaceRender.wgsl'].map(x=>readFile(new URL('../'+x,import.meta.url),'utf8')));
- const helper=x=>x.slice(x.indexOf('fn gasZonalAngle'),x.indexOf('\n}',x.indexOf('fn gasZonalAngle'))).replace(/\s/g,'');
- for(const shader of files){assert.match(shader,/wind\+sin\(wind\*\.7\)\*sin\(latitude\*14\.0\)\*\.12/);assert.equal(helper(shader),helper(files[0]));}
- assert.match(files[0],/wind=vec3<f32>\(gasZonalAngle[^\n]*,0,0\)/);
+ const helper=await readFile(new URL('../shaders/planetGasFlow.wgsl',import.meta.url),'utf8');
+ for(const shader of files)assert.match(shader,/gasWeatherDirection\(/);
+ assert.match(helper,/wind\+sin\(wind\*\.7\)\*sin\(latitude\*14\.0\)\*\.12/);
+ assert.match(helper,/form>=6\.5 \|\| \(form>=4\.5 && form<5\.5\)/);
+ assert.doesNotMatch(helper,/textureSample|textureLoad|for\s*\(/);
  assert.match(files[2],/binding\(5\) var weatherTex/);
- assert.match(files[2],/gasZonalAngle\(radial.y,params.weatherTime\)/);
+ assert.match(files[2],/gasWeatherDirection\(radial,params.weatherTime,params.formType\)/);
  assert.match(files[2],/if\(params.formType>=4\.5\)/);
  for(const y of [-1,-.8,-.4,0,.4,.8,1]){
   const p=[Math.sqrt(1-y*y),y,0],angle=1.3+Math.sin(1.3*.7)*Math.sin(y*14)*.12;

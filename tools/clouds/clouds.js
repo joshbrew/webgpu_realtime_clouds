@@ -12,6 +12,7 @@ import rayOutputWGSL from "./shaders/cloudRayOutput.wgsl";
 import fieldWGSL from "./shaders/cloudFields.wgsl";
 import planetWGSL from "./shaders/cloudPlanet.wgsl";
 import gasAppearanceWGSL from "./shaders/planetGasAppearance.wgsl";
+import gasFlowWGSL from "./shaders/planetGasFlow.wgsl";
 import previewWGSL from "./shaders/cloudsRender.wgsl";
 import { CLOUD_FIELD_QUALITIES, supportsCloudFieldQuality } from "./cloudFieldQuality.js";
 import { intendedCloudShading } from './cloudLookPresets.js';
@@ -785,7 +786,7 @@ export class CloudComputeBuilder {
 
   _getPlanetShaderModule() {
     const cache=getCloudGpuCache(this.device);
-    if(!cache.planetModule)cache.planetModule=createTimedCloudModule(this.device,'cloud-planet-styles',commonWGSL+'\n'+scratchWGSL+'\n'+gasAppearanceWGSL+'\n'+planetWGSL+'\n'+resolveWGSL+'\n'+INLINE_LAYER_OUTPUT,cache.planetModuleTiming={});
+    if(!cache.planetModule)cache.planetModule=createTimedCloudModule(this.device,'cloud-planet-styles',commonWGSL+'\n'+scratchWGSL+'\n'+gasFlowWGSL+'\n'+gasAppearanceWGSL+'\n'+planetWGSL+'\n'+resolveWGSL+'\n'+INLINE_LAYER_OUTPUT,cache.planetModuleTiming={});
     return cache.planetModule;
   }
 

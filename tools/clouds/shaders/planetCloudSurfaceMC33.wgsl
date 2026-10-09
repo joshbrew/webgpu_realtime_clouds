@@ -148,9 +148,6 @@ fn sample_weather(uv: vec2<f32>) -> vec4<f32> {
 fn rotate_domain(p:vec3<f32>, angle:f32)->vec3<f32> {
   return vec3<f32>(p.x*cos(angle)-p.z*sin(angle),p.y,p.x*sin(angle)+p.z*cos(angle));
 }
-fn gasZonalAngle(latitude:f32,wind:f32)->f32 {
- return wind+sin(wind*.7)*sin(latitude*14.0)*.12;
-}
 
 fn cached_field_world(pos:vec3<f32>)->f32 {
   let mapping=world_to_face_grid(pos);
@@ -203,8 +200,8 @@ fn surface_shape(p:vec3<f32>)->vec4<f32> {
 fn scalar_field_world(pos:vec3<f32>)->f32 {
   let h=max(params.cloudTop-params.cloudBottom,0.001);
   let ph=(length(pos)-params.planetRadius-params.cloudBottom)/h;
-  let weatherAngle=select(params.weatherTime,gasZonalAngle(normalize(pos).y,params.weatherTime),params.formType>=4.5);
-  let weatherDir=normalize(rotate_domain(pos,weatherAngle));
+  var weatherDir=normalize(rotate_domain(pos,params.weatherTime));
+  if(params.formType>=4.5){weatherDir=gasWeatherDirection(normalize(pos),params.weatherTime,params.formType);}
   let uv=vec2<f32>(fract(atan2(weatherDir.z,weatherDir.x)/(2.0*PI)),acos(clamp(weatherDir.y,-1.0,1.0))/PI);
   let wm=sample_weather(uv);
   let s=surface_shape(planetEvolvingDomain(rotate_domain(pos,params.shapeTime)*params.worldScale,params.detailTime));
