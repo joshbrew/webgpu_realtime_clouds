@@ -6,7 +6,8 @@ The core renderer is `CloudComputeBuilder` in `clouds.js`. It consumes a weather
 
 The tuning playground uses `NoiseComputeBuilder` from [`webgpu_noise_compute_textures`](https://github.com/joshbrew/webgpu_noise_compute_textures) to generate the input textures on the GPU.
 
-## Try it
+## [Try it](https://webgpuclouds.netlify.app/)
+https://webgpuclouds.netlify.app/
 
 The flat-volume playground includes **Weather simulation → Evolving weather**.
 It loops smoothly through twelve systems: broken/fair cumulus, developing towers,
