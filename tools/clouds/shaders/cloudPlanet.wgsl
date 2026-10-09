@@ -108,6 +108,13 @@ fn computeCloudPlanet(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(loca
     let bounce=(.07+.12*sqrt(sunVisibility))*day;
     let ambient=(.12+.10*max(dot(lightNormal,radial),0.0))*ao;
     var light=C.frontLightColor*(direct+bounce)+C.shadowLightColor*ambient;
+    if(TUNE.lightingFinish==2){
+      let bands=0.18+smoothstep(0.25,0.35,diffuse)*0.40+smoothstep(0.65,0.75,diffuse)*0.42;
+      light=mix(C.shadowLightColor*0.28,C.frontLightColor,bands*sunVisibility*day)+C.shadowLightColor*0.06;
+    }
+    let forwardScatter=pow(max(dot(rd,sun),0.0),max(8.0,C.silverExponent*6.0));
+    let edgeScatter=pow(1.0-abs(dot(lightNormal,-rd)),2.0);
+    light+=C.sunColor*max(C.silverIntensity,0.0)*pow(sunVisibility,0.50)*day*forwardScatter*(0.08+edgeScatter*1.1);
     if(TUNE.formType>=4.5){light*=gasWeatherColor(weather,TUNE.formType);}
     let alpha=1.0-exp(-density*extinction*min(step,hit.y-t));
     color+=tr*alpha*light;tr*=1.0-alpha;

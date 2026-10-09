@@ -55,7 +55,8 @@ export function sampleWeatherCycle(seconds, options = {}) {
   // The single cached directional-light source hands off at the horizon, where
   // both intensities fade to zero. No abrupt bright sun-to-moon shadow flip.
   const visibility = smooth(Math.abs(solar)/.18);
-  const light = color([.48,.65,1],color([1,.38,.13],[1,.97,.90],smooth(solar/.5)),day);
+  const warmLight = hour<12 ? [1,.66,.38] : [1,.40,.18];
+  const light = color([.48,.65,1],color(warmLight,[1,.97,.90],smooth(solar/.55)),day);
   const intensity = visibility*(moon ? .30 : 1.45);
   const sky = color([.010,.018,.045],color([.08,.13,.28],[.24,.48,.76],smooth(solar/.50)),day);
   const stormShade = 1-weather.storm*.18;
@@ -66,7 +67,8 @@ export function sampleWeatherCycle(seconds, options = {}) {
     label:`${a.name} → ${b.name}`,
     sun:{azDeg:wrap(90+(hour-6)*15+(moon?180:0),360),elDeg:Math.asin(Math.abs(solar)*.90)*180/Math.PI,bloom:moon?.03:.22},
     sky:weatherSky.map(v=>v*stormShade),
-    lightColor:light.map(v=>v*intensity),
+    lightColor:light.map(v=>v*intensity),lightTint:light,
+    lightIntensity:intensity,
     shadowColor:color([.10,.16,.28],[.31,.40,.57],day),
     celestialColor:light.map(v=>v*(moon?.22:1)),
     // Keep cell scale/height variation fixed during the loop: switching their
@@ -87,5 +89,43 @@ export function cyclePreview(base, state, timeOfDay) {
     exposure:mix(2.2,1.1,state.day),fogDensity:.10,fogSun:.10,styleShadowStrength:.75,styleShadowDarkness:0,
     styleColorLift:1,styleSaturation:1,godRaysEnabled:!state.moon,godRayStrength:.12*state.visibility,
   });
+  if(timeOfDay && base.cycleStyleOverride) {
+    // Restore only appearance overwritten by TOD. Geometry and both clocks
+    // remain the director's; never write evolving values into the saved look.
+    for(const key of ['gradeStyle','cloudLitTint','cloudShadowTint','edgeTint',
+      'fogDensity','fogSun','styleShadowStrength','styleShadowDarkness',
+      'styleColorLift','styleSaturation']) {
+      if(base[key] !== undefined) preview[key]=base[key];
+    }
+    preview.styleSkyOverride=true;
+    const nightScale=mix(.035,1,state.day);
+    preview.sky=(base.sky||[.3,.4,.6]).map(v=>v*nightScale*(1-state.weather.storm*.12));
+    preview.sun={...state.sun,bloom:(base.sun?.bloom??.18)*mix(.25,1,state.day)};
+    const twilightTint=color([1,1,1],state.lightTint,state.moon?0:state.dusk*.90);
+    preview.sunTint=(base.sunTint||[1,1,1]).map((v,i)=>v*twilightTint[i]*(state.moon?.22:1));
+    preview.exposure=(base.exposure??1.1)*mix(2,1,state.day);
+    preview.godRaysEnabled=!!base.godRaysEnabled && !state.moon;
+    preview.godRayStrength=(base.godRayStrength??0)*state.visibility;
+  }
   return preview;
+}
+
+export function cycleCloudParams(base, state, timeOfDay, look = {}) {
+  const params={...base,...state.cloudParams};
+  if(!timeOfDay) return params;
+  if(look.cycleStyleOverride) {
+    const source=look.sunTint||[1,1,1];
+    // Keep the authored palette, but allow the low sun to warm its lighting.
+    // The old override changed brightness alone and hid both golden hours.
+    const twilightTint=color([1,1,1],state.lightTint,state.moon?0:state.dusk*.90);
+    const tintLight=tint=>(tint||[1,1,1]).map((v,i)=>v*source[i]*twilightTint[i]*state.lightIntensity);
+    params.frontLightColor=tintLight(look.frontLightTint);
+    params.sunColor=tintLight(look.transmissiveLightTint);
+    params.shadowLightColor=(look.volumeShadowTint||[.3,.4,.6]).map(v=>v*mix(.20,1,state.day));
+  } else {
+    params.frontLightColor=state.lightColor;
+    params.sunColor=state.lightColor;
+    params.shadowLightColor=state.shadowColor;
+  }
+  return params;
 }

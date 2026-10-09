@@ -24,7 +24,7 @@ struct CloudTuning {
   maxSteps: i32,
   sunSteps: i32,
   sunStride: i32,
-  _pad0_i: i32,
+  lightingFinish: i32,
 
   minStep: f32,
   maxStep: f32,
@@ -244,6 +244,7 @@ struct View {
   fovY: f32, aspect: f32, stepBase: f32, stepInc: f32,
   planetRadius: f32, cloudBottom: f32, cloudTop: f32, volumeLayers: f32,
   worldToUV: f32, _a: f32, _b: f32, _c: f32
+  , aircraftPosition: vec3<f32>, aircraftYaw: f32
 };
 @group(1) @binding(9) var<uniform> V: View;
 
@@ -475,6 +476,9 @@ fn boxMin() -> vec3<f32> { return wg_boxMinCached; }
 fn boxMax() -> vec3<f32> { return wg_boxMaxCached; }
 
 fn anvilShapePos(pos: vec3<f32>, ph: f32) -> vec3<f32> {
+  // A scrolling shelf has no single storm center. Global cap spreading bent
+  // every tile toward B.center and produced radial streaks on wide skies.
+  if(!sphericalCloudMode() && TUNE.formType<0.5){return pos;}
   let anvil = anvilStrength();
   if (anvil <= 0.0) {
     return pos;

@@ -132,7 +132,7 @@ const transaction=uiSource.slice(uiSource.indexOf('async function changeWeatherC
 function cycleFixture({failPrepare=false}={}) {
   const events=[],controls={
     'weather-cycle-enabled':{checked:true},'weather-cycle-status':{textContent:''},
-    'reproj-anim-toggle':{textContent:'Start Reproject Anim'},
+    'reproj-anim-toggle':{textContent:'Animate clouds'},
     'v-layer-preset':{id:'v-layer-preset',value:'rain_shelf'},
     'v-cx':{id:'v-cx',value:'17'},'p-density':{id:'p-density',value:'2'},
   };
@@ -151,7 +151,8 @@ function cycleFixture({failPrepare=false}={}) {
   return{api,events,controls,preview,tileTransforms};
 }
 test('weather UI restores controls, scene transforms and prior paused state',async()=>{
-  const f=cycleFixture();await f.api.change(true);assert.equal(f.api.state().animRunning,true);
+  const f=cycleFixture();await f.api.change(true);assert.equal(f.api.state().animRunning,false);
+  assert.ok(!f.events.includes('startLoop'));
   assert.ok(f.events.indexOf('setWeatherCycle')<f.events.indexOf('frame'));
   await f.api.change(false);
   assert.equal(f.controls['v-cx'].value,'17');assert.equal(f.preview.layerPreset,'rain_shelf');assert.equal(f.tileTransforms.weatherScale,3);

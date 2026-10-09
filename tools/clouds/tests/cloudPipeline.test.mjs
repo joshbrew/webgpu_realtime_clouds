@@ -5,7 +5,8 @@ import test from 'node:test';
 // Exercise the real builder methods without requiring a GPU or WGSL bundler.
 const source = (await readFile(new URL('../clouds.js', import.meta.url), 'utf8'))
   .replace(/^import (\w+) from "\.\/[^" ]+\.wgsl";$/gm, 'const $1 = "";')
-  .replace('"./cloudFieldQuality.js"',JSON.stringify(new URL('../cloudFieldQuality.js',import.meta.url).href));
+  .replace('"./cloudFieldQuality.js"',JSON.stringify(new URL('../cloudFieldQuality.js',import.meta.url).href))
+  .replace("'./cloudLookPresets.js'",JSON.stringify(new URL('../cloudLookPresets.js',import.meta.url).href));
 const { CloudComputeBuilder } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 function fixture(device = {}) {
@@ -32,11 +33,13 @@ test('flat field fidelity replaces both cached textures without changing shader 
   globalThis.GPUTextureUsage={TEXTURE_BINDING:4,STORAGE_BINDING:8};
   globalThis.GPUBufferUsage={UNIFORM:64,COPY_DST:8};
   const allocated=[],retired=[];
-  const b=fixture({createTexture(desc){const texture={desc,createView:()=>({texture})};allocated.push(texture);return texture;},createBuffer:desc=>({desc}),createBindGroup:desc=>({desc})});
+  const b=fixture({createTexture(desc){const texture={desc,createView:()=>({texture})};allocated.push(texture);return texture;},createBuffer:desc=>({desc}),createBindGroup:desc=>({desc}),createShaderModule:desc=>desc,createComputePipeline:()=>({getBindGroupLayout:()=>({})})});
   b._retireTexture=t=>retired.push(t);
   b.setTuning({formType:3});const key=b._currentComputeVariantKey();
   b._ensureFlatFieldResources();const original=b._fieldResources;
   assert.deepEqual(original.dimensions,[128,64,128]);
+  assert.ok(allocated.every(t=>t.desc.mipLevelCount===8));
+  assert.equal(b._fieldMipGroups.flat().length,14);
   b.setFieldQuality('balanced');b._ensureFlatFieldResources();assert.equal(allocated.length,2);
   b.setFieldQuality('high');assert.equal(b._fieldResources,original,'allocate only at the next frame encode');
   b._fieldDensitySignature=b._fieldLightSignature='old';b._flatStageBindGroup={};
@@ -44,11 +47,35 @@ test('flat field fidelity replaces both cached textures without changing shader 
   assert.deepEqual(retired,[original.density,original.light]);
   assert.equal(b._fieldDensitySignature,null);assert.equal(b._fieldLightSignature,null);assert.equal(b._flatStageBindGroup,null);
   b.setFieldQuality('ultra');b._ensureFlatFieldResources();assert.deepEqual(b._fieldResources.dimensions,[256,128,256]);
+  b.setFieldQuality('cinematic');b._ensureFlatFieldResources();assert.deepEqual(b._fieldResources.dimensions,[384,192,384]);
+  b.setFieldQuality('reference');b._ensureFlatFieldResources();assert.deepEqual(b._fieldResources.dimensions,[512,256,512]);
   assert.equal(b._currentComputeVariantKey(),key,'no new quality pipeline or screen-size variant');
   b.setTuning({formType:0});const count=allocated.length;b.setFieldQuality('low');b._ensureFlatFieldResources();
   assert.equal(allocated.length,count,'the legacy layer does not allocate higher-detail fields');
   b.setTuning({formType:3});b._ensureFlatFieldResources();assert.deepEqual(b._fieldResources.dimensions,[96,48,96]);
   assert.throws(()=>b.setFieldQuality('bad'),RangeError);assert.equal(b._state.fieldQuality,'low');
+  b.device.limits={maxTextureDimension3D:2048,maxBufferSize:256*1024**2};
+  assert.throws(()=>b.setFieldQuality('reference'),/unavailable/);
+  assert.equal(b._state.fieldQuality,'low','reject unsupported capture tiers before changing scene state');
+  b.setFieldQuality('cinematic');b._ensureFlatFieldResources();assert.deepEqual(b._fieldResources.dimensions,[384,192,384]);
+});
+
+test('a sculpted first frame binds valid single-level placeholder fields',()=>{
+  globalThis.GPUTextureUsage={TEXTURE_BINDING:4,STORAGE_BINDING:8};
+  globalThis.GPUBufferUsage={UNIFORM:64,COPY_DST:8};
+  const allocated=[];
+  const b=fixture({createTexture(desc){
+    assert.ok(desc.mipLevelCount<=1+Math.floor(Math.log2(Math.max(...desc.size))));
+    const texture={desc,createView:()=>({texture})};allocated.push(texture);return texture;
+  },createBuffer:desc=>({desc}),createBindGroup:desc=>({desc}),createShaderModule:desc=>desc,createComputePipeline:()=>({getBindGroupLayout:()=>({})})});
+  b._retireTexture=()=>{};
+  b.setTuning({formType:0});b._ensureFlatFieldResources();
+  assert.deepEqual(b._fieldResources.dimensions,[1,1,1]);
+  assert.ok(allocated.every(t=>t.desc.mipLevelCount===1));
+  assert.equal(b._fieldMipGroups.flat().length,0);
+  b.setTuning({formType:3});b._ensureFlatFieldResources();
+  assert.deepEqual(b._fieldResources.dimensions,[128,64,128]);
+  assert.equal(b._fieldMipGroups.flat().length,14);
 });
 
 test('variant follows the uploaded stride and preserves all mode bits', () => {
@@ -182,7 +209,7 @@ test('field cache reuses camera/AO changes, relights the sun, and rebakes change
   Object.assign(builder, {
     _u32Views: new WeakMap(), _abParams: new ArrayBuffer(96), _abNTransform: new ArrayBuffer(128), _abBox: new ArrayBuffer(32),
     _dvView: new DataView(new ArrayBuffer(128)), _fieldParamsAB: new ArrayBuffer(80), _fieldResources: { dimensions: [128,64,128] },
-    _ensureFlatFieldResources() {}, _getResId(resource) { return resource; },
+    _ensureFlatFieldResources() {}, _getResId(resource) { return resource; }, _fieldMipGroups:[[],[]],
     weatherView: 1, shape3DView: 2, detail3DView: 3,
   });
   builder._state.box = { center: [0,1,0], half: [18,1.4,18] };
@@ -191,6 +218,23 @@ test('field cache reuses camera/AO changes, relights the sun, and rebakes change
   const stages = () => { const timings = []; builder._encodeFlatFields(pass, timings); return timings.filter(t => t.dispatched).map(t => t.stage); };
   const both = ['buildCloudDensityField', 'buildCloudLightField'];
   assert.deepEqual(stages(), both);
+  assert.deepEqual(stages(), []);
+  const appearance=new DataView(builder._abParams);
+  appearance.setFloat32(24,2.5,true); // silver intensity is resolved per ray
+  appearance.setFloat32(48,1.7,true); // sun tint is not cached geometry
+  builder.setTuning({lightingFinish:2});
+  assert.deepEqual(stages(), [], 'appearance changes preserve density and lighting');
+  appearance.setFloat32(12,4.5,true); // extinction changes cached sun visibility
+  assert.deepEqual(stages(), ['buildCloudLightField']);
+  appearance.setFloat32(4,2,true); // density changes both fields
+  assert.deepEqual(stages(), both);
+  const fieldResources = builder._fieldResources;
+  builder.setCloudTurbulence(.75);
+  assert.deepEqual(stages(), [], 'visible turbulence must reuse density and lighting');
+  assert.equal(new DataView(builder._fieldParamsAB).getFloat32(76,true), .75);
+  assert.equal(builder._fieldResources, fieldResources);
+  builder.setCloudTurbulence(100);assert.equal(builder._state.cloudTurbulence,1.5);
+  builder.setCloudTurbulence(NaN);assert.equal(builder._state.cloudTurbulence,0);
   assert.deepEqual(stages(), []);
   builder._dvView.setFloat32(0, 12, true); // camera, not field coordinates
   builder.setTuning({ aoStrength: 0.75 });
@@ -232,7 +276,7 @@ test('rounded clouds advect their scaffold and grow billows without rescaling to
   assert.match(shader, /columnHeight = layerHeight \* heightFraction \* select\(1\.0/);
   assert.match(shader, /headRadius = fullHeadRadius \* puffGrowth/);
   assert.match(shader, /radiusY = fullRadiusY \* puffGrowth/);
-  assert.match(shader, /weatherUV_from\(vec3<f32>\(materialCenterXZ\.x/);
+  assert.match(shader, /fieldWeatherUV\(vec3<f32>\(materialCenterXZ\.x/);
   assert.match(shader, /body = max\(body, localForm/);
 });
 
@@ -292,22 +336,42 @@ test('cached lighting filters scalar responses instead of compressed-normal seam
   assert.equal(rays.match(/textureSampleLevel\(cloudLightField/g)?.length, 1);
 });
 
-test('only flat field-lit clouds enable volume-aware preview finishing', async () => {
+test('automatic finishing follows the form while either shading style packs independently', async () => {
   const builder = fixture();
   builder._abRender = new ArrayBuffer(304);
   builder._dvRender = new DataView(builder._abRender);
   for (const formType of [0,1,2,3]) for (const spherical of [false,true]) {
     builder.setTuning({formType});
     builder._dvOptions.setFloat32(16, spherical ? 1 : 0, true);
+    for(const [cloudShading,mode] of [['auto',0],['soft',1],['sculpted',2]]) {
+      builder._writeRenderUniforms({cloudShading,styleSkyOverride:true});
+      assert.equal(builder._dvRender.getFloat32(12,true), formType>0 && !spherical ? 1 : 0);
+      assert.equal(builder._dvRender.getFloat32(156,true),mode);
+      assert.equal(builder._dvRender.getFloat32(204,true),1);
+      assert.equal(builder._dvRender.getFloat32(244,true), Math.fround(.34));
+    }
     builder._writeRenderUniforms();
-    assert.equal(builder._dvRender.getFloat32(12,true), formType>0 && !spherical ? 1 : 0);
-    assert.equal(builder._dvRender.getFloat32(244,true), Math.fround(.34));
+    assert.equal(builder._dvRender.getFloat32(156,true),0);
+    assert.equal(builder._dvRender.getFloat32(204,true),0);
   }
   const shader = await readFile(new URL('../shaders/cloudsRender.wgsl', import.meta.url), 'utf8');
-  const volumeBranch = shader.slice(shader.indexOf('if (R.fieldLighting > 0.5)'), shader.indexOf('if (cloudA < 0.003)'));
+  const volumeBranch = shader.slice(shader.indexOf('if (softVolumeFinish)'), shader.indexOf('if (cloudA < 0.003)'));
   assert.match(volumeBranch, /volumeTint = mix\(userShadowTint, userLightTint/);
   assert.match(volumeBranch, /clamp\(R\.saturationBoost, 0\.0, 2\.20\)/);
   assert.doesNotMatch(volumeBranch, /gradLenCached|bodyShadow|sunEdgeSilver/);
+});
+
+test('aircraft state uses view padding without changing the cloud field or view-extra layout',()=>{
+  const b=fixture();b._abView=new ArrayBuffer(128);b._dvView=new DataView(b._abView);
+  b.setViewFromCamera({aircraft:{enabled:true,bank:.25,pitch:-.125},viewExtraA:3,viewExtraB:4,viewExtraC:5});
+  assert.equal(b._dvView.getFloat32(12,true),1);
+  assert.equal(b._dvView.getFloat32(28,true),.25);
+  assert.equal(b._dvView.getFloat32(44,true),-.125);
+  assert.equal(b._dvView.getFloat32(100,true),3);
+  assert.equal(b._dvView.getFloat32(104,true),4);
+  assert.equal(b._dvView.getFloat32(108,true),5);
+  b.setViewFromCamera();
+  for(const offset of [12,28,44])assert.equal(b._dvView.getFloat32(offset,true),0);
 });
 
 test('independent stage compilation deduplicates and retries failed sync fallback', async () => {

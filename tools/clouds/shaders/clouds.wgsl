@@ -95,7 +95,8 @@ fn storeRoundedSample(pix: vec2<i32>, color: vec4<f32>, farHistory: f32) {
   }
 }
 
-// Rounded forms read shared fields; no nested noise or secondary sun marches.
+// Rounded forms read shared fields; optional edge detail needs just two tiled
+// noise reads near the visible surface, without a secondary sun march.
 // Stable world-space density and fixed pixel jitter also work with sparse TAA.
 fn cloudRayJitter(pix:vec2<u32>) -> f32 {
   // Integer avalanche avoids the diagonal correlation of scalar sin/fract
@@ -106,6 +107,34 @@ fn cloudRayJitter(pix:vec2<u32>) -> f32 {
   h=(h ^ (h >> 15u))*0x846ca68bu;
   h=h ^ (h >> 16u);
   return f32(h >> 8u)*(1.0/16777216.0);
+}
+
+fn turbulentCloudDensity(p:vec3<f32>, density:vec4<f32>, footprint:f32) -> f32 {
+  let base = max(density.r, 0.0);
+  let amount = clamp(FIELD.morphology.w, 0.0, 1.5);
+  // Empty space and dense interiors retain the cheap cached path. Subtractive
+  // erosion cannot fill empty sky, expand a mask, or expose an unlit outer halo.
+  let shoulder = 1.0 - smoothstep(0.04, 0.38, density.a);
+  let puff = max(TUNE.puffScale, 0.75);
+  let resolved = 1.0 - smoothstep(0.07, 0.32, footprint / puff);
+  let strength = amount * shoulder * resolved;
+  if (base < 0.0001 || strength < 0.001) { return base; }
+  let dimensions = vec3<f32>(textureDimensions(detail3D));
+  let scale = 0.90 / puff;
+  let maxDimension = max(max(dimensions.x, dimensions.y), dimensions.z);
+  let maxLOD = f32(textureNumLevels(detail3D) - 1u);
+  let lod = clamp(log2(max(footprint * scale * maxDimension, 1.0)), 0.0, maxLOD);
+  let warpLOD = clamp(lod - 1.8, 0.0, maxLOD);
+  // Follow the existing independently advected detail domain. Smooth low-
+  // frequency distortion folds the fine noise into elongated turbulent wisps.
+  // No pixel hash, frame counter or new seed enters this material-space signal.
+  let q = (p + NTransform.detailOffsetWorld) * scale;
+  let bend = textureSampleLevel(detail3D, sampDetail, q * 0.28, warpLOD).gbr - 0.5;
+  let fineUV = q * vec3<f32>(0.65, 1.35, 1.0) + bend * 0.85;
+  let fine = textureSampleLevel(detail3D, sampDetail, fineUV, min(lod + 0.45, maxLOD)).rgb;
+  let turbulence = dot(fine, vec3<f32>(0.55, 0.30, 0.15));
+  let erosion = smoothstep(0.32, 0.70, turbulence);
+  return base * max(0.08, 1.0 - strength * erosion * 0.85);
 }
 @compute @workgroup_size(8, 8, 1)
 fn computeCloudBox(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -122,14 +151,22 @@ fn computeCloudBox(@builtin(global_invocation_id) gid: vec3<u32>) {
   let ndc = uv * 2.0 - 1.0;
   let tanY = tan(V.fovY * 0.5);
   let rd = normalize(V.fwd + V.right * (ndc.x * V.aspect * tanY) - V.up * (ndc.y * tanY));
-  let hit = intersectAABB_robust(ro, rd, FIELD.gridMin.xyz, FIELD.gridMin.xyz + FIELD.gridSize.xyz);
+  let aircraft = sceneAircraft(ro,rd,V.aircraftPosition,V.right,V.up,V.fwd,V._v0,V._v1,V._v2,V.aircraftYaw,normalize(L.sunDir));
+  let rayMin=select(FIELD.gridMin.xyz,B.center-B.half,FIELD.dimensions.w>0u);
+  let rayMax=select(FIELD.gridMin.xyz+FIELD.gridSize.xyz,B.center+B.half,FIELD.dimensions.w>0u);
+  var hit = intersectAABB_robust(ro, rd, rayMin,rayMax);
   let begin = max(hit.x, 0.0);
+  if(aircraft.distance<1000000.0 && (hit.y<=begin || aircraft.distance<=begin)){
+    storeRoundedSample(pix,vec4<f32>(aircraft.color,1.0),0.0);return;
+  }
+  hit.y=min(hit.y,aircraft.distance);
   if (hit.y <= begin) { storeRoundedSample(pix, vec4<f32>(0.0), 0.0); return; }
   let spacing = FIELD.gridSize.xyz / vec3<f32>(FIELD.dimensions.xyz);
   let voxelStep = 1.0 / max(max(abs(rd.x) / spacing.x, abs(rd.y) / spacing.y), abs(rd.z) / spacing.z);
   let budget = max(TUNE.maxSteps, 1);
   // Cover the entire segment without thin-sheet thickBox/vertical step boosts.
-  let step = max(max(voxelStep * 0.65, TUNE.minStep), (hit.y - begin) / f32(budget));
+  let baseStep=max(voxelStep * 0.65, TUNE.minStep);
+  var step = select(max(baseStep,(hit.y - begin) / f32(budget)),baseStep,FIELD.dimensions.w>0u);
   let jitter = cloudRayJitter(vec2<u32>(pix));
   var t = begin + step * jitter * clamp(TUNE.phaseJitter, 0.0, 1.0);
   var transmittance = 1.0;
@@ -138,13 +175,38 @@ fn computeCloudBox(@builtin(global_invocation_id) gid: vec3<u32>) {
   let phase = saturate(dot(rd, sun) * 0.5 + 0.5);
   for (var i = 0; i < budget; i++) {
     if (t >= hit.y || transmittance < 0.008) { break; }
+    let pixelFootprint = t * (2.0 * tanY) / f32(frame.fullHeight);
+    if(FIELD.dimensions.w>0u){
+      // Growing horizon steps are safe only in empty space. Sampling cloud
+      // lighting with them (several world units per sample) amplified phase
+      // jitter into grain even though the tiled density field stayed detailed.
+      step=max(baseStep,pixelFootprint*0.65);
+      let nearDensity=textureSampleLevel(cloudDensityField,cloudFieldSampler,cloudFieldUV(ro+rd*t),0.0).r;
+      if(nearDensity<0.00001){
+        var skip=min(max(step,(t-begin)*0.045),hit.y-t);
+        var skipped=false;
+        for(var attempt=0;attempt<3;attempt++){
+          if(skip<=step*1.25){break;}
+          // The full mip chain stores maxima in B, so a thin cloud cannot
+          // disappear into an averaged empty-space test. Include interpolation
+          // support around the entire proposed interval, not just its center.
+          let lod=clamp(ceil(log2(max(skip/voxelStep+2.0,1.0))),0.0,f32(textureNumLevels(cloudDensityField)-1u));
+          let bound=textureSampleLevel(cloudDensityField,cloudFieldSampler,cloudFieldUV(ro+rd*(t+skip*0.5)),lod).b;
+          if(bound<0.00001){t+=skip;skipped=true;break;}
+          skip*=0.25;
+        }
+        if(skipped){continue;}
+      }
+    }
     let p = ro + rd * t;
     let fieldUV = cloudFieldUV(p);
-    let density = textureSampleLevel(cloudDensityField, cloudFieldSampler, fieldUV, 0.0);
     let distance = min(step, hit.y - t);
-    let alpha = 1.0 - exp(-max(density.r, 0.0) * distance * VIEW_EXTINCTION_SCALE);
+    let fieldLod=clamp(log2(max(max(pixelFootprint,step*0.35)/min(min(spacing.x,spacing.y),spacing.z),1.0)),0.0,3.0);
+    let density = textureSampleLevel(cloudDensityField, cloudFieldSampler, fieldUV, fieldLod);
+    let fineDensity = turbulentCloudDensity(p, density, max(step * 0.65, pixelFootprint));
+    let alpha = 1.0 - exp(-fineDensity * distance * VIEW_EXTINCTION_SCALE);
     if (alpha > 0.00001) {
-      let lighting = textureSampleLevel(cloudLightField, cloudFieldSampler, fieldUV, 0.0);
+      let lighting = textureSampleLevel(cloudLightField, cloudFieldSampler, fieldUV, fieldLod);
       let diffuse = clamp(lighting.r, 0.0, 1.0);
       let visibility = clamp(lighting.b, 0.0, 1.0);
       let ao = mix_f(1.0, lighting.a, saturate(TUNE.aoStrength));
@@ -157,7 +219,9 @@ fn computeCloudBox(@builtin(global_invocation_id) gid: vec3<u32>) {
       // a secondary raymarch, including grades with very dark shadow tints.
       let bounce = (0.035 + asperitasFill * 0.045 + 0.18 * sqrt(sqrt(visibility))) * (0.25 + 0.75 * upper) * ao;
       let scatter = visibility * (0.10 + 0.30 * pow(phase, 4.0));
-      let silver = pow(phase, 8.0) * visibility * pow(1.0 - diffuse, 2.0) * max(C.silverIntensity, 0.0) * 0.18;
+      let silverPhase=pow(phase,max(6.0,C.silverExponent*8.0));
+      let exposedEdge=1.0-smoothstep(0.02,0.20,density.w);
+      let silver = silverPhase * pow(visibility,0.50) * pow(1.0 - diffuse, 0.90) * exposedEdge * max(C.silverIntensity, 0.0) * 1.4;
       let sunColor = max(C.frontLightColor, vec3<f32>(0.0));
       let skyColor = max(C.shadowLightColor, vec3<f32>(0.0));
       let color = sunColor * (direct + scatter + bounce) + skyColor * ambient + max(C.sunColor, vec3<f32>(0.0)) * silver;
@@ -173,6 +237,9 @@ fn computeCloudBox(@builtin(global_invocation_id) gid: vec3<u32>) {
   let edgeFade = smoothstep(0.0, max(TUNE.minOutputAlpha, 0.00001), rawAlpha);
   let a = rawAlpha * edgeFade;
   var result = vec4<f32>(radiance * edgeFade, a);
+  // Hull rays encode their front transmission in alpha (.5..1); the preview
+  // separates metal from cloud before grading and fogging the two components.
+  if(aircraft.distance<1000000.0){result=vec4<f32>(radiance+transmittance*aircraft.color,.5+.5*transmittance);}
   if (CLOUD_WRITE_RGB == 0u) {
     if (opt.outputChannel == 0u) { result = vec4<f32>(a,0.0,0.0,1.0); }
     else if (opt.outputChannel == 1u) { result = vec4<f32>(0.0,a,0.0,1.0); }

@@ -16,6 +16,7 @@ import {
   disposePlanetCloudLayer,
 } from '../clouds/planetClouds.js';
 import {PLANET_CLOUD_STYLES,planetCloudSimStylePatch} from '../clouds/planetCloudSimStyles.js';
+import {REFERENCE_LOOK_PRESETS,SCULPTED_LOOK_IDS} from '../clouds/cloudLookPresets.js';
 import {cloudColorStrength,cloudColorHex,cloudColorFromHex,scaleCloudColor} from '../clouds/planetCloudColors.js';
 
 const DEFAULT_SEGMENTS = 1000;
@@ -596,6 +597,7 @@ export const CLOUD_LIGHTING_COLOR_PRESETS = Object.freeze({
     godRayLength: 1.00,
     godRayFalloff: 1.42,
   },
+  ...REFERENCE_LOOK_PRESETS,
 });
 
 export const CLOUD_COLOR_PRESET_LABELS = Object.freeze({
@@ -615,6 +617,7 @@ export const CLOUD_COLOR_PRESET_LABELS = Object.freeze({
   13: '13 Silver Daylight',
   14: '14 Soft Overcast',
   15: '15 RGB Spectrum',
+  ...Object.fromEntries(Object.entries(REFERENCE_LOOK_PRESETS).map(([id,preset])=>[id,preset.label])),
 });
 
 
@@ -1822,7 +1825,8 @@ function cloudColorPresetToConfigPatch(presetId) {
   ]);
   const volumeShadowTint = colorVec3FromPreset(preset.volumeShadowTint, shadowTint);
 
-  const tuningPatch = {};
+  const tuningPatch = {lightingFinish:0};
+  if(REFERENCE_LOOK_PRESETS[id]) tuningPatch.lightingFinish=SCULPTED_LOOK_IDS.includes(Number(id))?2:1;
   if (Number.isFinite(Number(preset.directLightBlend))) tuningPatch.directLightBlend = Number(preset.directLightBlend);
   if (Number.isFinite(Number(preset.directLightBoost))) tuningPatch.directLightBoost = Number(preset.directLightBoost);
 
@@ -1832,6 +1836,7 @@ function cloudColorPresetToConfigPatch(presetId) {
       frontLightColor: mulVec3Local(baseSun, sunTint, frontTint),
       shadowLightColor: volumeShadowTint,
       sunBloom: preset.sunBloom ?? 0.18,
+      silverIntensity: REFERENCE_LOOK_PRESETS[id] ? Math.min(3,0.8+preset.styleRimStrength) : 1.72,
     },
     tuning: tuningPatch,
     style: {
@@ -2501,6 +2506,19 @@ function createTweakPanel(options = {}) {
     return control;
   }
 
+  function applyCloudColorLook(id) {
+    const patch=cloudColorPresetToConfigPatch(id);
+    updateEditorValue(clouds, 'Cloud lighting', cfg=>{
+      cfg.params=mergePlain(cfg.params||{},patch.params);
+      cfg.tuning=mergePlain(cfg.tuning||{},patch.tuning);
+      cfg.style=mergePlain(cfg.style||{},patch.style);
+    },{forceCloudLiveApply:true});
+    syncCloudLookInputs();
+  }
+  addCloudControl('style.colorPresetId','Color / lighting','select','any',{
+    options:Object.keys(CLOUD_LIGHTING_COLOR_PRESETS).map(id=>({value:id,label:CLOUD_COLOR_PRESET_LABELS[id]||id}))
+  }).input.addEventListener('change',event=>applyCloudColorLook(event.target.value));
+
   addCloudControl('render.opacity', 'Ray opacity', 'number', '0.01', {min:0,max:1});
   addCloudControl('surface.surfaceOpacity', 'Mesh opacity', 'number', '0.01', {min:0,max:1});
 
@@ -3128,8 +3146,9 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
   }
 
   const colorPresetSelect = makeCompactInput({
-    label: 'color/lighting preset',
+    label: 'Color / lighting',
     value: getPathValue(clouds.value, 'style.colorPresetId', 3),
+    onChange: id=>applyCloudColorLook(id),
     options: Object.keys(CLOUD_LIGHTING_COLOR_PRESETS).map((key) => ({
       value: key,
       label: CLOUD_COLOR_PRESET_LABELS[key] || `Preset ${key}`,
@@ -3144,7 +3163,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
       cfg.style = mergePlain(cfg.style || {}, patch.style);
     }, { forceCloudLiveApply: true });
     syncCloudLookInputs();
-    status.textContent = `Cloud lighting/color preset ${presetId} updated in JSON. Click Rebake JSON to render it with the same seed.`;
+    status.textContent = 'Cloud lighting applied. Cloud shape and planet terrain are unchanged.';
   });
   const syncCloudLookButton = makeSmallButton('Sync look controls', () => {
     syncCloudLookInputs();

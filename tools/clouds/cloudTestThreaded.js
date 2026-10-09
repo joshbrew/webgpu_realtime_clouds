@@ -7,9 +7,12 @@ import html from "./clouds.html";
 import wrkr from "./cloudTest.worker.js";
 import { CloudTimingReport, logCloudTimingReport } from "./cloudTiming.js";
 import { ANVIL_FORM, ANVIL_PRESET_VALUES } from './weather/cloudAnvilLook.js';
-import { CLOUD_FIELD_QUALITIES, normalizeCloudFieldQuality } from './cloudFieldQuality.js';
+import { CLOUD_FIELD_QUALITIES, normalizeCloudFieldQuality, supportsCloudFieldQuality } from './cloudFieldQuality.js';
+import { REFERENCE_LOOK_PRESETS } from './cloudLookPresets.js';
+import { installCloudNavigation } from './cloudNavigation.js';
 
 let worker;
+let cloudFieldLimits = null;
 
 // Constants (mirror worker). Mobile keeps the same shader path but lowers
 // startup texture/canvas pressure so first load does not stall the browser.
@@ -129,6 +132,8 @@ const preview = {
   layerPreset: "rain_shelf",
   volumeShape: "box",
   gradeStyle: 3,
+  cloudShading: "auto",
+  cloudTurbulence: .75,
   sunTint: [1.0, 1.0, 1.0],
   transmissiveLightTint: [0.94, 1.00, 1.08],
   frontLightTint: [1.18, 1.24, 1.32],
@@ -1301,17 +1306,23 @@ function createCloudQuickDock() {
       </div>
       <label class="cloud-quick-field"><span>Layer preset</span><select id="quick-layer-preset"></select></label>
       <label class="cloud-quick-field"><span>Color grade</span><select id="quick-grade"></select></label>
+      <label class="cloud-quick-field"><span>Lighting finish</span><select id="quick-cloud-shading"></select></label>
+      <label class="cloud-quick-field"><span>Cloud turbulence</span><select id="quick-cloud-turbulence"></select></label>
       <label class="cloud-quick-field"><span>Render divider <b id="quick-render-scale-label">4</b></span><input id="quick-render-scale" type="range" min="1" max="8" step="1" value="4"></label>
-      <label class="cloud-quick-field"><span>Fluffy cloud detail</span><select id="quick-field-quality" title="Independent 3D shape and lighting fidelity, not screen resolution. High costs about 3.4× volume work (54 MiB); Screenshot costs 8× (128 MiB). Rain Shelf and planets are unaffected."></select></label>
-      <label class="cloud-quick-field"><span>Sky span (X/Z)</span><input id="quick-sky-span" type="number" min="4" max="512" step="6" value="36" title="Full horizontal box width in world units. Sets X and Z together without changing height, puff size or wind. Advanced Cloud Box controls allow separate X/Z extents. Wider boxes spread the same voxels over more space; raise cloud detail for close views."></label>
+      <label class="cloud-quick-field"><span>Fluffy cloud detail</span><select id="quick-field-quality" title="Independent 3D shape and lighting fidelity, not screen resolution. Screenshot: 256×128×256 / 146 MiB / 8× voxels. Capture: 384×192×384 / 494 MiB / 27× voxels. Reference: 512×256×512 / 1.14 GiB / 64× voxels. Voxel counts are relative to Balanced, not frame-time multipliers. Pause animation for captures. Rain Shelf and planets are unaffected."></select></label>
+      <small id="quick-render-path-hint" style="grid-column:1/-1;line-height:1.4;opacity:.75"></small>
+      <label class="cloud-quick-field"><span>Sky span (X/Z)</span><input id="quick-sky-span" type="number" min="4" max="512" step="6" value="36" title="Full horizontal box width in world units. Sets X and Z together without changing height, puff size or wind. Advanced Cloud Box controls allow separate X/Z extents. Wide skies repeat a bounded cloud tile to preserve detail. Fluffy cloud detail controls the tile resolution."></label>
       <button type="button" id="quick-render-button">Render</button>
       <button type="button" id="quick-rebake-button">Rebake</button>
+      <div id="quick-playback-slot" style="grid-column:1/-1"></div>
     </div>
   `;
 
-  const anchor = $("p-preview") || $("p-cloudParams") || $("p-weather") || document.body.firstElementChild;
+  const anchor = $("pipeline-tools") || $("p-preview") || $("p-cloudParams") || $("p-weather") || document.body.firstElementChild;
   if (anchor && anchor.parentElement) anchor.parentElement.insertBefore(dock, anchor);
   else document.body.prepend(dock);
+  const playback=$("reproj-anim-toggle")?.closest('.inline');
+  if(playback)dock.querySelector('#quick-playback-slot').appendChild(playback);
 }
 
 function cloneOptions(fromId, toId) {
@@ -1322,7 +1333,7 @@ function cloneOptions(fromId, toId) {
   const targetOptions = Array.from(target.options || []);
   const sameOptions =
     sourceOptions.length === targetOptions.length &&
-    sourceOptions.every((option, index) => targetOptions[index]?.value === option.value && targetOptions[index]?.textContent === option.textContent);
+    sourceOptions.every((option, index) => targetOptions[index]?.value === option.value && targetOptions[index]?.textContent === option.textContent && targetOptions[index]?.disabled === option.disabled);
   if (sameOptions) return;
   const current = target.value || source.value;
   target.innerHTML = "";
@@ -1347,10 +1358,22 @@ function dispatchInput(id) {
 }
 
 function populateCloudQuickDock() {
+  if (cloudFieldLimits) for (const option of $("v-field-quality")?.options || []) {
+    option.disabled = !supportsCloudFieldQuality(option.value, cloudFieldLimits);
+  }
   cloneOptions("v-layer-preset", "quick-layer-preset");
   cloneOptions("v-grade", "quick-grade");
+  cloneOptions("v-cloud-shading", "quick-cloud-shading");
+  setFieldValue("quick-cloud-shading", $("v-cloud-shading")?.value || preview.cloudShading || "auto");
+  cloneOptions("v-cloud-turbulence", "quick-cloud-turbulence");
+  setFieldValue("quick-cloud-turbulence", $("v-cloud-turbulence")?.value ?? preview.cloudTurbulence ?? .75);
   cloneOptions("v-field-quality", "quick-field-quality");
   setFieldValue("quick-field-quality", $("v-field-quality")?.value || preview.fieldQuality || "balanced");
+  const fluffy = !!$('weather-cycle-enabled')?.checked || Number($('t-formType')?.value || 0)>0;
+  for(const id of ['v-field-quality','quick-field-quality','v-cloud-turbulence','quick-cloud-turbulence']) if($(id)) $(id).disabled=!fluffy;
+  if($('quick-render-path-hint')) $('quick-render-path-hint').textContent=fluffy
+    ? 'Fluffy volume: detail and turbulence shape the clouds. Lighting finish changes their appearance; Sculpted works here too.'
+    : 'Rain Shelf: procedural sculpted clouds. Fluffy volume detail and turbulence do not apply. Choose Sculpted lighting for the illustrated references.';
   if (document.activeElement !== $("quick-sky-span")) {
     const halfX = Number($("v-box-hx")?.value || preview.box?.half?.[0] || 18);
     const halfZ = Number($("v-box-hz")?.value || preview.box?.half?.[2] || 18);
@@ -1373,8 +1396,9 @@ function updateCloudQuickDockState() {
   if (status && status.dataset.manual !== "true") {
     const layer = $("v-layer-preset")?.selectedOptions?.[0]?.textContent || "Custom";
     const grade = $("v-grade")?.selectedOptions?.[0]?.textContent || "Grade";
+    const shading = $("v-cloud-shading")?.selectedOptions?.[0]?.textContent || "Auto shading";
     const fps = $("fpsDisplay")?.textContent || "-";
-    status.textContent = `${layer} | ${grade} | ${fps}`;
+    status.textContent = `${layer} | ${grade} | ${shading} | ${fps}`;
   }
   populateCloudQuickDock();
 }
@@ -1409,6 +1433,16 @@ function wireCloudQuickDock() {
     $("v-grade")?.dispatchEvent(new Event("change", { bubbles: true }));
     updateCloudQuickDockState();
   });
+  $("quick-cloud-shading")?.addEventListener("change", () => {
+    setFieldValue("v-cloud-shading", $("quick-cloud-shading").value);
+    $("v-cloud-shading")?.dispatchEvent(new Event("change", { bubbles: true }));
+    updateCloudQuickDockState();
+  });
+  $("quick-cloud-turbulence")?.addEventListener("change", () => {
+    setFieldValue("v-cloud-turbulence", $("quick-cloud-turbulence").value);
+    $("v-cloud-turbulence")?.dispatchEvent(new Event("change", { bubbles: true }));
+    updateCloudQuickDockState();
+  });
   $("quick-render-scale")?.addEventListener("input", () => {
     const value = $("quick-render-scale").value;
     setFieldValue("v-render-scale-divider", value);
@@ -1434,7 +1468,7 @@ function wireCloudQuickDock() {
   $("quick-sky-span")?.addEventListener("input", updateSkySpan);
   $("quick-sky-span")?.addEventListener("change", updateSkySpan);
   $("quick-rebake-button")?.addEventListener("click", () => $("rebake-all")?.click());
-  ["pass", "v-layer-preset", "v-grade", "v-render-scale-divider", "v-field-quality", "v-box-hx", "v-box-hz"].forEach((id) => {
+  ["pass", "v-layer-preset", "v-grade", "v-cloud-shading", "v-cloud-turbulence", "v-render-scale-divider", "v-field-quality", "v-box-hx", "v-box-hz"].forEach((id) => {
     $(id)?.addEventListener("change", updateCloudQuickDockState);
     $(id)?.addEventListener("input", updateCloudQuickDockState);
   });
@@ -2142,8 +2176,9 @@ function organizeSidebarControlGroups() {
   appendControlGroup(previewPanel, "Scene", [
     { label: "Preset", columns: 1, fields: [{ id: "v-layer-preset", label: "Layer" }] },
     { label: "Grade", columns: 1, fields: [{ id: "v-grade", label: "Color" }] },
+    { label: "Shading", columns: 1, fields: [{ id: "v-cloud-shading", label: "Light / style" }] },
     { label: "Render", columns: 2, fields: [{ id: "v-render-scale-divider", label: "Raymarch" }, { id: "v-temporal-cell-rate", label: "Temporal" }] },
-    { label: "Volume detail", columns: 1, fields: [{ id: "v-field-quality", label: "Fluffy clouds" }] },
+    { label: "Volume detail", columns: 1, fields: [{ id: "v-field-quality", label: "Fluffy clouds" }, { id: "v-cloud-turbulence", label: "Turbulence" }] },
   ]);
   appendControlGroup(previewPanel, "Camera", [
     { label: "Cam", columns: 3, fields: [{ id: "v-cx", label: "X" }, { id: "v-cy", label: "Y" }, { id: "v-cz", label: "Z" }] },
@@ -2704,23 +2739,23 @@ function injectPreviewLookControls() {
         <span>Cloud Layer</span>
         <select id="v-layer-preset" title="Applies a coordinated cloud-structure preset across weather, shape/detail noise, transforms, density, and vertical/anvil tuning. Presets rebake the procedural textures.">
           <option value="custom">Custom / Manual</option>
-          <option value="fair_cumulus">Fair Cumulus</option>
-          <option value="broken_cumulus">Broken Cumulus</option>
+          <option value="fair_cumulus">Fair Cumulus · Soft volume</option>
+          <option value="broken_cumulus">Broken Cumulus · Soft volume</option>
           <option value="stratus_sheet">Stratus Sheet</option>
-          <option value="towering_cu">Towering Cu</option>
-          <option value="cumulonimbus_anvil">Cumulonimbus Anvil</option>
+          <option value="towering_cu">Towering Cu · Soft volume</option>
+          <option value="cumulonimbus_anvil">Cumulonimbus Anvil · Soft volume</option>
           <option value="rotating_donut">Rotating Cloud Donut</option>
           <option value="rotating_gallery">Arbitrary Volume Gallery</option>
           <option value="wispy_high">Wispy High</option>
-          <option value="cirrus">Feather Cirrus</option>
+          <option value="cirrus">Feather Cirrus · Soft volume</option>
           <option value="kelvin_helmholtz">Kelvin–Helmholtz (Experimental)</option>
           <option value="asperitas">Asperitas</option>
-          <option value="rain_shelf">Rain Shelf</option>
+          <option value="rain_shelf">Rain Shelf · Sculpted</option>
         </select>
       </label>
       <label style="display:flex; flex-direction:column; gap:6px;">
         <span>Color Grade</span>
-        <select id="v-grade">
+        <select id="v-grade" title="Color and lighting only. Selecting a grade also enables the selected style override for evolving weather.">
           <option value="0">Default Gray</option>
           <option value="1">Sunset Punch</option>
           <option value="2">Dusky Purple</option>
@@ -2737,17 +2772,32 @@ function injectPreviewLookControls() {
           <option value="13">Silver Daylight</option>
           <option value="14">Soft Overcast</option>
           <option value="15">RGB Spectrum</option>
+          <optgroup label="Fluffy lighting · Natural / Soft">
+            ${[16,17,18,22,24,25].map(key=>`<option value="${key}">${REFERENCE_LOOK_PRESETS[key].label} · Fluffy</option>`).join('')}
+          </optgroup>
+          <optgroup label="Sculpted lighting · Cartoon / Illustrated">
+            ${[19,20,21,23,26,27,28].map(key=>`<option value="${key}">${REFERENCE_LOOK_PRESETS[key].label}</option>`).join('')}
+          </optgroup>
         </select>
       </label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Raymarch Resolution Divider / Full-res Output</span><input id="v-render-scale-divider" type="number" step="1" min="1" max="8" title="Controls the internal cloud raymarch resolution. The final canvas remains full resolution and reconstructs from this buffer. 1 = full-resolution raymarch, 4 = default performance mode."></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Fluffy Cloud Detail</span><select id="v-field-quality" title="Density and lighting cache resolution, independent of render divider. High: 192×96×192 / 54 MiB / ~3.4× volume work. Screenshot: 256×128×256 / 128 MiB / 8× volume work. Pause animation for stills; use render divider 1 and temporal interleave Off for clean screenshots.">${Object.entries(CLOUD_FIELD_QUALITIES).map(([key,value])=>`<option value="${key}">${value.label}</option>`).join('')}</select></label>
+      <label style="display:flex; flex-direction:column; gap:6px;">
+        <span>Cloud shading</span>
+        <select id="v-cloud-shading" title="Lighting / finishing only, independent of cloud shape and color. Both finishes work on Rain Shelf, puffy clouds and evolving weather without rebaking.">
+          <option value="auto">Auto · color grade lighting</option>
+          <option value="soft">Soft volume · Anvil / Weather</option>
+          <option value="sculpted">Sculpted · Rain Shelf</option>
+        </select>
+      </label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Fluffy Cloud Detail</span><select id="v-field-quality" title="Density and lighting cache resolution, independent of render divider. Screenshot: 256×128×256 / 146 MiB / 8× voxels. Capture: 384×192×384 / 494 MiB / 27× voxels. Reference: 512×256×512 / 1.14 GiB / 64× voxels. Voxel counts are relative to Balanced, not frame-time multipliers. Pause animation for stills; use render divider 1 and temporal interleave Off for clean screenshots.">${Object.entries(CLOUD_FIELD_QUALITIES).map(([key,value])=>`<option value="${key}">${value.label}</option>`).join('')}</select></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud turbulence</span><select id="v-cloud-turbulence" title="Fine moving wisps and erosion on puffy clouds and weather layers. Keeps the broad cloud form and existing lighting; works with either shading style and smaller detail grids. Standalone Rain Shelf and planets retain their own turbulence."><option value="0">Off · smooth volume</option><option value="0.4">Gentle wisps</option><option value="0.75">Natural turbulence</option><option value="1.25">Wind-torn wisps</option></select></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Temporal Interleave</span><select id="v-temporal-cell-rate" title="Compact history-backed screen interleave. After the first history frame, only a rotated 8x8 scattered subset is dispatched as cloud rays; previous history is copied forward for the rest."><option value="1">Off / full quality</option><option value="2">1 / 2 rays per frame</option><option value="4">1 / 4 rays per frame</option><option value="8">1 / 8 rays per frame</option><option value="16">1 / 16 rays per frame</option><option value="32">1 / 32 rays per frame</option><option value="64">1 / 64 rays per frame</option></select></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Floor</span><input id="v-alpha-floor" type="number" step="0.005" min="0" max="0.24" title="Composite alpha floor. Faint cloud alpha below this threshold fades out before sky compositing, reducing glow haze without running the removed cream resolve."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Density</span><input id="v-fog-density" type="number" step="0.01" min="0" max="2" title="Atmospheric depth fog strength. The active color grade controls the fog color family."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Horizon</span><input id="v-fog-horizon" type="number" step="0.01" min="0" max="2" title="How strongly fog gathers around the horizon and distant cloud silhouettes."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Sun</span><input id="v-fog-sun" type="number" step="0.01" min="0" max="2" title="Amount of sun-washed color injected into the atmospheric fog by the active color grade."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Min Output Alpha</span><input id="t-minOutputAlpha" type="number" step="0.005" min="0" max="0.45" title="Compute-side alpha cutoff. Pixels below this alpha are written transparent before temporal history so low-opacity speckle cannot accumulate."></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Form</span><select id="t-formType"><option value="0">Layer / Rain Shelf</option><option value="1">Rounded Cumulus</option><option value="2">Towering Cumulus</option><option value="3">Thunderhead / Anvil</option><option value="4">Mixed Weather</option><option value="5">Feather Cirrus</option><option value="6">Kelvin–Helmholtz Waves</option><option value="7">Asperitas</option></select></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Form</span><select id="t-formType"><option value="0">Layer / Rain Shelf · Sculpted</option><option value="1">Rounded Cumulus</option><option value="2">Towering Cumulus</option><option value="3">Thunderhead / Anvil</option><option value="4">Mixed Weather</option><option value="5">Feather Cirrus · Soft volume</option><option value="6">Kelvin–Helmholtz Waves</option><option value="7">Asperitas</option></select></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Puff Size</span><input id="t-puffScale" type="number" value="3.6" step="0.1" min="0.75" max="12" title="World-space size of rounded cloud cells. Layer mode keeps its original noise structure."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Ambient Occlusion</span><input id="t-aoStrength" type="number" value="0" step="0.05" min="0" max="1" title="Rounded forms only: cached neighboring density probes darken pockets between puffs. Layer mode retains its original lighting."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Height Variation</span><input id="t-towerHeightVariation" type="number" value="0.35" step="0.05" min="0" max="0.9" title="Varies cloud-cell heights so the tops do not form a flat ceiling."></label>
@@ -2803,6 +2853,7 @@ function injectPreviewLookControls() {
 
 
 const GRADE_PRESETS = {
+  ...REFERENCE_LOOK_PRESETS,
   0: {
     sky: [0.56, 0.72, 1.02],
     sunBloom: 0.18,
@@ -3250,6 +3301,8 @@ function applyCloudLayerPresetValues(key) {
   // Every preset owns its form and volume height. Returning to Rain Shelf resets
   // these explicitly, so a previously selected thunderhead cannot leak into it.
   const form = preset.form || { type: 0, halfY: 0.3, puffScale: 3.6, ao: 0, heightVariation: 0.35 };
+  preview.cloudShading = form.type > 0 ? 'soft' : 'sculpted';
+  setControlValue('v-cloud-shading', preview.cloudShading);
   preview.volumeShape = form.volumeShape || "box";
   // Fast independent rotations have no screen-space motion vectors. Stale
   // interleaved rays made diagonal bands across the shapes; refresh the small
@@ -3358,20 +3411,19 @@ async function applyCloudLayerPreset(key, render = true) {
     presetReady = true;
     await refreshDebugPreviews();
   } finally {
-    // Rounded examples should flow immediately, not wait for the separate
-    // reprojection button. Explicit Stop still pauses the current scene.
-    if ((wasAnimating || preset.form?.type > 0) && presetReady) {
+    // Settings preserve the user's playback choice.
+    if (wasAnimating && presetReady) {
       try {
         await rpc("setReproj", { reproj: getReprojPayload(), perf: null });
         await rpc("startLoop", {});
         animRunning = true;
         startVisualFpsTicker();
         const btn = $("reproj-anim-toggle");
-        if (btn) btn.textContent = "Stop Reproject Anim";
+        if (btn) btn.textContent = "Pause clouds";
       } catch (err) {
         console.warn("restart animation after preset failed", err);
         const btn = $("reproj-anim-toggle");
-        if (btn) btn.textContent = "Start Reproject Anim";
+        if (btn) btn.textContent = "Animate clouds";
       }
     }
     setBusy(false);
@@ -3381,6 +3433,9 @@ async function applyCloudLayerPreset(key, render = true) {
 function syncPreviewLookInputs() {
   setFieldValue("v-layer-preset", preview.layerPreset || "custom");
   setFieldValue("v-grade", preview.gradeStyle);
+  setFieldValue("v-cloud-shading", preview.cloudShading || "auto");
+  setFieldValue("v-cloud-turbulence", preview.cloudTurbulence ?? .75);
+  setFieldValue("v-exposure", preview.exposure);
   setFieldValue("v-render-scale-divider", preview.renderScaleDivider ?? 4);
   setFieldValue("v-field-quality", preview.fieldQuality || "balanced");
   setFieldValue("v-temporal-cell-rate", normalizeTemporalCellRate(preview.temporalCellRate ?? 1));
@@ -3443,7 +3498,7 @@ function syncPreviewLookInputs() {
 function applyGradePreset(style, syncInputs = true) {
   const preset = GRADE_PRESETS[style] || GRADE_PRESETS[0];
   preview.gradeStyle = style >>> 0;
-  preview.renderScaleDivider = normalizeRenderScaleDivider(preset.renderScaleDivider ?? preview.renderScaleDivider ?? 4);
+  preview.exposure = preset.exposure ?? preview.exposure;
   preview.sky = preset.sky.slice();
   preview.sun.bloom = preset.sunBloom;
   const lighting = lightingProfileForGrade(style);
@@ -3709,7 +3764,7 @@ function readCloudParams() {
     14: [0.96, 0.98, 1.02],
     15: [1.34, 0.10, 0.08],
   };
-  const baseSunColor = sunColorByGrade[preview.gradeStyle] || [1.0, 0.95, 0.87];
+  const baseSunColor = sunColorByGrade[preview.gradeStyle] || [1, 1, 1];
   const sunTint = preview.sunTint || [1.0, 1.0, 1.0];
   const lightingProfile = lightingProfileForGrade(preview.gradeStyle);
   const transmissiveTint = preview.transmissiveLightTint || lightingProfile.transmissiveLightTint;
@@ -3975,6 +4030,9 @@ function readPreview() {
   preview.box.uvScale = Math.max(0.001, num("v-box-uv", preview.box.uvScale ?? 1));
   preview.layerPreset = $("v-layer-preset")?.value || preview.layerPreset || "custom";
   preview.gradeStyle = u32("v-grade", preview.gradeStyle);
+  preview.cloudShading = $("v-cloud-shading")?.value || preview.cloudShading || "auto";
+  preview.cloudTurbulence = Math.min(1.5, Math.max(0, Number($("v-cloud-turbulence")?.value ?? preview.cloudTurbulence ?? .75) || 0));
+  preview.cycleStyleOverride = !!$("v-cycle-style")?.checked;
   preview.renderScaleDivider = normalizeRenderScaleDivider(u32("v-render-scale-divider", preview.renderScaleDivider ?? 4));
   preview.fieldQuality = normalizeCloudFieldQuality($("v-field-quality")?.value || preview.fieldQuality);
   preview.temporalCellRate = normalizeTemporalCellRate(u32("v-temporal-cell-rate", preview.temporalCellRate ?? 1));
@@ -4434,7 +4492,7 @@ async function runBakeJobsAndFrame(jobs) {
         animRunning = true;
         startVisualFpsTicker();
         const btn = $("reproj-anim-toggle");
-        if (btn) btn.textContent = "Stop Reproject Anim";
+        if (btn) btn.textContent = "Pause clouds";
       } catch (err) {
         console.warn("restart animation after bake failed", err);
       }
@@ -4606,8 +4664,18 @@ async function flushQueuedResize() {
 
   _resizeInFlight = true;
   try {
-    await rpc("resize", payload);
+    const resized=await rpc("resize", payload);
     _resizeLastSentSig = sig;
+    // Resizing clears a canvas even when cloud motion is paused. Re-present a
+    // fresh frame after startup without advancing wind or starting playback.
+    if(resized?.resized && initialBakePromise){
+      await initialBakePromise;
+      if(!animRunning){
+        const frame={preview:safeClone(preview),cloudParams:readCloudParams(),tuning:readTuning(),skipFinalDebug:true};
+        useFreshFullFrameReproj(frame);ensureCoarseInPayload(frame);
+        await runFrameLatest(frame);
+      }
+    }
   } finally {
     _resizeInFlight = false;
     if (_resizeQueuedPayload && _resizeQueuedSig !== _resizeLastSentSig) {
@@ -4681,6 +4749,7 @@ function weatherCycleConfig(enabled=$('weather-cycle-enabled')?.checked) {
 }
 async function changeWeatherCycle(enabled) {
   if(weatherCycleUIBusy) return;
+  const wasAnimating = animRunning;
   weatherCycleUIBusy=true;
   const toggle=$('weather-cycle-enabled'), status=$('weather-cycle-status');
   toggle.disabled=true;
@@ -4703,9 +4772,12 @@ async function changeWeatherCycle(enabled) {
       const payload={weatherParams:safeClone(weatherParams),billowParams:safeClone(billowParams),weatherBParams:safeClone(weatherBParams),shapeParams:safeClone(shapeParams),detailParams:safeClone(detailParams),preview:safeClone(preview),cloudParams:readCloudParams()};
       useFreshFullFrameReproj(payload); ensureCoarseInPayload(payload); payload.skipFinalDebug=true;
       await runFrameLatest(payload);
-      await rpc('setReproj',{reproj:getReprojPayload(),perf:null}); await rpc('startLoop',{});
-      animRunning=true; startVisualFpsTicker(); $('reproj-anim-toggle').textContent='Stop Reproject Anim';
-      status.textContent='Running · 6 cached weather maps';
+      if(wasAnimating) {
+        await rpc('setReproj',{reproj:getReprojPayload(),perf:null}); await rpc('startLoop',{});
+        animRunning=true; startVisualFpsTicker();
+      }
+      $('reproj-anim-toggle').textContent=animRunning?'Pause clouds':'Animate clouds';
+      status.textContent=animRunning?'Running · 6 cached weather maps':'Paused · ready to animate';
     } else if(!enabled && savedWeatherScene) {
       await rpc('stopLoop',{}); animRunning=false; stopVisualFpsTicker();
       await rpc('setWeatherCycle',{enabled:false});
@@ -4718,10 +4790,10 @@ async function changeWeatherCycle(enabled) {
       savedLayerCamera=scene.savedLayerCamera; savedDonutBounds=scene.savedDonutBounds;
       savedGalleryTemporal=scene.savedGalleryTemporal;
       readWeather(); readWeatherG(); readWeatherB(); readBlue(); readShape(); readShapeTransform(); readDetail(); readDetailTransform(); readPreview();
-      animRunning=scene.wasAnimating;
+      animRunning=wasAnimating;
       await runBakeJobsAndFrame([{bakeRpcType:'bakeAll',bakePayload:{weatherParams:safeClone(weatherParams),billowParams:safeClone(billowParams),weatherBParams:safeClone(weatherBParams),blueParams:safeClone(blueParams),shapeParams:safeClone(shapeParams),detailParams:safeClone(detailParams),tileTransforms:safeClone(tileTransforms)}}]);
       savedWeatherScene=null; toggle.checked=false; status.textContent='Off · previous scene restored';
-      $('reproj-anim-toggle').textContent=animRunning?'Stop Reproject Anim':'Start Reproject Anim';
+      $('reproj-anim-toggle').textContent=animRunning?'Pause clouds':'Animate clouds';
     } else if(enabled) {
       await rpc('setWeatherCycle',weatherCycleConfig(true));
     }
@@ -4737,6 +4809,13 @@ async function changeWeatherCycle(enabled) {
 
 // ---- wire UI & initialization ----
 async function wireUI() {
+  $('v-cycle-style')?.addEventListener('change', async () => {
+    readPreview();
+    if (queueLiveAnimationUpdate(0)) return;
+    try {
+      await runFrameLatest({preview:safeClone(preview),cloudParams:readCloudParams(),tuning:readTuning()});
+    } catch (error) { console.warn('weather style update failed',error); }
+  });
   $('weather-cycle-enabled')?.addEventListener('change',()=>changeWeatherCycle($('weather-cycle-enabled').checked));
   for(const id of ['weather-cycle-tod','weather-cycle-minutes','weather-cycle-day-minutes','weather-cycle-hour']) $(id)?.addEventListener('change',()=>{
     if($('weather-cycle-enabled')?.checked) changeWeatherCycle(true);
@@ -4758,6 +4837,15 @@ async function wireUI() {
     readPreview();
     const style = u32("v-grade", preview.gradeStyle);
     applyGradePreset(style, true);
+    const override = $('v-cycle-style');
+    if (override) override.checked = true;
+    preview.cycleStyleOverride = true;
+  });
+  $("v-cloud-shading")?.addEventListener("change", () => {
+    readPreview();
+    const override = $('v-cycle-style');
+    if (override) override.checked = true;
+    preview.cycleStyleOverride = true;
   });
 
   const reprojBtn = $("reproj-anim-toggle");
@@ -4765,7 +4853,7 @@ async function wireUI() {
 
   reprojEnabled = false;
   animRunning = false;
-  if (reprojBtn) reprojBtn.textContent = "Start Reproject Anim";
+  if (reprojBtn) reprojBtn.textContent = "Animate clouds";
   if (fpsSpan) fpsSpan.textContent = "-";
 
   reprojBtn?.addEventListener("click", async () => {
@@ -4804,7 +4892,7 @@ async function wireUI() {
         await rpc("startLoop", {});
         animRunning = true;
         startVisualFpsTicker();
-        if (reprojBtn) reprojBtn.textContent = "Stop Reproject Anim";
+        if (reprojBtn) reprojBtn.textContent = "Pause clouds";
       } catch (e) {
         console.warn("start animation failed", e);
         reprojEnabled = false;
@@ -4820,7 +4908,7 @@ async function wireUI() {
             perf: null,
           });
         } catch {}
-        if (reprojBtn) reprojBtn.textContent = "Start Reproject Anim";
+        if (reprojBtn) reprojBtn.textContent = "Animate clouds";
       } finally {
         setBusy(false);
       }
@@ -4845,7 +4933,7 @@ async function wireUI() {
       } catch (e) {
         console.warn("Failed unset reproj", e);
       }
-      if (reprojBtn) reprojBtn.textContent = "Start Reproject Anim";
+      if (reprojBtn) reprojBtn.textContent = "Animate clouds";
       const fpsEl = $("fpsDisplay");
       if (fpsEl) fpsEl.textContent = "-";
     }
@@ -5794,7 +5882,7 @@ async function init() {
       animRunning = false;
       stopVisualFpsTicker();
       const btn = $("reproj-anim-toggle");
-      if (btn) btn.textContent = "Start Reproject Anim";
+      if (btn) btn.textContent = "Animate clouds";
       const fpsEl = $("fpsDisplay");
       if (fpsEl) fpsEl.textContent = "-";
     }
@@ -5853,6 +5941,7 @@ async function init() {
   );
 
   workerInitTimingReport = initRes?.timingReport || null;
+  cloudFieldLimits = initRes?.cloudFieldLimits || null;
   cloudFirstLoadTiming.end(firstLoadStage, { worker: workerInitTimingReport });
 
   ENTRY_POINTS = Array.isArray(initRes?.entryPoints)
@@ -5907,6 +5996,27 @@ async function init() {
   populateCloudQuickDock();
   wireCloudQuickDock();
   updateCloudQuickDockState();
+  installCloudNavigation({
+    canvas: mainCanvas,
+    getCamera: () => ({
+      x:num('v-cx',preview.cam.x), y:num('v-cy',preview.cam.y), z:num('v-cz',preview.cam.z),
+      yawDeg:num('v-yaw',preview.cam.yawDeg), pitchDeg:num('v-pitch',preview.cam.pitchDeg), fovYDeg:num('v-fov',preview.cam.fovYDeg),
+    }),
+    getBox: () => preview.box,
+    setAircraft: aircraft => {preview.aircraft=aircraft;},
+    setCamera: cam => {
+      Object.assign(preview.cam,cam);
+      for(const [id,key] of [['v-cx','x'],['v-cy','y'],['v-cz','z'],['v-yaw','yawDeg'],['v-pitch','pitchDeg']]) {
+        $(id).value=String(cam[key]);
+      }
+      // Coalesce camera frames without rebaking density or changing the weather clock.
+      if(queueLiveAnimationUpdate(0))return;
+      const payload={preview:safeClone(preview),cloudParams:readCloudParams(),tuning:readTuning(),skipFinalDebug:true};
+      useFreshFullFrameReproj(payload);
+      ensureCoarseInPayload(payload);
+      runFrameLatest(payload).catch(error=>console.warn('camera navigation failed',error));
+    },
+  });
   refreshSliceLabel();
   setBusy(false);
   scheduleInitialBakeAndRender();

@@ -125,6 +125,8 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
 
   let rd_camera = normalize(vec3<f32>(ndc.x * V.aspect * tanY, -ndc.y * tanY, -1.0));
   let rayRd = normalize(basisRight * rd_camera.x + basisUp * rd_camera.y - camFwd * rd_camera.z);
+  let aircraft=sceneAircraft(rayRo,rayRd,V.aircraftPosition,V.right,V.up,V.fwd,V._v0,V._v1,V._v2,V.aircraftYaw,normalize(L.sunDir));
+  let emptyRayColor=select(vec4<f32>(aircraft.color,1.0),vec4<f32>(0.0),aircraft.distance>=1000000.0);
 
   // intersect volume
   let bmin = boxMin();
@@ -135,6 +137,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
   }
 
   if (ti.x > ti.y || ti.y <= 0.0) {
+    if(aircraft.distance<1000000.0){storeLayerSample(pixI,emptyRayColor,0.0,temporalHistoryActive);return;}
     let z = vec4<f32>(0.0);
     textureStore(outTex, pixI, frame.layerIndex, z);
     if (temporalHistoryActive) { store_history_full_res_if_owner(pixI, frame.layerIndex, z); }
@@ -144,6 +147,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
   var t0 = max(ti.x - TUNE.aabbFaceOffset, 0.0);
   var t1 = ti.y + TUNE.aabbFaceOffset;
   if (t0 >= t1) {
+    if(aircraft.distance<1000000.0){storeLayerSample(pixI,emptyRayColor,0.0,temporalHistoryActive);return;}
     let z = vec4<f32>(0.0);
     textureStore(outTex, pixI, frame.layerIndex, z);
     if (temporalHistoryActive) { store_history_full_res_if_owner(pixI, frame.layerIndex, z); }
@@ -154,6 +158,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
   let segY0 = rayRo.y + rayRd.y * t0;
   let segY1 = rayRo.y + rayRd.y * t1;
   if (max(segY0, segY1) < globalYR.x || min(segY0, segY1) > globalYR.y) {
+    if(aircraft.distance<1000000.0){storeLayerSample(pixI,emptyRayColor,0.0,temporalHistoryActive);return;}
     let z = vec4<f32>(0.0);
     textureStore(outTex, pixI, frame.layerIndex, z);
     if (temporalHistoryActive) { store_history_full_res_if_owner(pixI, frame.layerIndex, z); }
@@ -174,6 +179,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     t0 = max(t0, ty0 - TUNE.aabbFaceOffset);
     t1 = min(t1, ty1 + TUNE.aabbFaceOffset);
     if (t0 >= t1) {
+      if(aircraft.distance<1000000.0){storeLayerSample(pixI,emptyRayColor,0.0,temporalHistoryActive);return;}
       let z = vec4<f32>(0.0);
       textureStore(outTex, pixI, frame.layerIndex, z);
       if (temporalHistoryActive) { store_history_full_res_if_owner(pixI, frame.layerIndex, z); }
@@ -181,6 +187,11 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     }
   }
 
+  // Only cloud in front of the opaque hull contributes to its fogging.
+  if(aircraft.distance<1000000.0){
+    t1=min(t1,aircraft.distance);
+    if(t0>=t1){storeLayerSample(pixI,emptyRayColor,0.0,temporalHistoryActive);return;}
+  }
   // ---------------------- precompute weather mapping and LOD
   let wScale = select(NTransform.weatherScale, 1.0, NTransform.weatherScale == 0.0);
   let wAxis = axisOrOne3(NTransform.weatherAxisScale);
@@ -476,6 +487,12 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     let visibleLodEaseDefined = visibleLodEase * mix_f(1.0, 0.74, definitionHold);
     var lodShapeVisible = clamp(min(lodShapeLighting, mix_f(1.10, 2.38, visibleLodEaseDefined)), 0.0, wg_maxMipS);
     var lodDetailVisibleBase = clamp(min(lodDetailLighting, mix_f(1.12, 2.72, visibleLodEaseDefined)), 0.0, wg_maxMipD);
+    if(!sphericalCloudMode() && max(B.half.x,B.half.z)>36.0){
+      // Wide skies must filter distant subpixel bands instead of forcing
+      // fine erosion through the artistic close-view mip caps.
+      lodShapeVisible=max(lodShapeVisible,clamp(log2(max(samplePixelWorld*wg_scaleS_effMax*wg_shapeDim.x,1.0)),0.0,wg_maxMipS));
+      lodDetailVisibleBase=max(lodDetailVisibleBase,clamp(log2(max(samplePixelWorld*wg_scaleD_effMax*wg_detailDim.x,1.0)),0.0,wg_maxMipD));
+    }
     if (sphericalCloudMode() && !auroraLayerMode()) {
       // Use the real texture texel footprint, not one whole noise tile. Retain
       // fine mip zero in close views, filter subpixel detail instead of forcing
@@ -888,6 +905,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
   // Alpha boost is applied only at the end so it does not feed back into
   // march-time shadowing, transmission, or lighting.
   newCol = vec4<f32>(max(newCol.rgb, vec3<f32>(0.0)), clamp(newCol.a, 0.0, 1.0));
+  if(aircraft.distance<1000000.0){newCol=vec4<f32>(rgb+Tr*aircraft.color,.5+.5*Tr);}
 
   storeLayerSample(pixI, newCol, rayFarHistoryF, temporalHistoryActive);
 }

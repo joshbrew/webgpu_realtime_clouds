@@ -4,7 +4,8 @@
 import { NoiseComputeBuilder } from "../noise/noiseCompute.js";
 import { CloudComputeBuilder } from "./clouds.js";
 import { CloudTimingReport } from "./cloudTiming.js";
-import { normalizeWeatherCycle, sampleWeatherCycle, cyclePreview, WEATHER_MAP_COUNT } from "./weather/cloudWeatherCycle.js";
+import { cloudFieldDeviceDescriptor } from './cloudFieldQuality.js';
+import { normalizeWeatherCycle, sampleWeatherCycle, cyclePreview, cycleCloudParams, WEATHER_MAP_COUNT } from "./weather/cloudWeatherCycle.js";
 import { CloudWeatherGPU } from "./weather/cloudWeatherGPU.js";
 
 let device = null,
@@ -289,12 +290,11 @@ async function ensureDevice() {
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: mobileProfileEnabled ? "low-power" : "high-performance" });
   if (!adapter) throw new Error("No suitable GPU adapter (worker)");
 
-  // Requesting very large limits can make device creation and first pipeline
-  // setup noticeably slower on some drivers. The startup cloud path uses
-  // textures for the heavy data, so keep limits on the default-safe path.
+  // Keep other limits at defaults. The optional 512 field needs a bounded
+  // staging-buffer allowance on backends that initialize textures this way.
 
   try {
-    device = await adapter.requestDevice();
+    device = await adapter.requestDevice(cloudFieldDeviceDescriptor(adapter.limits));
   } catch (err) {
     console.warn("requestDevice failed", err);
     throw err;
@@ -1671,6 +1671,7 @@ function cloudViewSignature(preview, box, aspect) {
   const cam = preview?.cam || {};
   const sun = preview?.sun || {};
   return [
+    JSON.stringify(preview?.aircraft || {}),
     signatureScalar(cam.x || 0),
     signatureScalar(cam.y || 0),
     signatureScalar(cam.z || 0),
@@ -1693,7 +1694,9 @@ function renderUniformSignature(preview, aspect, layerIndex, cloudParams = {}, c
   return [
     layerIndex,
     fieldLighting ? 1 : 0,
+    JSON.stringify(preview?.aircraft || {}),
     preview?.skyCycle ? 1 : 0,
+    preview?.styleSkyOverride ? 1 : 0,
     signatureScalar(preview?.nightAmount || 0),
     signatureScalar(preview?.celestialVisibility ?? 1),
     signatureScalar(cam.x || 0),
@@ -1709,6 +1712,7 @@ function renderUniformSignature(preview, aspect, layerIndex, cloudParams = {}, c
     signatureScalar(preview?.exposure || 1.0),
     signatureVec3(preview?.sky, [0.5, 0.6, 0.8]),
     preview?.gradeStyle ?? 1,
+    preview?.cloudShading || 'auto',
     signatureVec3(preview?.sunTint, [1.0, 1.0, 1.0]),
     signatureVec3(preview?.cloudLitTint, [1.0, 1.0, 1.0]),
     signatureVec3(preview?.cloudShadowTint, [1.0, 1.0, 1.0]),
@@ -1921,8 +1925,9 @@ function makeViewSignature(preview, w, h) {
   const sun = preview?.sun || {};
   // Evolving weather/light is expected motion, not a camera cut. Keeping its
   // colors in this invalidation key reset sparse history on every cycle frame.
-  if(preview?.weatherCycle) return ['weather-cycle',w,h,cam.x,cam.y,cam.z,cam.yawDeg,cam.pitchDeg,cam.fovYDeg,previewRenderScaleDivider(preview),preview.temporalCellRate,preview.fieldQuality || 'balanced'].join('|');
+  if(preview?.weatherCycle) return ['weather-cycle',w,h,cam.x,cam.y,cam.z,cam.yawDeg,cam.pitchDeg,cam.fovYDeg,previewRenderScaleDivider(preview),preview.temporalCellRate,preview.fieldQuality || 'balanced',preview.cloudTurbulence ?? .75,JSON.stringify(preview?.aircraft || {})].join('|');
   return [
+    JSON.stringify(preview?.aircraft || {}),
     roundSig(cam.x),
     roundSig(cam.y),
     roundSig(cam.z),
@@ -1935,6 +1940,7 @@ function makeViewSignature(preview, w, h) {
     roundSig(preview?.exposure, 1000),
     previewRenderScaleDivider(preview),
     preview?.fieldQuality || 'balanced',
+    preview?.cloudTurbulence ?? .75,
     preview?.gradeStyle ?? 0,
     makeColorSignature(preview?.sky, [0.5, 0.6, 0.8]),
     makeColorSignature(preview?.sunTint, [1, 1, 1]),
@@ -2062,12 +2068,8 @@ async function runFrame({
   // into it. Stopping the cycle therefore restores the authored scene.
   if (weatherCycle.enabled && weatherCycleGPU?.groups.length) {
     weatherCycleState=sampleWeatherCycle(weatherCycleSeconds,weatherCycle);
+    cloudParams=cycleCloudParams(cloudParams,weatherCycleState,weatherCycle.timeOfDay,preview||{});
     preview=cyclePreview(preview||{},weatherCycleState,weatherCycle.timeOfDay);
-    cloudParams={...cloudParams,...weatherCycleState.cloudParams};
-    if(weatherCycle.timeOfDay) Object.assign(cloudParams,{
-      frontLightColor:weatherCycleState.lightColor,sunColor:weatherCycleState.lightColor,
-      shadowLightColor:weatherCycleState.shadowColor,
-    });
     const stage=frameReport.start('weather-map-blend',undefined,'gpu-submit');
     const blended=weatherCycleGPU.blend(weatherCycleState,weatherCycleSeconds);
     if(blended) { weatherCycleBlendCount++; cb?.invalidateCloudFields(); }
@@ -2293,6 +2295,7 @@ async function runFrame({
   cb.setVolumeMask({ shape: volumeShape, rotationAngle: volumeRotationAngle });
   cb.setWeatherProfile(weatherCycle.enabled ? weatherCycleState?.fieldProfile : undefined);
   cb.setFieldQuality(preview?.fieldQuality || 'balanced');
+  cb.setCloudTurbulence(preview?.cloudTurbulence ?? .75);
   if (cloudSig !== lastCloudSceneSignature) {
     cb.setBox(cloudBox);
     cb.setParams(cloudParams || {});
@@ -2336,6 +2339,7 @@ async function runFrame({
       stepBase: 0.02,
       stepInc: 0.04,
       volumeLayers: 1,
+      aircraft: preview?.aircraft,
     });
 
     cb.setLight({
@@ -2487,11 +2491,14 @@ async function runFrame({
         exposure: preview?.exposure || 1.0,
         skyColor: preview?.sky || [0.5, 0.6, 0.8],
         skyCycle: !!preview?.skyCycle,
+        styleSkyOverride: !!preview?.styleSkyOverride,
         nightAmount: preview?.nightAmount || 0,
         celestialVisibility: preview?.celestialVisibility ?? 1,
         sunBloom: preview?.sun?.bloom || 0.0,
         compositeQuality: 2,
         gradeStyle: preview?.gradeStyle ?? 1,
+        cloudShading: preview?.cloudShading || 'auto',
+        aircraft: preview?.aircraft,
         sunColorTint: preview?.sunTint || [1.0, 1.0, 1.0],
         lightTint: preview?.cloudLitTint || [1.0, 1.0, 1.0],
         shadowTint: preview?.cloudShadowTint || [1.0, 1.0, 1.0],
@@ -3014,6 +3021,7 @@ async function _handleMessage(ev) {
       respond(true, {
         ok: true,
         entryPoints: Array.isArray(nb?.entryPoints) ? nb.entryPoints.slice() : [],
+        cloudFieldLimits: {maxTextureDimension3D:device.limits.maxTextureDimension3D, maxBufferSize:device.limits.maxBufferSize},
         timingReport: initReport.finish(),
       });
       return;

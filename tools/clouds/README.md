@@ -15,9 +15,37 @@ wispy high clouds, feather cirrus, asperitas and clearing cumulus. Storm cells k
 the wind continues to scroll the population. Weather and day/night periods are
 independent. The optional day/night clock moves the directional source through
 sunrise, daylight, sunset and moonlight, with twilight sky colors and stars.
+Morning light is peach/gold and evening light is warmer copper. The selected
+color override keeps its palette while allowing this low-sun warmth through.
 Pause with the animation button; disabling the cycle restores the previous
 scene and its animation state. This is an artistic weather director, not a
 physical atmosphere simulation, and does not alter the planetary renderer.
+
+**Color Grade** also offers thirteen reference looks: Cobalt Moon, Rosewater Dusk,
+Porcelain Daylight, Lavender Pearl, Silver Indigo, Copper Atmosphere, and the
+illustrated Molten Gold, Gilded Violet, Electric Cyan, Solar Copper Classic, Lavender Ink, Silver Outline and Cobalt Ink.
+The classic copper look recalls the earlier amber sky, brown shadows and cream
+edges; Copper Atmosphere is its softer natural counterpart. These change only
+color, light and finishing: cloud shape, puff size, noise, wind, camera and
+render quality stay selected independently. Illustrated looks keep the same 3D
+volume lighting, with stronger palette bands and illuminated translucent rims.
+
+**Cloud shading** is independent of both morphology and Color Grade. Choose
+**Soft volume · Anvil / Weather** for continuous ray-lit shading, or
+**Sculpted · Rain Shelf** for the layered relief and sharper silver edges from
+the older screenshots. Either finish works on Rain Shelf, standalone puffs /
+anvils, and the evolving weather system, without rebaking or changing cloud
+shape. Auto retains each form's original finish. Reference palettes temper the
+sculpted finish's contrast and silver/rim amplification; sculpted puffs also
+retain part of their physical volume radiance instead of flattening every fold.
+
+Selecting a grade or shading finish enables **Weather simulation → Use selected color / lighting
+style**. With evolving weather, this overrides automatic sky and lighting colors
+while weather morphology, both clocks and sun/moon direction continue. The
+palette darkens at night, and directional light still fades at the horizon.
+Uncheck the override to return to automatic time-of-day colors. Disabling
+day/night retains manual light direction and color. New looks are authored in
+`cloudLookPresets.js`; no extra textures, ray samples or shader variants are used.
 
 Six 256² weather maps are baked once on entry and cached in bounded named slots.
 A small GPU blend updates one stable texture at 10 Hz (~3.5 MiB total RGBA16F
@@ -26,8 +54,9 @@ rebakes, CPU readbacks, extra cloud-ray samples, or new shader variants. Existin
 density/light fields still update as weather, wind and directional light change.
 The mature anvil phase shares the standalone preset's shaping, breakup,
 extinction and occlusion settings from `weather/cloudAnvilLook.js`. Cached maps retain
-the authored green storm-selection channel with a stable domain/time across
-all six coverage maps, preserving the varied storm population during blending.
+the authored green channel with a stable domain/time across all six coverage
+maps. Storm identity is now selected independently by the material-cell seed,
+so map advection cannot abruptly replace cumulus with a full thunderhead.
 Cell scale and height variation remain fixed throughout the loop; coverage and
 development transition smoothly without rebuilding the clouds' anatomy.
 
@@ -64,15 +93,10 @@ temporal ray budget. Ordinary cloud presets keep their existing interleave.
 
 ## Demo videos
 
-- [5/29 demo](https://www.youtube.com/watch?v=RzTn9s-vdfE)
 - [5/7 demo](https://www.youtube.com/watch?v=HtLoZ3gxX-E)
 - [5/6 demo](https://www.youtube.com/watch?v=ShBe7HvlEb8)
 
 # Screenshots
-
-<img width="800"  alt="image3" src="https://github.com/user-attachments/assets/bc6f6212-2d7a-42be-9951-9c5f1f07cde1" />
-<img width="800"  alt="image" src="https://github.com/user-attachments/assets/14f415ff-ed9d-4145-b688-75b9f03bbc54" />
-<img width="800"  alt="image2" src="https://github.com/user-attachments/assets/4b7e8fe5-96b3-469b-9a2b-32e5baeeab0e" />
 
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/85a8a9e9-8cc8-41e1-bd49-d9fa5681ba0b" />
 <img width="800" alt="Screenshot 2026-06-06 172156" src="https://github.com/user-attachments/assets/36306a95-fda1-4f0a-8a09-7c8dc0115241" />
@@ -87,10 +111,6 @@ temporal ray budget. Ordinary cloud presets keep their existing interleave.
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/ef959ab5-070b-4fc1-bf39-444d091674c6" />
 <img width="800" alt="Screenshot 2026-05-07 223522" src="https://github.com/user-attachments/assets/939b4692-5aea-4238-93ba-84015ded4231" />
 
-
-| Planets with volumetric clouds and aurora |  |  |
-|---|---|---|
-| <img width="1586" height="1168" alt="Screenshot 2026-06-13 233532" src="https://github.com/user-attachments/assets/8872720b-8710-4fa7-a28c-decf422edd21" /> | <img width="1338" height="1094" alt="Screenshot 2026-06-13 231303" src="https://github.com/user-attachments/assets/b4e74511-71bb-4db9-ab86-5d5d60ddcdd2" /> | <img width="1636" height="1252" alt="Screenshot 2026-06-13 124342" src="https://github.com/user-attachments/assets/155f60ce-0dd5-416a-9adc-f30a32d427c5" /> |
 
 ---
 
@@ -151,6 +171,8 @@ clouds.html                    Playground markup.
 cloudDemoNavigation.js         Flat / planet demo navigation.
 cloudTiming.js                 Startup/frame timing reports.
 cloudVolumeMips.js             Filtered volume mip generation.
+cloudFieldQuality.js           Flat-volume density/lighting fidelity presets.
+cloudLookPresets.js             Reference color and lighting looks.
 planetClouds.js                Planet raymarch layer entry point.
 planetCloudSurface.js          Planet MC33 mesh layer entry point.
 planetCloudNoise.js            Planet noise and gas curl baking.
@@ -209,6 +231,14 @@ against the standalone anvil with identical inputs. `/demo` is the actual flat
 demo with only its weather clock held at the mature anvil phase for visual
 review; enable **Evolving weather** to view it. Wind still runs normally.
 Stop the server with Ctrl+C when finished.
+
+The GPU check also sweeps weather G across its full range, samples all twelve
+phase joins and midpoints, checks time-step convergence at the largest change,
+and straddles positive/negative wind-cell boundaries. `WEATHER_REVIEW_LIVE=1`
+leaves the visual demo's weather clock running. For a negative control, run a
+second server with `CLOUD_POP_BASELINE=1` and `CLOUD_REVIEW_PORT=8767`: only its
+diagnostic bundle restores the old weather-dependent storm identity, which
+must fail the G-channel continuity check. Production files are not modified.
 
 `http://127.0.0.1:8766/planet-gas` checks the production Hail Mary weather bake
 across three seeds, reports equal-area rust/thread coverage, and previews the
@@ -340,6 +370,31 @@ clouds.setBox({
 `center` and `half` define the raymarched world-space AABB. `uvScale` controls weather-map mapping over the cloud box. For horizon-scale clouds, increase X/Z size and rely on render scale, adaptive stepping, far proxy, and temporal accumulation rather than hard visible-density culling.
 
 ## 6. Set camera and sun
+
+The flat demo has a camera toolbar over the cloud view. **Orbit** uses drag to
+rotate, right-drag or Shift-drag to pan, and scroll or a two-finger pinch to zoom.
+**Frame clouds** fits the current cloud box. Switching modes preserves the view;
+manual camera inputs and preset cameras remain usable.
+
+**Flight** starts automatic forward cruise with smooth steering, momentum and
+banking, with a close chase camera 2.4 units behind the aircraft. Its polygonal
+aircraft is ray-intersected in the scene: the existing
+cloud march stops at the opaque hull and composites intervening cloud radiance
+and transmission over it. It can disappear inside cloud, on both cloud paths.
+Click the cloud view to focus it: drag, WASD or arrows steer, Q/E descend/climb,
+and Shift boosts. Choose Slow, Cruise, Fast or Travel speed. **Pause flight**
+stops movement and **Launch** resumes it. Escape, leaving the view for sidebar controls,
+or hiding the page stops movement. Camera updates reuse the existing density and
+light caches and work with either paused clouds or the evolving weather cycle.
+
+Reference color presets are grouped by intended lighting: **Fluffy lighting**
+uses soft volume finishing; **Sculpted lighting** uses illustrated three-tone
+relief and luminous silhouettes. Auto follows that intent. An explicit Lighting
+finish overrides it on the same cloud shape. Sculpted reference looks include
+Molten Gold, Gilded Violet, Electric Cyan, Solar Copper Classic, Lavender Ink,
+Silver Outline and Cobalt Ink. Fluffy detail/turbulence controls are disabled on
+the procedural Rain Shelf path; either lighting finish still works on fluffy
+volume shapes without changing their geometry or cached voxel resolution.
 
 ```js
 clouds.setViewFromCamera({
@@ -792,13 +847,13 @@ Shape wind translates the entire cell lattice and its surface noise together (`w
 
 Rounded forms split work into `buildCloudDensityField`, `buildCloudLightField`, a small field-reading `computeCloudBox`, and `resolveCloudFlat`. These dispatches share bindings/resources and execute in one compute pass and queue submission, with no CPU readback between them. Density and shadow/AO use two `128 x 64 x 128` RGBA16F textures (16 MiB combined), allocated lazily only when a rounded form is selected. Moving the camera reuses both fields; changing the sun rebuilds lighting only; changing scene/noise inputs rebuilds both. In-place noise rebakes explicitly invalidate the fields.
 
-The lighting texture stores filterable sun-facing and sky-facing responses in RG, sun visibility in B and ambient visibility in A. It does not interpolate compressed normal coordinates: their encoding seam previously caused moving patches to flip shading. Broad form gradients are evaluated over 1.5 voxels, and empty cells bordering density also receive lighting to avoid a full-sun discontinuity at moving edges. Sun integration uses midpoint samples at approximately two per crossed density voxel, bounded to 16–48 samples during the cached bake; each screen-space ray step still reads one density and one lighting sample. This fixes temporal lighting stability without increasing texture sizes or adding passes. The grid remains fixed to the box, not a camera-relative fine-grid/clipmap; close fly-through detail is still limited by its world-space voxel size.
+The lighting texture stores filterable sun-facing and sky-facing responses in RG, sun visibility in B and ambient visibility in A. It does not interpolate compressed normal coordinates: their encoding seam previously caused moving patches to flip shading. Broad form gradients are evaluated over 1.5 voxels, and empty cells bordering density also receive lighting to avoid a full-sun discontinuity at moving edges. Sun integration uses midpoint samples at approximately two per crossed density voxel, bounded to 16–48 samples during the cached bake; each screen-space ray step reads one density and, when occupied, one lighting sample. Optional Cloud turbulence adds two detail-noise reads only at resolved shoulders. The grid remains world-aligned. Normal volumes cover their box; wide skies repeat a bounded tile and select filtered cache levels by pixel and march-step footprint. This is not a camera-relative clipmap.
 
 The Puffs controls expose size, height variation, and ambient occlusion. AO takes twelve neighboring density probes (six directions at two radii), weighted toward the outward hemisphere, during the cached lighting bake, not during each ray step. This emphasizes creases between billows instead of uniformly darkening opaque interiors. Changing AO strength blends that cached term without rebaking. A low-order scattering fill reuses cached sun visibility to reveal shaded billows without additional texture probes. Ray jitter reads the existing blue-noise map once per pixel, avoiding diagonal stripes from a correlated screen hash. Rounded preset cameras initially show sunlit shoulders; backlit angles remain available through camera controls. These changes affect rounded forms only, leaving the default layer look and call graph intact.
 
 Rounded flat clouds use volume-aware preview finishing: the compositor retains their premultiplied volume radiance rather than reconstructing a painted surface from screen-space alpha. Broad noise folds drive cached normals, with stronger crease AO and less ambient fill, so shadow-side billows retain depth. A lighter aerial-fog treatment avoids washing out that lighting. Exposure, shadow contrast/darkness, color lift, saturation and lit/shadow tints still shape the result; the legacy screen-space rim/edge styling belongs to the layer compositor. The mode flag reuses render-uniform padding (the buffer remains 304 bytes), and changing forms refreshes it even when the camera and grade are unchanged. No new field samples, passes or bindings are needed. Rain Shelf and spherical clouds retain their original finishing path.
 
-Rounded presets start scrolling automatically after baking and presenting a coherent first frame. Stop Reproject Anim pauses the current scene. The cell population is generated from an unbounded co-moving lattice, not a finite spawn list or a group wrapped back to its starting position. Incoming cells get their own seeded forms, weather and heights; their silhouettes fade through the fixed box edges. Coverage now supports a fuller spread of developed clouds across the volume, while sparsity still leaves irregular gaps. The worker advances wind using elapsed time without resetting offsets each frame.
+Cloud and weather preset changes preserve the current playback state. **Animate clouds** starts scrolling and **Pause clouds** freezes the scene. Normal-width volumes use an unbounded co-moving cell lattice, with seeded forms, weather and heights fading through the box edges. Skies wider than 72 world units instead repeat a bounded cloud tile, keeping voxel detail independent of the viewing span. This is a repeating weather field, not a unique streamed world. The worker advances wind using elapsed time without resetting offsets each frame.
 
 Select **Rotating Cloud Donut** in the layer preset menu for an arbitrary-volume example. Its rotating torus boundary clips a fully 3D, independently scrolling noise population, not an extruded horizontal cloud layer or a marching-cubes mesh. The hole remains empty; cached lighting follows the moving boundary and noisy cloud folds. Rotation runs at 0.22 radians/second, initialized to a readable tilted view when entering the example. Leaving it restores the previous horizontal bounds and clears the torus mask. Other rounded presets still use the square volume and Rain Shelf remains unchanged.
 
@@ -1273,6 +1328,85 @@ If you see horizontal layer bands in very tall volumes, keep `verticalTextureHom
 
 For clouds stretching to the horizon, prefer larger X/Z cloud boxes plus tiled 4D weather. Do not make the 3D shape/detail textures huge just because the box is huge. The noise transforms and tiling handle the scale and randomness.
 
+The quick dock's **Sky span (X/Z)** sets the full square horizontal width in
+world units (default 36). It changes both horizontal extents, leaving the cloud
+height, cell size and wind unchanged. **Render → Cloud Box → Half X / Z** lets
+you set rectangular bounds separately. The cycle preserves those extents.
+
+### Fluffy cloud fidelity
+
+**Cloud turbulence** adds fine procedural erosion to the thin shoulders of
+puffy clouds, arbitrary volumes and weather layers. **Natural turbulence** is
+the demo default; choose **Gentle wisps**, **Wind-torn wisps** or **Off · smooth
+volume** independently of color grade and Cloud shading. Two reads from the
+existing tiled detail texture bend and carve the visible edges, following the
+detail wind domain. Dense interiors and empty space skip those reads; sample
+footprints filter the noise and fade unresolved distant detail.
+
+This effect works at Balanced or High detail without additional 3D textures or
+new shadow marches. Switching turbulence reuses the density/light cache and
+resets screen history. It adds ray sampling work, so its speed depends on visible
+cloud coverage. Standalone Rain Shelf and planets keep their existing noise
+paths. API users can opt in with `clouds.setCloudTurbulence(.75)`; `0` restores
+the original cached volume result.
+
+Scrolling tiled weather maps or replacing generated weather inputs continues to
+drive the voxel body's evolution. Fine turbulence uses world-space coordinates
+and the existing independent detail-wind offset, rather than camera or voxel/tile
+indices. It therefore remains stable as the camera travels, and does not need a
+new fine grid when the view changes. Changing weather/noise still updates the
+macro density and lighting normally; this layer adds no weather-map streaming
+or paging system of its own.
+
+**Fluffy cloud detail** controls the cached 3D density and lighting resolution
+independently of **Render divider**, which only changes screen-space ray count.
+This applies to rounded/convective clouds, weather-cycle layers and arbitrary
+volumes; the standalone Rain Shelf and planetary paths are unchanged.
+
+| Detail | Density and lighting grid | Combined texture memory | Relative voxel count |
+| --- | --- | ---: | ---: |
+| Low / fast | 96×48×96 | 7.7 MiB | 0.42× |
+| Balanced / default | 128×64×128 | 18.3 MiB | 1× |
+| High / finer clouds | 192×96×192 | 61.7 MiB | 3.375× |
+| Screenshot / 256 | 256×128×256 | 146 MiB | 8× |
+| Capture / 384 | 384×192×384 | 494 MiB | 27× |
+| Reference / 512 | 512×256×512 | 1.14 GiB | 64× |
+
+Higher settings reduce voxel-shaped silhouettes and coarse lighting. Voxel
+counts are not measured frame-time multipliers; occupied volume and shadow
+work also affect cost. Four filtered cache levels soften distant clouds without
+extra ray samples. The remaining small mip levels complete an empty-space
+hierarchy; density B stores the maximum child density while R/G/A and lighting
+retain averaged filtering. The full chain adds about 14% texture memory and
+rebuilds only when its source density or lighting changes. Wide skies take large
+steps only through intervals proven empty by that hierarchy. Inside clouds,
+steps follow voxel spacing and pixel footprint instead of growing unconditionally
+with travel distance, avoiding distant lighting grain. The existing maximum ray
+budget still bounds work; unusually long, tenuous grazing paths can exhaust it.
+Wide skies retain a bounded tile instead of
+stretching these voxels across the whole box. **Capture / 384** and **Reference / 512** provide higher
+detail targets for still captures and performance comparisons. Reference doubles
+each axis of the old screenshot grid, with eight times its voxels and texture
+memory. Texture memory excludes output buffers, noise maps and textures awaiting
+retirement after a quality switch. These are opt-in tiers; they do not change
+cloud shape, style, puff size or the animation clocks.
+Unsupported tiers are disabled using the active GPU device's limits. The demo
+requests up to 512 MiB of buffer allowance when the adapter supports it, because
+some backends use a texture-sized staging buffer to initialize Reference fields.
+Direct API users can pass `cloudFieldDeviceDescriptor(adapter.limits)` to
+`adapter.requestDevice()` before creating their cloud builder.
+
+For stills, pause animation, choose **Screenshot**, **Capture** or **Reference**,
+set **Render divider 1** and **Temporal Off / full quality**. Changing detail
+reuses pipelines, replaces both fields on the next frame, retires old textures
+after queued work completes, and reseeds temporal history. It does not rebake
+the noise maps. Defaults retain the original performance/memory cost.
+
+For direct use: `clouds.setFieldQuality('high')` or `'low'`, `'balanced'`, `'ultra'`,
+`'cinematic'` (384) and `'reference'` (512). Compare the same paused scene at each
+tier when tuning performance; pipeline timing reports include field dimensions
+and cache reuse. Their CPU/API timings are not GPU execution timings.
+
 ## Noise baking
 
 Re-bake only when changing:
@@ -1409,6 +1543,13 @@ Towering Cu and storm cells now vary their base breadth independently of crown
 width, including broad lower banks and narrower columns. Material-cell seeds
 also vary billow aspect, lean, orientation, canopy thickness and downwind reach.
 Those identities move with the wind; they do not get reselected per frame.
+Storm-versus-cumulus identity comes only from a material-cell seed (27% storm
+cells), never a hard threshold against an advecting weather-map sample. The old
+weather-G comparison could replace a small cloud with a whole thunderhead in
+one frame. Coverage and storm development still evolve smoothly. An independent
+width seed gives about 30% of convective cells full broad bases, 28% intermediate
+bases and the rest narrower forms; radius multipliers span 0.68–1.35. Broad
+families are also 15% shorter, without stretching their height during evolution.
 Fair cumulus and the original Rain Shelf retain their existing density closure.
 The field still uses its 3×3 cell neighborhood and existing shape/detail samples.
 A soft footprint bound includes the noisy outer lobes so wide clouds cannot pop
@@ -1443,6 +1584,13 @@ their height, width and selection independently and share broken feeder banks.
 The original Rain Shelf closure is unchanged.
 
 Regular raymarched planets have a **Planet cloud style** selector:
+
+The planet's **Color / lighting** control also includes all thirteen reference
+looks from the flat cloud demo. These change palettes, soft/sculpted lighting
+and silvering while retaining shell shape, density, motion and render budget.
+Silvering now emphasizes thin backlit silhouettes near the sun in both flat
+lighting finishes; empty sky and opaque cloud interiors receive no added
+compositor rim. Fluffy scattering reuses cached sun visibility and edge distance.
 
 The shared demo entry now has bottom-right **Flat clouds / Planet clouds** links
 (`?demo=flat` or `?demo=planet`). A switch navigates to a fresh document so the

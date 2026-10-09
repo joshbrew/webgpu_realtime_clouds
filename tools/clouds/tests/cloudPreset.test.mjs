@@ -83,7 +83,7 @@ test('animated preset pauses before changing values and resumes only after a coh
   const { apply, events, button } = fixture();
   await apply('towering_cu');
   assert.deepEqual(events, ['busy:true','ticker:stop','stopLoop','values','bakeAll','tuning','frame','debug','setReproj','startLoop','ticker:start','busy:false']);
-  assert.equal(button.textContent, 'Stop Reproject Anim');
+  assert.equal(button.textContent, 'Pause clouds');
 });
 
 test('a failed preset does not restart animation against a partially installed scene', async () => {
@@ -94,12 +94,11 @@ test('a failed preset does not restart animation against a partially installed s
   assert.equal(events.at(-1), 'busy:false');
 });
 
-test('rounded examples start scrolling after their first complete frame, while layer presets stay paused', async () => {
+test('all layer changes keep a paused scene paused', async () => {
   const flowing = fixture({animating:false,preset:presets.rotating_donut});
   await flowing.apply('towering_cu');
   assert.ok(!flowing.events.includes('stopLoop'));
-  assert.ok(flowing.events.indexOf('startLoop') > flowing.events.indexOf('frame'));
-  assert.equal(flowing.button.textContent, 'Stop Reproject Anim');
+  assert.ok(!flowing.events.includes('startLoop'));
   const paused = fixture({animating:false,preset:presets.rain_shelf});
   await paused.apply('towering_cu');
   assert.ok(!paused.events.includes('startLoop'));

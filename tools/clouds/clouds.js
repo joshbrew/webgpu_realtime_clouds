@@ -2,7 +2,9 @@
 // CloudComputeBuilder matching updated clouds.wgsl uniform layout (CloudOptions, CloudParams, NoiseTransforms, CloudTuning)
 
 import cloudWGSL from "./shaders/clouds.wgsl";
-import commonWGSL from "./shaders/cloudCommon.wgsl";
+import baseCommonWGSL from "./shaders/cloudCommon.wgsl";
+import aircraftWGSL from "./shaders/cloudAircraft.wgsl";
+const commonWGSL = baseCommonWGSL + '\n' + aircraftWGSL;
 import layerWGSL from "./shaders/cloudLayer.wgsl";
 import resolveWGSL from "./shaders/cloudResolve.wgsl";
 import scratchWGSL from "./shaders/cloudScratch.wgsl";
@@ -11,7 +13,8 @@ import fieldWGSL from "./shaders/cloudFields.wgsl";
 import planetWGSL from "./shaders/cloudPlanet.wgsl";
 import gasAppearanceWGSL from "./shaders/planetGasAppearance.wgsl";
 import previewWGSL from "./shaders/cloudsRender.wgsl";
-import { CLOUD_FIELD_QUALITIES } from "./cloudFieldQuality.js";
+import { CLOUD_FIELD_QUALITIES, supportsCloudFieldQuality } from "./cloudFieldQuality.js";
+import { intendedCloudShading } from './cloudLookPresets.js';
 
 const CLOUD_GPU_CACHE = new WeakMap();
 const INLINE_LAYER_OUTPUT = `fn beginLayerSample(pix: vec2<i32>) {}
@@ -809,7 +812,7 @@ export class CloudComputeBuilder {
     const setup = {
       bgl,
       densityBgl, lightBgl,
-      sampler: this.device.createSampler({ minFilter: "linear", magFilter: "linear", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge", addressModeW: "clamp-to-edge" }),
+      sampler: this.device.createSampler({ minFilter: "linear", magFilter: "linear", mipmapFilter:"linear", addressModeU: "repeat", addressModeV: "clamp-to-edge", addressModeW: "repeat" }),
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.bgl0, this.bgl1, bgl] }),
       densityLayout: this.device.createPipelineLayout({ bindGroupLayouts: [this.bgl0, this.bgl1, densityBgl] }),
       lightLayout: this.device.createPipelineLayout({ bindGroupLayouts: [this.bgl0, this.bgl1, lightBgl] }),
@@ -907,10 +910,17 @@ export class CloudComputeBuilder {
 
   setFieldQuality(quality = 'balanced') {
     if (!Object.hasOwn(CLOUD_FIELD_QUALITIES, quality)) throw new RangeError(`Unknown cloud field quality: ${quality}`);
+    if (!supportsCloudFieldQuality(quality, this.device.limits)) throw new RangeError(`Cloud field quality ${quality} is unavailable with this GPU device's limits`);
     if ((this._state.fieldQuality || 'balanced') === quality) return;
     this._state.fieldQuality = quality;
     // Allocation is deferred to the next encode, not interleaved with a frame.
     // The dimension uniform invalidates both fields when resources are replaced.
+  }
+
+  // Fine visible-edge erosion reuses the tiled detail map at ray time. It does
+  // not alter the macro geometry/light cache or allocate a larger volume.
+  setCloudTurbulence(amount = 0) {
+    this._state.cloudTurbulence = Number.isFinite(amount) ? Math.min(1.5, Math.max(0, amount)) : 0;
   }
 
   // Arbitrary-volume examples clip the same cached noise/lighting fields. The
@@ -934,19 +944,51 @@ export class CloudComputeBuilder {
     const dimensions = active ? CLOUD_FIELD_QUALITIES[this._state.fieldQuality || 'balanced'].dimensions : (this._fieldResources?.dimensions || [1, 1, 1]);
     if (this._fieldResources?.dimensions.join() === dimensions.join()) return;
     const old = this._fieldResources;
-    const create = label => this.device.createTexture({ label, dimension: "3d", size: dimensions, format: "rgba16float", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING });
+    // Sculpted layers bind a one-texel placeholder before any volume is baked.
+    // Complete the tiny tail of the mip chain for conservative empty-space
+    // queries. The first four levels still serve visible cloud filtering.
+    const mipLevelCount=1+Math.floor(Math.log2(Math.max(...dimensions)));
+    const create = label => this.device.createTexture({ label, dimension: "3d", size: dimensions, mipLevelCount, format: "rgba16float", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING });
     const density = create("cloud-density-field");
     const light = create("cloud-shadow-ao-field");
     this._fieldResources = { dimensions, density, light, densityView: density.createView(), lightView: light.createView() };
+    const cache=getCloudGpuCache(this.device);
+    if(!cache.fieldMipPipelines){
+      const module=this.device.createShaderModule({code:`
+      override DENSITY:bool=false;
+      @group(0) @binding(0) var source:texture_3d<f32>;
+      @group(0) @binding(1) var mipOut:texture_storage_3d<rgba16float,write>;
+      @compute @workgroup_size(4,4,4) fn downsample(@builtin(global_invocation_id) p:vec3<u32>){
+        if(any(p>=textureDimensions(mipOut))){return;}
+        let sourceSize=textureDimensions(source);
+        let targetSize=textureDimensions(mipOut);
+        let lo=p*sourceSize/targetSize;
+        let hi=(p+vec3<u32>(1u))*sourceSize/targetSize;
+        var value=vec4<f32>(0.0);var occupied=0.0;var count=0.0;
+        for(var z=lo.z;z<hi.z;z++){for(var y=lo.y;y<hi.y;y++){for(var x=lo.x;x<hi.x;x++){
+          let child=textureLoad(source,vec3<i32>(i32(x),i32(y),i32(z)),0);
+          value+=child;occupied=max(occupied,child.b);count+=1.0;
+        }}}
+        value/=max(count,1.0);
+        if(DENSITY){value.b=occupied;}
+        textureStore(mipOut,vec3<i32>(p),value);
+      }`});
+      cache.fieldMipPipelines=[true,false].map(density=>this.device.createComputePipeline({layout:'auto',compute:{entryPoint:'downsample',module,constants:{DENSITY:density}}}));
+    }
+    this._fieldMipPipelines=cache.fieldMipPipelines;
+    this._fieldMipGroups=[density,light].map((texture,field)=>Array.from({length:mipLevelCount-1},(_,i)=>this.device.createBindGroup({layout:cache.fieldMipPipelines[field].getBindGroupLayout(0),entries:[
+      {binding:0,resource:texture.createView({baseMipLevel:i,mipLevelCount:1})},
+      {binding:1,resource:texture.createView({baseMipLevel:i+1,mipLevelCount:1})},
+    ]})));
     this._fieldParamsBuffer ||= this.device.createBuffer({ label: "cloud-field-bounds", size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this._fieldParamsAB ||= new ArrayBuffer(80);
     const setup = this._getFlatStageSetup();
     this._fieldDensityBg = this.device.createBindGroup({ layout: setup.densityBgl, entries: [
-      { binding: 4, resource: { buffer: this._fieldParamsBuffer } }, { binding: 5, resource: this._fieldResources.densityView },
+      { binding: 4, resource: { buffer: this._fieldParamsBuffer } }, { binding: 5, resource: density.createView({baseMipLevel:0,mipLevelCount:1}) },
     ] });
     this._fieldLightBg = this.device.createBindGroup({ layout: setup.lightBgl, entries: [
       { binding: 1, resource: this._fieldResources.densityView }, { binding: 3, resource: setup.sampler },
-      { binding: 4, resource: { buffer: this._fieldParamsBuffer } }, { binding: 6, resource: this._fieldResources.lightView },
+      { binding: 4, resource: { buffer: this._fieldParamsBuffer } }, { binding: 6, resource: light.createView({baseMipLevel:0,mipLevelCount:1}) },
     ] });
     this._flatStageBindGroup = null;
     this.invalidateCloudFields();
@@ -958,13 +1000,18 @@ export class CloudComputeBuilder {
     const started = performance.now();
     const { dimensions } = this._fieldResources;
     const dv = new DataView(this._fieldParamsAB);
-    for (let i = 0; i < 3; i++) {
-      dv.setFloat32(i * 4, this._state.box.center[i] - this._state.box.half[i], true);
-      dv.setFloat32(16 + i * 4, this._state.box.half[i] * 2, true);
-      dv.setUint32(32 + i * 4, dimensions[i], true);
-    }
     const mask = this._state.volumeMask;
     const arbitrary = mask?.shape === "torus" || mask?.shape === "gallery";
+    const tiled = !arbitrary && Math.max(this._state.box.half[0],this._state.box.half[2])>36;
+    const cell=Math.max(this._state.tuning.puffScale,0.75);
+    const tileSpan=Math.ceil(36/cell/2)*2*cell;
+    for (let i = 0; i < 3; i++) {
+      const half=tiled&&i!==1?tileSpan/2:this._state.box.half[i];
+      dv.setFloat32(i * 4, this._state.box.center[i] - half, true);
+      dv.setFloat32(16 + i * 4, half * 2, true);
+      dv.setUint32(32 + i * 4, dimensions[i], true);
+    }
+    dv.setUint32(44,tiled?1:0,true);
     const profile = this._state.weatherProfile;
     dv.setFloat32(12, arbitrary ? 0 : profile?.shelf || 0, true);
     dv.setFloat32(28, arbitrary ? 0 : profile?.deck || 0, true);
@@ -975,15 +1022,16 @@ export class CloudComputeBuilder {
     for (const [i,key] of ['cirrus','fluctus','asperitas'].entries()) {
       dv.setFloat32(64+i*4, arbitrary ? 0 : profile?.[key] || 0, true);
     }
+    dv.setFloat32(76, this._state.cloudTurbulence || 0, true);
     this._writeIfChanged("fieldParams", this._fieldParamsBuffer, this._fieldParamsAB);
     // AO is a lighting blend, not geometry. Changing its strength or the camera
     // must not rebake either field.
-    const densitySignature = [this._abParams, this._abNTransform, this._abTuning.slice(0, 248), this._abTuning.slice(252), this._abBox, this._fieldParamsAB].map(ab => this._sum32(ab)).concat(
+    const densitySignature = [this._abParams.slice(0,12), this._abNTransform, this._abTuning.slice(0,12), this._abTuning.slice(16, 248), this._abTuning.slice(252), this._abBox, this._fieldParamsAB.slice(0, 76)].map(ab => this._sum32(ab)).concat(
       this._getResId(this.weatherView), this._getResId(this.shape3DView), this._getResId(this.detail3DView),
       this._dvView.getFloat32(96, true), this._dvView.getFloat32(92, true),
     ).join("|");
     const densityChanged = densitySignature !== this._fieldDensitySignature;
-    const lightSignature = densitySignature + "|" + this._state.light.sunDir.join("|");
+    const lightSignature = densitySignature + "|" + this._state.light.sunDir.join("|")+"|"+new DataView(this._abParams).getFloat32(12,true);
     const lightChanged = densityChanged || lightSignature !== this._fieldLightSignature;
     const dispatch = entry => {
       const encodeStarted = performance.now();
@@ -998,6 +1046,13 @@ export class CloudComputeBuilder {
     else timings.push({ stage: "buildCloudDensityField", encodeMs: 0, dispatched: false, cached: true });
     if (lightChanged) dispatch("buildCloudLightField");
     else timings.push({ stage: "buildCloudLightField", encodeMs: 0, dispatched: false, cached: true });
+    if(densityChanged||lightChanged){
+      this._fieldMipGroups.forEach((groups,field)=>{
+        if(!groups.length||!(field===0?densityChanged:lightChanged))return;
+        pass.setPipeline(getCloudGpuCache(this.device).fieldMipPipelines[field]);
+        groups.forEach((group,i)=>{pass.setBindGroup(0,group);pass.dispatchWorkgroups(...dimensions.map(n=>Math.ceil(Math.max(1,n>>(i+1))/4)));});
+      });
+    }
     this._fieldDensitySignature = densitySignature;
     this._fieldLightSignature = lightSignature;
     timings.push({ stage: "field-cache-check", encodeMs: performance.now() - started });
@@ -2252,6 +2307,7 @@ export class CloudComputeBuilder {
       viewExtraA = 0.0,
       viewExtraB = 0.0,
       viewExtraC = 0.0,
+      aircraft = {},
     } = opts;
 
     const dv = this._dvView;
@@ -2285,15 +2341,15 @@ export class CloudComputeBuilder {
       camPos[0],
       camPos[1],
       camPos[2],
-      0,
+      aircraft.enabled ? 1 : 0,
       r[0],
       r[1],
       r[2],
-      0,
+      aircraft.bank || 0,
       u[0],
       u[1],
       u[2],
-      0,
+      aircraft.pitch || 0,
       f[0],
       f[1],
       f[2],
@@ -2310,10 +2366,10 @@ export class CloudComputeBuilder {
       viewExtraA,
       viewExtraB,
       viewExtraC,
-      0,
-      0,
-      0,
-      0,
+      aircraft.position?.[0] ?? camPos[0]+f[0]*2.4-u[0]*.55,
+      aircraft.position?.[1] ?? camPos[1]+f[1]*2.4-u[1]*.55,
+      aircraft.position?.[2] ?? camPos[2]+f[2]*2.4-u[2]*.55,
+      aircraft.yaw || 0,
     ];
 
     for (let i = 0; i < floats.length; i++)
@@ -2334,7 +2390,7 @@ export class CloudComputeBuilder {
     putI(0, s.maxSteps);
     putI(4, s.sunSteps);
     putI(8, s.sunStride);
-    putI(12, 0);
+    putI(12, s.lightingFinish || 0);
 
     putF(16, s.minStep);
     putF(20, s.maxStep);
@@ -3615,7 +3671,7 @@ export class CloudComputeBuilder {
   _createRenderPipelineSetup(format = "bgra8unorm") {
     const deviceCache = getCloudGpuCache(this.device);
     if (!deviceCache.previewModule) {
-      deviceCache.previewModule = this.device.createShaderModule({ code: previewWGSL });
+      deviceCache.previewModule = this.device.createShaderModule({ code: previewWGSL + '\n' + aircraftWGSL });
     }
 
     const bgl = this.device.createBindGroupLayout({
@@ -3862,8 +3918,11 @@ export class CloudComputeBuilder {
     writeVec3Padded(dv, 16, camPos);
     dv.setFloat32(28, Math.max(0,Math.min(1,opts.nightAmount ?? 0)), true);
     writeVec3Padded(dv, 32, right);
+    dv.setFloat32(44, opts.aircraft?.enabled ? 1 : 0, true);
     writeVec3Padded(dv, 48, up);
+    dv.setFloat32(60, opts.aircraft?.bank || 0, true);
     writeVec3Padded(dv, 64, fwd);
+    dv.setFloat32(76, opts.aircraft?.pitch || 0, true);
     dv.setFloat32(80, fovYRad, true);
     dv.setFloat32(84, aspect, true);
     dv.setFloat32(88, exposure, true);
@@ -3877,9 +3936,13 @@ export class CloudComputeBuilder {
     dv.setFloat32(136, styleColorLift, true);
     dv.setFloat32(140, styleSaturation, true);
     writeVec3Padded(dv, 144, sunColorTint);
+    const finish = !opts.cloudShading || opts.cloudShading === 'auto' ? intendedCloudShading(gradeStyle) : opts.cloudShading;
+    dv.setFloat32(156, finish === 'soft' ? 1 : finish === 'sculpted' ? 2 : 0, true);
     writeVec3Padded(dv, 160, lightTint);
     writeVec3Padded(dv, 176, shadowTint);
     writeVec3Padded(dv, 192, edgeTint);
+    // Reuse vec3 padding; the preview uniform remains 304 bytes.
+    dv.setFloat32(204, opts.styleSkyOverride ? 1 : 0, true);
     dv.setFloat32(208, styleRimStrength, true);
     dv.setFloat32(212, styleSunBleed, true);
     dv.setFloat32(216, styleShadowEdge, true);
@@ -3898,6 +3961,11 @@ export class CloudComputeBuilder {
     dv.setFloat32(268, outputHeight, true);
     writeVec3Padded(dv, 272, boxCenter);
     writeVec3Padded(dv, 288, boxHalf);
+    const aircraftPosition=opts.aircraft?.position || camPos.map((v,i)=>v+fwd[i]*2.4-up[i]*.55);
+    dv.setFloat32(172, aircraftPosition[0], true);
+    dv.setFloat32(188, aircraftPosition[1], true);
+    dv.setFloat32(284, aircraftPosition[2], true);
+    dv.setFloat32(300, opts.aircraft?.yaw || 0, true);
 
     this._writeIfChanged("render", this.renderParams, this._abRender);
   }

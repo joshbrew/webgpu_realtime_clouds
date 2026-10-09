@@ -5,7 +5,7 @@ struct CloudFieldParams {
   gridSize: vec4<f32>, // xyz extent, w stratus-deck weight
   dimensions: vec4<u32>,
   volume: vec4<f32>, // mask kind, rotation, major radius, tube radius / box wisp weight
-  morphology: vec4<f32>, // cirrus, Kelvin-Helmholtz/fluctus, asperitas, reserved
+  morphology: vec4<f32>, // cirrus, Kelvin-Helmholtz/fluctus, asperitas, ray-only turbulence
 };
 @group(2) @binding(1) var cloudDensityField: texture_3d<f32>;
 @group(2) @binding(2) var cloudLightField: texture_3d<f32>;
@@ -15,7 +15,19 @@ struct CloudFieldParams {
 @group(2) @binding(6) var cloudLightOut: texture_storage_3d<rgba16float, write>;
 
 fn cloudFieldUV(p: vec3<f32>) -> vec3<f32> {
-  return (p - FIELD.gridMin.xyz) / max(FIELD.gridSize.xyz, vec3<f32>(EPS));
+  let uv=(p - FIELD.gridMin.xyz) / max(FIELD.gridSize.xyz, vec3<f32>(EPS));
+  return select(uv,vec3<f32>(fract(uv.x),uv.y,fract(uv.z)),FIELD.dimensions.w>0u);
+}
+fn fieldPeriodicScale(scale:vec3<f32>)->vec3<f32> {
+  if(FIELD.dimensions.w==0u){return scale;}
+  return vec3<f32>(max(1.0,round(abs(scale.x)*FIELD.gridSize.x))*sign(scale.x)/FIELD.gridSize.x,
+    scale.y,max(1.0,round(abs(scale.z)*FIELD.gridSize.z))*sign(scale.z)/FIELD.gridSize.z);
+}
+fn fieldWeatherUV(p:vec3<f32>,scale:f32)->vec2<f32> {
+  if(FIELD.dimensions.w==0u){return weatherUV_from(p,scale);}
+  let axis=axisOrOne3(NTransform.weatherAxisScale);
+  let rate=fieldPeriodicScale(axis*0.5*max(B.uvScale,EPS)*scale);
+  return (p.xz+NTransform.weatherOffsetWorld.xz-B.center.xz)*rate.xz;
 }
 fn fieldSampleAt(p: vec3<f32>) -> vec4<f32> {
   let uv = cloudFieldUV(p);
@@ -26,7 +38,9 @@ fn fieldDensityAt(p: vec3<f32>) -> vec2<f32> {
   return fieldSampleAt(p).rg;
 }
 fn cloudCellRandom(cell: vec2<f32>, offset: f32) -> f32 {
-  return hash11Fast(dot(cell, vec2<f32>(127.1, 311.7)) + offset);
+  var id=cell;
+  if(FIELD.dimensions.w>0u){let count=round(FIELD.gridSize.xz/max(TUNE.puffScale,0.75));id=cell-floor(cell/count)*count;}
+  return hash11Fast(dot(id, vec2<f32>(127.1, 311.7)) + offset);
 }
 fn cloudEllipsoid(p: vec3<f32>, center: vec3<f32>, radius: vec3<f32>) -> f32 {
   return 1.0 - length((p - center) / max(radius, vec3<f32>(0.01)));
@@ -79,7 +93,7 @@ fn roundedCloudBody(p: vec3<f32>, shape: vec4<f32>, detail: vec3<f32>) -> vec3<f
       // Sample weather in the co-moving domain, not underneath a stationary
       // lattice. Its separate slow offset can evolve cells without wind itself
       // pumping their height. Anatomy is selected independently below.
-      let weather = wrap2D(weather2D, samp2D, weatherUV_from(vec3<f32>(materialCenterXZ.x, B.center.y, materialCenterXZ.y), weatherScale), 0i, 0.0);
+      let weather = wrap2D(weather2D, samp2D, fieldWeatherUV(vec3<f32>(materialCenterXZ.x, B.center.y, materialCenterXZ.y), weatherScale), 0i, 0.0);
       // A storm scene is a population, not a wall of identical thunderheads.
       // Stable material-cell identity selects scattered convective storms;
       // the remaining cells form lower fair-weather cumulus in the same box.
@@ -266,7 +280,7 @@ fn featureWeatherBody(p: vec3<f32>, shape: vec4<f32>, detail: vec3<f32>, weights
   let spacingY = height / f32(FIELD.dimensions.y);
   let coverage = saturate(C.globalCoverage);
   let weatherScale = select(NTransform.weatherScale, 1.0, NTransform.weatherScale == 0.0);
-  let weather = wrap2D(weather2D, samp2D, weatherUV_from(material, weatherScale), 0i, 0.0);
+  let weather = wrap2D(weather2D, samp2D, fieldWeatherUV(material, weatherScale), 0i, 0.0);
   let presence = smoothstep(0.0, 0.12, coverage) * (1.0 - smoothstep(0.85, 1.0, weather.b));
   let grain = dot(detail, vec3<f32>(0.42, 0.34, 0.24));
   var density = 0.0;
@@ -349,7 +363,7 @@ fn layeredWeatherBody(p:vec3<f32>, shape:vec4<f32>, detail:vec3<f32>, weights:ve
   let detailMid=dot(detail,vec3<f32>(0.42,0.34,0.24));
   let material=p+NTransform.shapeOffsetWorld;
   let weatherScale=select(NTransform.weatherScale,1.0,NTransform.weatherScale==0.0);
-  let weather=wrap2D(weather2D,samp2D,weatherUV_from(material,weatherScale),0i,0.0);
+  let weather=wrap2D(weather2D,samp2D,fieldWeatherUV(material,weatherScale),0i,0.0);
   let coverage=saturate(C.globalCoverage*mix_f(0.78,1.0,saturate(weather.r)));
   let threshold=mix_f(0.62,0.06,coverage);
   let presence=smoothstep(0.0,0.12,C.globalCoverage)*(1.0-smoothstep(0.85,1.0,weather.b));
@@ -459,7 +473,7 @@ fn arbitraryCloudBody(p: vec3<f32>, shape: vec4<f32>, detail: vec3<f32>) -> vec3
   let erosion = dot(detail, vec3<f32>(0.42, 0.34, 0.24)) * 0.10 + pow(1.0 - ridge01(contrast01(scallop, 2.4)), 1.35) * 0.14;
   let material = p + NTransform.shapeOffsetWorld;
   let weatherScale = select(NTransform.weatherScale, 1.0, NTransform.weatherScale == 0.0);
-  let weather = wrap2D(weather2D, samp2D, weatherUV_from(material, weatherScale), 0i, 0.0);
+  let weather = wrap2D(weather2D, samp2D, fieldWeatherUV(material, weatherScale), 0i, 0.0);
   let presence = smoothstep(0.0, 0.15, C.globalCoverage) * mix_f(0.65, 1.0, saturate(weather.r)) * (1.0 - smoothstep(0.85, 1.0, weather.b));
   let variation = mix_f(0.55, 1.0, shelfShape) * presence;
   return vec3<f32>(smoothstep(-0.065, 0.28, macroSigned - erosion) * variation,
@@ -495,11 +509,11 @@ fn buildCloudDensityField(@builtin(global_invocation_id) gid: vec3<u32>, @builti
   let detailFootprint = spacing * abs(detailAxis * detailScale) * wg_detailDim;
   let shapeLOD = clamp(log2(max(max(shapeFootprint.x, shapeFootprint.y), max(shapeFootprint.z, 1.0))), 0.0, wg_maxMipS);
   let detailLOD = clamp(log2(max(max(detailFootprint.x, detailFootprint.y), max(detailFootprint.z, 1.0))), 0.0, wg_maxMipD);
-  let detail = wrap3D_detail(detail3D, sampDetail, (p + NTransform.detailOffsetWorld) * detailAxis * detailScale, detailLOD).rgb;
+  let detail = wrap3D_detail(detail3D, sampDetail, (p + NTransform.detailOffsetWorld) * fieldPeriodicScale(detailAxis * detailScale), detailLOD).rgb;
   // The independently moving detail domain bends shoulders as well as eroding
   // them. This is continuous volumetric billowing, not a time-varying Y scale.
   let detailWarp = (detail - 0.5) * max(TUNE.puffScale, 0.75) * vec3<f32>(0.16, 0.12, 0.16);
-  let shape = wrap3D_shape(shape3D, sampShape, (p + detailWarp + NTransform.shapeOffsetWorld) * shapeAxis * shapeScale, shapeLOD);
+  let shape = wrap3D_shape(shape3D, sampShape, (p + detailWarp + NTransform.shapeOffsetWorld) * fieldPeriodicScale(shapeAxis * shapeScale), shapeLOD);
   // All four prefiltered shape bands contribute: broad domain distortion hides
   // the scaffold; the Rain Shelf closure gives the whole volume broken density.
   // No additional texture fetches or per-ray procedural noise are required.
@@ -555,9 +569,11 @@ fn buildCloudDensityField(@builtin(global_invocation_id) gid: vec3<u32>, @builti
   let toMin = p.xz - FIELD.gridMin.xz;
   let toMax = FIELD.gridMin.xz + FIELD.gridSize.xz - p.xz;
   let edgeDistance = min(min(toMin.x, toMin.y), min(toMax.x, toMax.y));
-  let edgeFade = smoothstep(0.0, max(TUNE.puffScale * 0.55, 0.1), edgeDistance);
+  let edgeFade = select(smoothstep(0.0, max(TUNE.puffScale * 0.55, 0.1), edgeDistance),1.0,FIELD.dimensions.w>0u);
   let densityScale = max(C.globalDensity, 0.0) * 1.6 * baseFade * edgeFade;
-  textureStore(cloudDensityOut, vec3<i32>(gid), vec4<f32>(body.xy * densityScale, ph, max(body.z, -0.30)));
+  // B is a conservative density bound. Coarser levels take its maximum;
+  // R/G/A retain their average filtering for visible density and lighting.
+  textureStore(cloudDensityOut, vec3<i32>(gid), vec4<f32>(body.xy * densityScale, max(body.x * densityScale, 0.0), max(body.z, -0.30)));
 }
 
 @compute @workgroup_size(4, 4, 4)
