@@ -27,7 +27,14 @@ await build({entryPoints:[source('./weatherAnvil.js')],outfile:join(temp,'check.
 await build({entryPoints:[source('./planetGas.js')],outfile:join(temp,'planet-gas.js'),bundle:true,format:'esm',platform:'browser',loader});
 await build({entryPoints:[source('./planetFlowBenchmark.js')],outfile:join(temp,'planet-flow-benchmark.js'),bundle:true,format:'esm',platform:'browser',loader});
 await build({entryPoints:[source('../../cloudTest.worker.js')],outfile:join(temp,'worker.js'),bundle:true,format:'iife',platform:'browser',loader});
-await build({entryPoints:[source('../../../../index.js')],outfile:join(temp,'demo.js'),bundle:true,format:'esm',platform:'browser',loader,
+// Keep this cloud review independent of the lab's scratchpad index entry.
+await build({stdin:{contents:`
+ import {selectedCloudDemo,mountCloudDemoNavigation} from './tools/clouds/cloudDemoNavigation.js';
+ mountCloudDemoNavigation();
+ if(selectedCloudDemo()==='planet') import('./tools/noise/noisePlanetTest.js');
+ else import('./tools/clouds/cloudTestThreaded.js');
+ `,resolveDir:source('../../../../'),sourcefile:'cloud-review-entry.js',loader:'js'},
+ outfile:join(temp,'demo.js'),bundle:true,format:'esm',platform:'browser',loader,
  plugins:[{name:'test-worker-url',setup(b){
   b.onLoad({filter:/cloudTest\.worker\.js$/},()=>({contents:'export default "/worker.js";',loader:'js'}));
   if(process.env.PLANET_REVIEW==='1')b.onLoad({filter:/noisePlanetTest\.js$/},async({path})=>({

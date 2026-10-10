@@ -99,6 +99,10 @@ struct CloudTuning {
   puffScale: f32,
   aoStrength: f32,
   towerHeightVariation: f32,
+  shelfFlow: f32,
+  _flowPad0: f32,
+  _flowPad1: f32,
+  _flowPad2: f32,
 };
 @group(0) @binding(10) var<uniform> TUNE: CloudTuning;
 
@@ -956,9 +960,14 @@ fn verticalPhaseOffset(pos_xz: vec2<f32>, ph: f32, boxMaxXZ: f32) -> f32 {
   let normv = max(boxMaxXZ, 1.0);
   let p = pos_xz / normv;
   let shell = smoothstep(0.06, 0.78, ph) * (1.0 - smoothstep(0.88, 0.995, ph));
+  // Flowing shelves need coherent folds through their height. The legacy
+  // phase terms traverse dozens of hash cells in tall layers, exposing ribs.
+  // Slow only this opted-in material domain; original layers remain intact.
+  let flowing = TUNE.shelfFlow > 0.001 && TUNE.formType < 0.5 && !sphericalCloudMode();
+  let heightPhase = ph * select(1.0, 0.06, flowing);
   let n0 = smoothCellHash2D(p * 0.93 + vec2<f32>(17.31, 9.27), 4.75);
-  let n1 = smoothCellHash2D(p * 1.71 + vec2<f32>(3.83, 28.61) + vec2<f32>(ph * 0.85, ph * 1.33), 9.50);
-  let n2 = smoothCellHash2D(p * 3.14 + vec2<f32>(21.07, 4.11) + vec2<f32>(ph * 2.10, ph * 1.62), 17.0);
+  let n1 = smoothCellHash2D(p * 1.71 + vec2<f32>(3.83, 28.61) + vec2<f32>(heightPhase * 0.85, heightPhase * 1.33), 9.50);
+  let n2 = smoothCellHash2D(p * 3.14 + vec2<f32>(21.07, 4.11) + vec2<f32>(heightPhase * 2.10, heightPhase * 1.62), 17.0);
   let signd = (n0 - 0.5) * 0.56 + (n1 - 0.5) * 0.31 + (n2 - 0.5) * 0.13;
   var amp = mix_f(0.045, 0.34, tall) * mix_f(0.18, 0.82, decor) * shell;
 
@@ -1068,9 +1077,19 @@ fn phLayerBreakupMacro(ph: f32, wm: vec4<f32>, s: vec4<f32>) -> f32 {
 }
 
 // shape & detail samplers
+fn shelfFlowDomain(pos: vec3<f32>) -> vec3<f32> {
+  if (TUNE.shelfFlow <= 0.001 || sphericalCloudMode() || TUNE.formType > 0.5) { return pos; }
+  // Smooth nested waves deform material coordinates, not the camera or pixel
+  // grid. Shape and erosion share the same bend, including their sun probes.
+  let q = pos - B.center;
+  let bend = sin(q.x * 0.72 + sin(q.z * 0.47) * 1.8);
+  let sweep = sin(q.z * 0.54 + q.x * 0.16 + bend * 0.65);
+  return pos + vec3<f32>(sweep * 0.48, bend * 0.28 + sweep * 0.10, bend * 0.22) * TUNE.shelfFlow;
+}
+
 fn shapeUVW_fromWarp(pos: vec3<f32>, ph: f32, w: vec2<f32>) -> vec3<f32> {
   let scaleS = max(wg_scaleS, EPS);
-  let movedPos = sphericalSampleDriftedWorld(pos, NTransform.shapeOffsetWorld);
+  let movedPos = shelfFlowDomain(sphericalSampleDriftedWorld(pos, NTransform.shapeOffsetWorld));
   if (sphericalCloudMode()) {
     let relative = movedPos - B.center;
     let axis = axisOrOne3(NTransform.shapeAxisScale);
@@ -1095,7 +1114,7 @@ fn shapeUVW_fromWarp(pos: vec3<f32>, ph: f32, w: vec2<f32>) -> vec3<f32> {
 
 fn detailUVW_fromWarp(pos: vec3<f32>, ph: f32, w: vec2<f32>) -> vec3<f32> {
   let scaleD = max(wg_scaleD, EPS);
-  let movedPos = sphericalSampleDriftedWorld(pos, NTransform.detailOffsetWorld);
+  let movedPos = shelfFlowDomain(sphericalSampleDriftedWorld(pos, NTransform.detailOffsetWorld));
   if (sphericalCloudMode()) {
     let relative = movedPos - B.center;
     let axis = axisOrOne3(NTransform.detailAxisScale);

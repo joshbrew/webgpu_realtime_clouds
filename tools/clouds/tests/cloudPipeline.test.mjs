@@ -14,7 +14,7 @@ function fixture(device = {}) {
   Object.assign(builder, {
     device, outFormat: 'rgba16float', module: {}, _computePipelineLayout: {},
     _dvOptions: new DataView(new ArrayBuffer(32)),
-    _abTuning: new ArrayBuffer(256), _computePipelineKey: -1,
+    _abTuning: new ArrayBuffer(272), _computePipelineKey: -1,
     _computePipelines: new Map(), _computePipelinePromises: new Map(),
     _state: { tuning: {} }, _writeIfChanged() {},
     // These tests isolate main-variant caching; the stage cache is tested below.
@@ -28,6 +28,18 @@ function fixture(device = {}) {
   builder.setTuning({ sunStride: 4 });
   return builder;
 }
+
+test('shelf flow occupies its own uniform lane and keeps the original domain by default', () => {
+  const b = fixture();
+  assert.equal(b._dvTuning.getFloat32(256,true),0);
+  b.setTuning({shelfFlow:1.25,towerHeightVariation:.6});
+  assert.equal(b._dvTuning.getFloat32(256,true),1.25);
+  assert.ok(Math.abs(b._dvTuning.getFloat32(252,true)-.6)<1e-6);
+  b.setTuning({shelfFlow:20});
+  assert.equal(b._dvTuning.getFloat32(256,true),2);
+  b.setTuning({shelfFlow:0});
+  assert.equal(b._dvTuning.getFloat32(256,true),0);
+});
 
 test('flat field fidelity replaces both cached textures without changing shader variants',()=>{
   globalThis.GPUTextureUsage={TEXTURE_BINDING:4,STORAGE_BINDING:8};

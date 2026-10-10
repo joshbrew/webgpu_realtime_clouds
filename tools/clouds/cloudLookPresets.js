@@ -74,9 +74,77 @@ export const REFERENCE_LOOK_PRESETS = Object.freeze({
     [.12,.25,.49],[.75,.87,1.18],[.52,.70,1.14],[.012,.027,.08],
     [.50,.70,1.10],[.025,.050,.14],[.75,1.10,1.60],
   ],{styleShadowStrength:3.0,styleShadowEdge:1.2,styleShadowDarkness:.7,styleRimStrength:.70,styleMidLift:.75,fogDensity:.03}),
+  29: look('Lavender Gouache', [
+    [.40,.48,.63],[1.05,1.03,.91],[1.16,1.02,1.23],[.33,.32,.47],
+    [1.12,.98,1.18],[.45,.43,.63],[1.52,1.48,1.14],
+  ],{exposure:1.22,styleShadowStrength:1.25,styleShadowEdge:.65,styleColorLift:1.10,
+    styleSaturation:.86,styleRimStrength:.80,styleSunBleed:.12,styleMidLift:1.18,
+    fogDensity:.08,fogSun:.06,godRayStrength:.04}),
+  30: look('Indigo Gouache', [
+    [.38,.45,.60],[1.04,1.03,.91],[.94,.94,1.16],[.10,.12,.25],
+    [.91,.93,1.15],[.10,.12,.25],[1.58,1.55,1.12],
+  ],{exposure:1.16,styleShadowStrength:2.0,styleShadowEdge:.90,styleColorLift:1.04,
+    styleSaturation:.90,styleRimStrength:1.0,styleSunBleed:.10,styleMidLift:.92,
+    fogDensity:.045,fogSun:.04,godRayStrength:.035}),
+  31: look('Rose Gold Wash', [
+    [.54,.36,.43],[1.12,1.01,.82],[1.26,.95,1.02],[.31,.17,.27],
+    [1.24,.91,.91],[.40,.22,.37],[1.68,1.43,.94],
+  ],{exposure:1.20,styleShadowStrength:1.35,styleShadowEdge:.60,styleColorLift:1.12,
+    styleSaturation:.95,styleRimStrength:.85,styleSunBleed:.14,styleMidLift:1.15,
+    fogDensity:.09,fogSun:.10,godRayStrength:.05}),
+  32: look('Copper Ochre Gouache', [
+    [.67,.34,.19],[1.17,1.00,.68],[1.32,.87,.51],[.17,.055,.037],
+    [1.34,.85,.43],[.22,.065,.043],[1.91,1.48,.78],
+  ],{exposure:1.12,styleShadowStrength:2.1,styleShadowEdge:.85,styleColorLift:1.08,
+    styleSaturation:1.10,styleRimStrength:1.05,styleSunBleed:.15,styleMidLift:.95,
+    fogDensity:.055,fogSun:.10,godRayStrength:.06}),
+  33: look('Lavender Glaze', [
+    [.40,.48,.63],[1.05,1.03,.93],[1.17,1.06,1.24],[.39,.36,.51],
+    [1.15,1.04,1.22],[.52,.48,.68],[1.43,1.40,1.17],
+  ],{exposure:1.24,styleShadowStrength:.95,styleShadowEdge:.40,styleColorLift:1.10,
+    styleSaturation:.82,styleRimStrength:.42,styleSunBleed:.08,styleMidLift:1.22,
+    fogDensity:.085,fogSun:.05,godRayStrength:.03}),
+  34: look('Violet Underpainting', [
+    [.40,.48,.63],[1.05,1.03,.91],[1.16,1.01,1.24],[.21,.22,.37],
+    [1.09,.94,1.18],[.25,.25,.44],[1.51,1.46,1.12],
+  ],{exposure:1.20,styleShadowStrength:1.65,styleShadowEdge:.80,styleColorLift:1.08,
+    styleSaturation:.88,styleRimStrength:.60,styleSunBleed:.09,styleMidLift:1.08,
+    fogDensity:.06,fogSun:.05,godRayStrength:.035}),
+  35: look('Lavender Sunwash', [
+    [.42,.48,.61],[1.09,1.04,.91],[1.30,1.07,1.20],[.34,.29,.43],
+    [1.25,1.00,1.12],[.43,.38,.57],[1.65,1.55,1.13],
+  ],{exposure:1.23,styleShadowStrength:1.20,styleShadowEdge:.45,styleColorLift:1.12,
+    styleSaturation:.88,styleRimStrength:.55,styleSunBleed:.12,styleMidLift:1.20,
+    fogDensity:.08,fogSun:.08,godRayStrength:.04}),
+  36: look('Silver Ink Wash', [
+    [.38,.45,.60],[1.05,1.04,.92],[.85,.90,1.15],[.045,.055,.13],
+    [.74,.80,1.05],[.045,.055,.13],[1.72,1.68,1.19],
+  ],{exposure:1.18,styleShadowStrength:2.35,styleShadowEdge:1.10,styleColorLift:1.05,
+    styleSaturation:.88,styleRimStrength:1.20,styleSunBleed:.10,styleMidLift:.90,
+    fogDensity:.045,fogSun:.04,godRayStrength:.03}),
+  37: look('Lilac Ink Wash', [
+    [.40,.47,.62],[1.05,1.03,.93],[1.03,.94,1.18],[.14,.13,.27],
+    [1.04,.91,1.16],[.16,.14,.30],[1.64,1.59,1.19],
+  ],{exposure:1.20,styleShadowStrength:1.95,styleShadowEdge:.95,styleColorLift:1.08,
+    styleSaturation:.87,styleRimStrength:1.05,styleSunBleed:.09,styleMidLift:1.02,
+    fogDensity:.06,fogSun:.045,godRayStrength:.03}),
+  38: look('Indigo Ink Currents', [
+    [.38,.45,.60],[1.05,1.04,.92],[.66,.72,.92],[.13,.16,.28],
+    [.67,.73,.94],[.105,.13,.24],[1.74,1.72,1.18],
+  ],{exposure:1.18,styleShadowStrength:1.80,styleShadowEdge:.85,styleColorLift:1.04,
+    styleSaturation:.78,styleRimStrength:1.15,styleSunBleed:.04,styleMidLift:1.0,
+    fogDensity:.035,fogSun:.025,godRayStrength:.015}),
+  39: look('Pearl Ink Wisps', [
+    [.40,.47,.62],[1.05,1.04,.94],[.79,.80,1.00],[.20,.22,.35],
+    [.81,.82,1.03],[.18,.20,.33],[1.68,1.66,1.20],
+  ],{exposure:1.20,styleShadowStrength:1.45,styleShadowEdge:.70,styleColorLift:1.06,
+    styleSaturation:.76,styleRimStrength:.95,styleSunBleed:.035,styleMidLift:1.08,
+    fogDensity:.045,fogSun:.025,godRayStrength:.015}),
 });
 
-export const SCULPTED_LOOK_IDS = Object.freeze([19,20,21,23,26,27,28]);
+export const INK_LOOK_IDS = Object.freeze([36,37,38,39]);
+export const PAINTERLY_LOOK_IDS = Object.freeze([29,33,34,35,30,31,32,...INK_LOOK_IDS]);
+export const SCULPTED_LOOK_IDS = Object.freeze([19,20,21,23,26,27,28,...PAINTERLY_LOOK_IDS]);
 export function intendedCloudShading(style) {
   return SCULPTED_LOOK_IDS.includes(Number(style)) ? 'sculpted' : Object.hasOwn(REFERENCE_LOOK_PRESETS,style) ? 'soft' : 'auto';
 }

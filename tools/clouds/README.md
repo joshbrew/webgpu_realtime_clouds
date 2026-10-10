@@ -1638,3 +1638,44 @@ The separate 128³ shape bake measured about 2.2 ms. The benchmark also checks
 the actual WGSL flow at zero time, across longitude/poles, and at long-running
 wind phases. See `tests/browser/planet-flow-benchmark-results.json` for the
 raw measurements and error bounds; results depend on GPU and workload.
+
+The flat demo's **Color grade → Watercolor / Gouache lighting** group contains
+Lavender Gouache, Lavender Glaze, Violet Underpainting, Lavender Sunwash,
+Indigo Gouache, Rose Gold Wash and Copper Ochre Gouache. These use
+softly terraced pigment washes driven by existing cloud radiance and optical
+depth, plus a cream/gold backlit shoulder. HDR compression keeps the bright
+Rain Shelf lighting from washing out the painted shadows. Reconstruction
+reuses the compositor's four neighbor samples, with a softer footprint for
+these looks; there are no new textures, passes or raymarch samples. The same
+palettes also finish fluffy volumes. Selecting a grade preserves cloud shape,
+camera, animation state and quality settings; Rain Shelf with Sculpted lighting
+is the intended starting point for the layered reference look. Both preset
+selectors retain the appearance-family headings and apply immediately.
+
+**Ink Wash lighting** adds Silver Ink Wash and Lilac Ink Wash, with darker
+indigo bodies, more distinct pigment layers and selective pale fold highlights.
+The highlights reuse the same four neighboring radiance samples and fade out
+when their contours are too fine to resolve. **Flowing Shelf** is a separate
+layer preset with stretched folds and a gentler alpha cutoff for translucent
+streamers. Try it with Ink Wash for the wavy reference, or keep Rain Shelf with
+Lavender Gouache for the fuller watercolor look. Shape and grade remain
+independently selectable; neither family changes raymarch resolution or starts
+animation automatically.
+
+**Indigo Ink Currents** and **Pearl Ink Wisps** add softer blue-gray pigment
+planes and directional cream highlights on sun-facing contours. They keep the
+earlier watercolor and ink looks intact. **Wind-folded Shelf** uses a small
+world-space material warp to curve the folds without additional texture reads.
+The Tuning panel's **Curved folds** control is zero for the original layers;
+it affects procedural layer shapes only, not fluffy voxels or planets.
+
+The **Layer preset** selector also offers **Rising Ink Shelf**, **Billowing Ink
+Bank**, and **Wind-torn Curtains**: progressively taller sculpted formations
+with upright folds, fuller banks, or connected turbulent curtains. These presets change
+height and material structure independently of the selected color grade. They
+frame the taller layers from below and restore the original shelf camera
+when switching back. They preserve playback and raymarch resolution settings.
+**Dense Wind-folded Bank** keeps the turbulent shelf domain but broadens its
+connected masses with shape support, less erosion, and higher density. Flowing
+shelves use a slower continuous height distortion to avoid repeated horizontal
+ribs in taller layers; the original non-flowing layers retain their sampling.

@@ -8,7 +8,7 @@ import wrkr from "./cloudTest.worker.js";
 import { CloudTimingReport, logCloudTimingReport } from "./cloudTiming.js";
 import { ANVIL_FORM, ANVIL_PRESET_VALUES } from './weather/cloudAnvilLook.js';
 import { CLOUD_FIELD_QUALITIES, normalizeCloudFieldQuality, supportsCloudFieldQuality } from './cloudFieldQuality.js';
-import { REFERENCE_LOOK_PRESETS } from './cloudLookPresets.js';
+import { REFERENCE_LOOK_PRESETS, PAINTERLY_LOOK_IDS, INK_LOOK_IDS } from './cloudLookPresets.js';
 import { installCloudNavigation } from './cloudNavigation.js';
 
 let worker;
@@ -1336,10 +1336,8 @@ function cloneOptions(fromId, toId) {
     sourceOptions.every((option, index) => targetOptions[index]?.value === option.value && targetOptions[index]?.textContent === option.textContent && targetOptions[index]?.disabled === option.disabled);
   if (sameOptions) return;
   const current = target.value || source.value;
-  target.innerHTML = "";
-  sourceOptions.forEach((option) => {
-    target.appendChild(option.cloneNode(true));
-  });
+  // Keep the appearance families visible in the quick selector too.
+  target.replaceChildren(...Array.from(source.children, child => child.cloneNode(true)));
   target.value = current || source.value;
 }
 
@@ -1373,7 +1371,13 @@ function populateCloudQuickDock() {
   for(const id of ['v-field-quality','quick-field-quality','v-cloud-turbulence','quick-cloud-turbulence']) if($(id)) $(id).disabled=!fluffy;
   if($('quick-render-path-hint')) $('quick-render-path-hint').textContent=fluffy
     ? 'Fluffy volume: detail and turbulence shape the clouds. Lighting finish changes their appearance; Sculpted works here too.'
-    : 'Rain Shelf: procedural sculpted clouds. Fluffy volume detail and turbulence do not apply. Choose Sculpted lighting for the illustrated references.';
+    : ['rising_ink_shelf','billowing_ink_bank','wind_torn_curtains','dense_wind_folded_bank'].includes(preview.layerPreset)
+      ? `${CLOUD_LAYER_PRESETS[preview.layerPreset].description} Color grade changes lighting independently.`
+    : preview.layerPreset === 'wind_folded_shelf'
+      ? 'Wind-folded Shelf: curved material folds and tapered strands. Pair with Indigo Ink Currents or Pearl Ink Wisps; color and shape stay independent.'
+    : preview.layerPreset === 'flowing_shelf'
+      ? 'Flowing Shelf: long wavy folds and fine streamers. Try Silver Ink Wash or Lilac Ink Wash; grades change lighting without changing the shape.'
+      : 'Rain Shelf: layered procedural clouds. Try Watercolor / Gouache grades for soft painted folds, or Ink Wash grades for dark flowing tones.';
   if (document.activeElement !== $("quick-sky-span")) {
     const halfX = Number($("v-box-hx")?.value || preview.box?.half?.[0] || 18);
     const halfZ = Number($("v-box-hz")?.value || preview.box?.half?.[2] || 18);
@@ -2218,6 +2222,7 @@ function organizeSidebarControlGroups() {
   appendControlGroup(tuningPanel, "Density", [
     { label: "Form", columns: 1, fields: [{ id: "t-formType", label: "Shape" }] },
     { label: "Puffs", columns: 3, fields: [{ id: "t-puffScale", label: "Size" }, { id: "t-towerHeightVariation", label: "Height variation" }, { id: "t-aoStrength", label: "Occlusion" }] },
+    { label: "Shelf flow", columns: 1, fields: [{ id: "t-shelfFlow", label: "Curved folds" }] },
     { label: "Body", columns: 3, fields: [{ id: "p-coverage", label: "Coverage" }, { id: "p-density", label: "Density" }, { id: "p-anvil", label: "Anvil" }] },
     { label: "Shell", columns: 4, fields: [{ id: "t-fluffFactor", label: "Fluff" }, { id: "t-sparsity", label: "Sparse" }, { id: "t-definition", label: "Define" }, { id: "t-topJitter", label: "Top" }] },
     { label: "Grain", columns: 1, fields: [{ id: "t-baseJitter", label: "Base" }] },
@@ -2723,6 +2728,96 @@ const CLOUD_LAYER_PRESETS = {
   },
 };
 
+// A separate anatomy option for the long flowing folds in the ink reference.
+// Color grades never apply these shape edits or change the sampling budget.
+CLOUD_LAYER_PRESETS.flowing_shelf = {
+  description: "Long wavy shelf folds with fine translucent streamers. Pair with an Ink Wash grade, or try any color palette.",
+  values: {
+    ...CLOUD_LAYER_PRESETS.rain_shelf.values,
+    "p-density": 10.8, "p-anvil": 0.28,
+    "t-fluffFactor": 2.45, "t-sparsity": 0.28, "t-definition": 0.48,
+    "t-baseJitter": 0.025, "t-topJitter": 0.10,
+    "t-verticalTextureHomogeneity": 0.92, "t-verticalLayerDecorrelation": 0.38,
+    "t-sliceJitterStrength": 0.035, "t-alphaBoostAmount": 0.07,
+    "t-minOutputAlpha": 0.035, "t-outputAlphaFeather": 0.42,
+    "we-axis-x": 0.42, "we-axis-z": 1.0,
+    "sh-axis-x": 0.28, "sh-axis-z": 1.10,
+    "de-axis-x": 0.32, "de-axis-z": 1.15,
+  },
+};
+
+CLOUD_LAYER_PRESETS.wind_folded_shelf = {
+  description: "Swept ink-like folds with thin wind-carried strands. Try Indigo Ink Currents or Pearl Ink Wisps.",
+  values: {
+    ...CLOUD_LAYER_PRESETS.flowing_shelf.values,
+    "t-shelfFlow": 1.25,
+    "t-verticalTextureHomogeneity": 0.48,
+    "t-verticalLayerDecorrelation": 0.60,
+    "t-topJitter": 0.18, "t-definition": 0.40,
+    "t-minOutputAlpha": 0.045, "t-alphaBoostAmount": 0.04,
+    "we-axis-x": 0.55, "we-axis-z": 0.90,
+    "sh-axis-x": 0.35, "sh-axis-y": 1.65, "sh-axis-z": 0.85,
+    "de-axis-x": 0.30, "de-axis-y": 1.85, "de-axis-z": 0.90,
+  },
+};
+
+// Taller layered forms retain the direct procedural / sculpted path. Their
+// vertical shape comes from the material domain, rather than the voxel puffs.
+CLOUD_LAYER_PRESETS.rising_ink_shelf = {
+  description: "Upright curling folds rising out of a broad shelf. A taller sculpted layer for ink or watercolor lighting.",
+  form: { type: 0, halfY: 0.65, puffScale: 3.6, ao: 0, heightVariation: 0.35, camera: [-0.75, -0.55, -0.95, 62, 18] },
+  values: {
+    ...CLOUD_LAYER_PRESETS.wind_folded_shelf.values,
+    "p-density": 11.2, "p-anvil": 0.38,
+    "t-shelfFlow": 1.35, "t-topJitter": 0.26,
+    "t-verticalTextureHomogeneity": 0.42, "t-verticalLayerDecorrelation": 0.42,
+    "de-scale": 0.80, "de-zoom": 4.2, "de-freq": 0.95,
+    "we-axis-x": 0.65,
+    "sh-axis-x": 0.52, "sh-axis-y": 1.25,
+    "de-axis-x": 0.44, "de-axis-y": 1.30,
+  },
+};
+CLOUD_LAYER_PRESETS.billowing_ink_bank = {
+  description: "Tall rounded banks with broad painted shoulders and curved internal folds. The fuller vertical shelf variant.",
+  form: { type: 0, halfY: 0.9, puffScale: 3.6, ao: 0, heightVariation: 0.35, camera: [-0.75, -0.55, -0.95, 62, 18] },
+  values: {
+    ...CLOUD_LAYER_PRESETS.rising_ink_shelf.values,
+    "p-density": 12, "p-anvil": 0.62,
+    "t-shelfFlow": 1.0, "t-fluffFactor": 3.0, "t-definition": 0.48, "t-sparsity": 0.25,
+    "t-topJitter": 0.32, "t-verticalLayerDecorrelation": 0.56,
+    "we-zoom": 2.3, "we-freq": 0.8,
+    "we-billow-zoom": 2.5, "we-billow-freq": 1.0,
+    "sh-scale": 0.09, "de-scale": 0.55, "de-zoom": 3.8, "de-freq": 0.85,
+    "we-axis-x": 0.85, "we-axis-z": 1.0,
+    "sh-axis-x": 0.72, "sh-axis-y": 1.10, "sh-axis-z": 0.90,
+    "de-axis-x": 0.65, "de-axis-y": 0.65, "de-axis-z": 1.0,
+  },
+};
+CLOUD_LAYER_PRESETS.wind_torn_curtains = {
+  description: "Connected wind-folded clouds rising into turbulent curtains, with fine wisps along their edges.",
+  form: { type: 0, halfY: 1.2, puffScale: 3.6, ao: 0, heightVariation: 0.35, camera: [-0.75, -0.55, -0.95, 62, 18] },
+  values: {
+    ...CLOUD_LAYER_PRESETS.wind_folded_shelf.values,
+    "p-density": 13.0, "sh-bias": 0.46, "t-sparsity": 0.20,
+    "t-shelfFlow": 1.5, "t-topJitter": 0.20,
+    "t-verticalTextureHomogeneity": 0.70, "t-verticalLayerDecorrelation": 0.18,
+    "sh-axis-y": 1.10, "de-axis-y": 1.30,
+  },
+};
+
+CLOUD_LAYER_PRESETS.dense_wind_folded_bank = {
+  description: "Full connected wind-folded masses with broad turbulent curls and fine edge wisps. Denser than Wind-folded Shelf.",
+  form: { type: 0, halfY: 0.85, puffScale: 3.6, ao: 0, heightVariation: 0.35, camera: [-0.75, -0.55, -0.95, 62, 18] },
+  values: {
+    ...CLOUD_LAYER_PRESETS.wind_folded_shelf.values,
+    "p-density": 14.2, "sh-bias": 0.50,
+    "t-sparsity": 0.18, "t-fluffFactor": 2.8,
+    "t-shelfFlow": 1.3, "t-verticalLayerDecorrelation": 0.18,
+    "t-topJitter": 0.20,
+    "sh-axis-y": 1.15, "de-axis-y": 1.35,
+  },
+};
+
 function injectPreviewLookControls() {
   const panel = $("p-preview");
   if (!panel || $("v-grade")) return;
@@ -2751,6 +2846,12 @@ function injectPreviewLookControls() {
           <option value="kelvin_helmholtz">Kelvin–Helmholtz (Experimental)</option>
           <option value="asperitas">Asperitas</option>
           <option value="rain_shelf">Rain Shelf · Sculpted</option>
+          <option value="flowing_shelf">Flowing Shelf · Sculpted / Wispy</option>
+          <option value="wind_folded_shelf">Wind-folded Shelf · Sculpted / Inky</option>
+          <option value="dense_wind_folded_bank">Dense Wind-folded Bank · Sculpted / Tall</option>
+          <option value="rising_ink_shelf">Rising Ink Shelf · Sculpted / Tall</option>
+          <option value="billowing_ink_bank">Billowing Ink Bank · Sculpted / Tall</option>
+          <option value="wind_torn_curtains">Wind-torn Curtains · Sculpted / Wispy</option>
         </select>
       </label>
       <label style="display:flex; flex-direction:column; gap:6px;">
@@ -2778,6 +2879,12 @@ function injectPreviewLookControls() {
           <optgroup label="Sculpted lighting · Cartoon / Illustrated">
             ${[19,20,21,23,26,27,28].map(key=>`<option value="${key}">${REFERENCE_LOOK_PRESETS[key].label}</option>`).join('')}
           </optgroup>
+          <optgroup label="Watercolor / Gouache lighting">
+            ${PAINTERLY_LOOK_IDS.filter(key=>!INK_LOOK_IDS.includes(key)).map(key=>`<option value="${key}">${REFERENCE_LOOK_PRESETS[key].label}</option>`).join('')}
+          </optgroup>
+          <optgroup label="Ink Wash lighting · Flowing / Wispy">
+            ${INK_LOOK_IDS.map(key=>`<option value="${key}">${REFERENCE_LOOK_PRESETS[key].label}</option>`).join('')}
+          </optgroup>
         </select>
       </label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Raymarch Resolution Divider / Full-res Output</span><input id="v-render-scale-divider" type="number" step="1" min="1" max="8" title="Controls the internal cloud raymarch resolution. The final canvas remains full resolution and reconstructs from this buffer. 1 = full-resolution raymarch, 4 = default performance mode."></label>
@@ -2798,6 +2905,7 @@ function injectPreviewLookControls() {
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Sun</span><input id="v-fog-sun" type="number" step="0.01" min="0" max="2" title="Amount of sun-washed color injected into the atmospheric fog by the active color grade."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Min Output Alpha</span><input id="t-minOutputAlpha" type="number" step="0.005" min="0" max="0.45" title="Compute-side alpha cutoff. Pixels below this alpha are written transparent before temporal history so low-opacity speckle cannot accumulate."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Form</span><select id="t-formType"><option value="0">Layer / Rain Shelf · Sculpted</option><option value="1">Rounded Cumulus</option><option value="2">Towering Cumulus</option><option value="3">Thunderhead / Anvil</option><option value="4">Mixed Weather</option><option value="5">Feather Cirrus · Soft volume</option><option value="6">Kelvin–Helmholtz Waves</option><option value="7">Asperitas</option></select></label>
+      <label><span>Curved shelf folds</span><input id="t-shelfFlow" type="number" value="0" min="0" max="2" step="0.1" title="Curves the procedural material into flowing folds. Layer clouds only; 0 preserves the original shape."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Puff Size</span><input id="t-puffScale" type="number" value="3.6" step="0.1" min="0.75" max="12" title="World-space size of rounded cloud cells. Layer mode keeps its original noise structure."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Ambient Occlusion</span><input id="t-aoStrength" type="number" value="0" step="0.05" min="0" max="1" title="Rounded forms only: cached neighboring density probes darken pockets between puffs. Layer mode retains its original lighting."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Height Variation</span><input id="t-towerHeightVariation" type="number" value="0.35" step="0.05" min="0" max="0.9" title="Varies cloud-cell heights so the tops do not form a flat ceiling."></label>
@@ -3293,8 +3401,12 @@ const formCameraControls = ["v-cx", "v-cy", "v-cz", "v-yaw", "v-pitch"];
 function applyCloudLayerPresetValues(key) {
   const preset = CLOUD_LAYER_PRESETS[key];
   if (!preset) return false;
+  setControlValue('t-shelfFlow', 0);
   preview.layerPreset = key;
   setControlValue("v-layer-preset", key);
+  // Each anatomy starts from an unstretched horizontal domain. Flowing Shelf
+  // then opts into its elongated waves; switching away must restore the axes.
+  for (const prefix of ['we','sh','de']) for (const axis of ['x','z']) setControlValue(`${prefix}-axis-${axis}`, 1);
   for (const [id, val] of Object.entries(preset.values || {})) {
     setControlValue(id, val);
   }
@@ -3323,7 +3435,7 @@ function applyCloudLayerPresetValues(key) {
   }
   // Tall forms need an outside view. Preserve the user's layer view so switching
   // back to coastal/Rain Shelf clouds doesn't silently change its framing.
-  if (form.type) {
+  if (form.type || form.camera) {
     savedLayerCamera ||= formCameraControls.map(id => $(id)?.value);
     // View the lit shoulders, not straight into the sun through an opaque body.
     // Backlit views remain available, but shouldn't hide each preset's billows.
@@ -3338,7 +3450,7 @@ function applyCloudLayerPresetValues(key) {
   setControlValue("t-aoStrength", form.ao);
   setControlValue("t-towerHeightVariation", form.heightVariation);
   setControlValue("v-box-hy", form.halfY);
-  setControlValue("v-box-cy", preview.volumeShape === "torus" || preview.volumeShape === "gallery" ? 0 : form.type ? form.halfY - 0.3 : 0);
+  setControlValue("v-box-cy", preview.volumeShape === "torus" || preview.volumeShape === "gallery" ? 0 : form.type || form.camera ? form.halfY - 0.3 : 0);
   return true;
 }
 
@@ -3687,6 +3799,7 @@ function readTuning() {
     puffScale: num("t-puffScale", 3.6),
     aoStrength: num("t-aoStrength", 0),
     towerHeightVariation: num("t-towerHeightVariation", 0.35),
+    shelfFlow: num("t-shelfFlow", 0),
     anvilLift: num("t-anvilLift", 0.6),
     alphaCutoff: +($("t-alphaCutoff")?.value || 0.98),
     verticalStepBoost: +($("t-verticalStepBoost")?.value || 3.0),

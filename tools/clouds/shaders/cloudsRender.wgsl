@@ -126,7 +126,7 @@ fn cloudDeDitherWeight(center: vec4<f32>, tap: vec4<f32>, spatialWeight: f32) ->
   let alphaWeight = exp(-alphaDelta * 18.0);
   // Cached volumes contain stochastic integration noise in opaque lighting
   // too. Do not mistake every small radiance difference for a material edge.
-  let volume = R.fieldLighting > 0.5 && R.cloudShading < 1.5;
+  let volume = (R.fieldLighting > 0.5 && R.cloudShading < 1.5) || painterlyLook(R.gradeStyle);
   let lumaWeight = exp(-lumaDelta * select(14.0, 5.0, volume));
   let visibilityWeight = smoothstep(0.01, 0.12, tapA);
   return spatialWeight * alphaWeight * lumaWeight * visibilityWeight;
@@ -136,22 +136,24 @@ struct CloudNeighborhood {
   filtered: vec4<f32>,
   grad: vec2<f32>,
   occ: f32,
+  lightGrad: vec2<f32>,
 }
 
 fn sampleCloudNeighborhood(uv:vec2<f32>, layer:i32, center:vec4<f32>)->CloudNeighborhood {
   let centerA = clamp(center.a, 0.0, 1.0);
   if (R.compositeQuality == 0u || centerA < 0.003) {
-    return CloudNeighborhood(center, vec2<f32>(0.0, 0.0), centerA);
+    return CloudNeighborhood(center, vec2<f32>(0.0, 0.0), centerA, vec2<f32>(0.0));
   }
 
   let dims = displayTextureDimensions();
   let px = 1.0 / max(dims, vec2<f32>(1.0, 1.0));
   let volume = R.fieldLighting > 0.5 && R.cloudShading < 1.5;
+  let painted = painterlyLook(R.gradeStyle);
   // Reconstruct in source texels. With divider 4, two display pixels only
   // reach halfway across one ray texel and cannot filter its random grain.
   // Keep the established sculpted relief footprint and the same four taps.
   let sourcePx = 1.0 / max(vec2<f32>(textureDimensions(tex)), vec2<f32>(1.0));
-  let stepUv = select(px * 2.0, max(px * 2.0, sourcePx), volume);
+  let stepUv = select(select(px * 2.0, max(px * 2.0, sourcePx), volume), max(px * 3.0, sourcePx * 1.5), painted);
 
   let left = sampleCloudRaw(clamp(uv + vec2<f32>(-stepUv.x, 0.0), vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999)), layer);
   let right = sampleCloudRaw(clamp(uv + vec2<f32>(stepUv.x, 0.0), vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999)), layer);
@@ -177,12 +179,18 @@ fn sampleCloudNeighborhood(uv:vec2<f32>, layer:i32, center:vec4<f32>)->CloudNeig
   let qualityF = min(f32(R.compositeQuality), 2.0) * 0.5;
   let surfaceBlend = mix(0.34, 0.54, qualityF) * edgeBand + 0.12 * bodyBand;
   let volumeBlend = mix(0.40, 0.58, qualityF) * smoothstep(0.02, 0.20, centerA);
-  let blend = clamp(select(surfaceBlend, volumeBlend, volume), 0.0, 0.64);
+  let blend = clamp(select(surfaceBlend, volumeBlend, volume || painted), 0.0, 0.64);
   let filtered = mix(center, filteredTap, blend);
 
   let grad = vec2<f32>(right.a - left.a, up.a - down.a);
   let occ = clamp(centerA * 0.42 + (left.a + right.a + down.a + up.a) * 0.145, 0.0, 1.0);
-  return CloudNeighborhood(filtered, grad, occ);
+  var lightGrad = vec2<f32>(0.0);
+  if (inkLook(R.gradeStyle)) {
+    // Follow the existing lit folds, including opaque interiors. These are
+    // the same four samples used for reconstruction, not new texture reads.
+    lightGrad = vec2<f32>(inkLightValue(right) - inkLightValue(left), inkLightValue(up) - inkLightValue(down));
+  }
+  return CloudNeighborhood(filtered, grad, occ, lightGrad);
 }
 
 fn alphaFloorGate(alpha: f32) -> f32 {
@@ -290,6 +298,83 @@ fn applyStyleGrade(cIn:vec3<f32>, style:u32, cloudMask:f32)->vec3<f32> {
 
 fn illustratedLook(style:u32)->bool {
   return style == 19u || style == 20u || style == 21u || style == 23u || (style >= 26u && style <= 28u);
+}
+
+fn painterlyLook(style:u32)->bool {
+  return style >= 29u && style <= 39u;
+}
+
+fn inkLook(style:u32)->bool {
+  return style >= 36u && style <= 39u;
+}
+
+fn flowingInkLook(style:u32)->bool {
+  return style == 38u || style == 39u;
+}
+
+// A directional crest, not a uniform outline. Reuse alpha gradients so the
+// highlight follows the rendered cloud and remains attached during flight.
+fn flowingInkCrest(alpha:f32, gradient:vec2<f32>, uv:vec2<f32>, sunUv:vec2<f32>)->f32 {
+  let dims = displayTextureDimensions();
+  let toSun = (sunUv - uv) * dims;
+  let sunLength = max(length(toSun), 0.001);
+  let slope = length(gradient);
+  let outward = -gradient / max(slope, 0.00001);
+  let facing = smoothstep(-0.12, 0.68, dot(outward, toSun / sunLength));
+  let edge = smoothstep(0.06, 0.24, alpha) * (1.0 - smoothstep(0.42, 0.82, alpha));
+  return edge * facing * smoothstep(0.008, 0.08, slope);
+}
+
+fn inkLightValue(sample:vec4<f32>)->f32 {
+  let radiance = max(luma(sample.rgb), 0.0) / max(sample.a, 0.08);
+  return radiance / (radiance + max(0.25, R.shadowStrength * 1.7));
+}
+
+fn inkFoldHighlight(light:f32, gradient:vec2<f32>)->f32 {
+  let slope = length(gradient);
+  // Antialias the wash boundaries with their measured lighting variation.
+  // Fine unresolved contours fade instead of turning into a screen-space grid.
+  let width = clamp(slope * 3.0, 0.035, 0.20);
+  let contour = 1.0 - smoothstep(width, width + 0.10, abs(fract(light * 7.0) - 0.55));
+  return contour * smoothstep(0.004, 0.025, slope) * (1.0 - smoothstep(0.10, 0.22, slope))
+    * smoothstep(0.18, 0.70, light);
+}
+
+// Broad pigment washes with softly terraced transitions. Lighting and optical
+// depth supply the brush shapes; no screen noise, density changes or new reads.
+fn gouachePalette(light:f32, shadow:vec3<f32>, highlight:vec3<f32>)->vec3<f32> {
+  if (flowingInkLook(R.gradeStyle)) {
+    // Broad translucent ink planes leave room for fine pale crests. Avoid
+    // turning the opaque body into a single nearly-black plateau.
+    let x = clamp(light, 0.0, 0.9999) * 6.0;
+    let layered = (floor(x) + smoothstep(0.12, 0.88, fract(x))) / 6.0;
+    let wash = pow(mix(light, layered, 0.45), 0.72);
+    let mid = mix(shadow, highlight, 0.36);
+    let fold = mix(shadow, highlight, 0.68);
+    var pigment = mix(shadow * 0.88, mid, smoothstep(0.03, 0.50, wash));
+    pigment = mix(pigment, fold, smoothstep(0.38, 0.82, wash));
+    return mix(pigment, highlight * 0.90, smoothstep(0.80, 1.0, wash));
+  }
+  if (inkLook(R.gradeStyle)) {
+    let x = clamp(light, 0.0, 0.9999) * 7.0;
+    let layered = (floor(x) + smoothstep(0.15, 0.85, fract(x))) / 7.0;
+    let wash = mix(light, layered, 0.60);
+    let dilutedInk = mix(shadow, highlight, 0.48);
+    let body = mix(shadow * 0.90, dilutedInk, smoothstep(0.02, 0.70, wash));
+    return mix(body, highlight * 0.82, smoothstep(0.68, 1.0, wash));
+  }
+  // Preserve the approved Gouache finish. Glaze/Sunwash soften its steps;
+  // Underpainting adds an intermediate pigment plane without extra sampling.
+  let bands = select(4.0, 5.0, R.gradeStyle == 34u);
+  let x = clamp(light, 0.0, 0.9999) * bands;
+  let terraced = (floor(x) + smoothstep(0.20, 0.80, fract(x))) / bands;
+  let bandMix = select(0.65, 0.30, R.gradeStyle == 33u || R.gradeStyle == 35u);
+  let wash = mix(light, terraced, bandMix);
+  let violet = mix(shadow, highlight, 0.30);
+  let rose = mix(shadow, highlight, 0.68) * vec3<f32>(1.045, 0.975, 1.015);
+  var pigment = mix(shadow, violet, smoothstep(0.04, 0.36, wash));
+  pigment = mix(pigment, rose, smoothstep(0.30, 0.72, wash));
+  return mix(pigment, highlight, smoothstep(0.70, 1.0, wash));
 }
 
 fn stableSunHintUV(uvSun: vec2<f32>) -> vec2<f32> {
@@ -1152,6 +1237,27 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
       litCloud += userEdgeTint * shoulder * rimLight * clamp(R.styleControls.x, 0.0, 2.20)
         * 0.55 * mix(1.0, 0.18, R.nightAmount) * cloudA;
     }
+    if (painterlyLook(style)) {
+      let wash = smoothstep(0.025, 0.85, volumeLum);
+      let pigment = gouachePalette(wash, userShadowTint, userLightTint);
+      let painted = pigment * cloudA * mix(1.0, 0.18, R.nightAmount);
+      litCloud = mix(litCloud, painted, select(0.90, 0.985, inkLook(style)));
+      let shoulder = select(smoothstep(0.035, 0.18, cloudA) * (1.0 - smoothstep(0.32, 0.82, cloudA)),
+        smoothstep(0.025, 0.10, cloudA) * (1.0 - smoothstep(0.12, 0.32, cloudA)), inkLook(style));
+      let rimLight = smoothstep(0.08, 0.55, volumeLum) * mix(0.12, 1.0, pow(towardSunSky, 5.0));
+      if (flowingInkLook(style)) {
+        let crest = flowingInkCrest(cloudA, neighborhood.grad, in.uv, uvSun);
+        litCloud += userEdgeTint * crest * rimLight * clamp(R.styleControls.x, 0.0, 2.20)
+          * cloudA * 1.85 * mix(1.0, 0.18, R.nightAmount);
+      } else {
+        litCloud += userEdgeTint * shoulder * rimLight * clamp(R.styleControls.x, 0.0, 2.20)
+          * cloudA * 0.70 * mix(1.0, 0.18, R.nightAmount);
+      }
+      if (inkLook(style)) {
+        litCloud += userEdgeTint * inkFoldHighlight(wash, neighborhood.lightGrad) * cloudA
+          * rimLight * select(0.07, 0.04, flowingInkLook(style)) * mix(1.0, 0.18, R.nightAmount);
+      }
+    }
     litCloud+=sunColor*backlitSilver*cloudA;
     let cloudRadiance = mix(litCloud, fogColor * cloudA, cloudFog);
     var linear = cloudRadiance + clearSky * (1.0 - cloudA);
@@ -1744,6 +1850,34 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
     let fold=smoothstep(.006,.050,gradLenCached);
     let outlineLight=.12+.88*pow(max(dot(rayDir,sunDir),0.0),6.0);
     cloudShaded+=userEdgeTint*outline*(.15+.85*fold)*userRimStrength*cloudA*outlineLight*.40;
+  }
+  if (painterlyLook(style)) {
+    // Optical folds give Rain Shelf its broad painted planes. Retain a little
+    // ray-lit texture beneath the washes instead of hardening the whole image.
+    // The procedural shelf can carry HDR radiance far above one. Compress it
+    // before painting so bright source lights do not flatten every wash.
+    let lightWash = unpremulLum / (unpremulLum + max(0.25, R.shadowStrength * 1.7));
+    let relief = clamp((1.0 - opticalDepth) * 0.38 + lightWash * 0.55
+      + upperExposureCached * 0.07 + directSurface * 0.08, 0.0, 1.0);
+    let pigment = gouachePalette(relief, userShadowTint, userLightTint);
+    let paint = pigment * cloudA * mix(1.0, 0.18, R.nightAmount);
+    cloudShaded = mix(cloudShaded, paint, select(select(0.92, 0.985, inkLook(style)), 0.998, flowingInkLook(style)));
+    let shoulder = select(smoothstep(0.035, 0.18, cloudA) * (1.0 - smoothstep(0.30, 0.76, cloudA)),
+      smoothstep(0.025, 0.10, cloudA) * (1.0 - smoothstep(0.12, 0.32, cloudA)), inkLook(style));
+    let fold = smoothstep(0.004, 0.045, gradLenCached);
+    let rimLight = mix(0.025, 1.0, pow(max(dot(rayDir, sunDir), 0.0), 8.0));
+    if (flowingInkLook(style)) {
+      let crest = flowingInkCrest(cloudA, neighborhood.grad, in.uv, uvSun);
+      cloudShaded += userEdgeTint * crest * rimLight * clamp(R.styleControls.x, 0.0, 2.20)
+        * cloudA * 2.2 * mix(1.0, 0.18, R.nightAmount);
+    } else {
+      cloudShaded += userEdgeTint * shoulder * mix(0.30, 1.0, fold) * rimLight
+        * clamp(R.styleControls.x, 0.0, 2.20) * cloudA * 0.85 * mix(1.0, 0.18, R.nightAmount);
+    }
+    if (inkLook(style)) {
+      cloudShaded += userEdgeTint * inkFoldHighlight(relief, neighborhood.lightGrad) * cloudA
+        * rimLight * select(0.08, 0.04, flowingInkLook(style)) * mix(1.0, 0.18, R.nightAmount);
+    }
   }
 
   let skyMask = max(1.0 - cloudDisplayA, 0.0);

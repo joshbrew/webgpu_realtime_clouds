@@ -141,3 +141,54 @@ test('rounded preset framing and AO cannot leak back into Rain Shelf', () => {
   assert.equal(controls.get('t-aoStrength').value, '0');
   assert.equal(controls.get('v-box-hy').value, '0.3');
 });
+
+test('Flowing Shelf stretching restores cleanly without changing grade or ray budget', () => {
+  const controls = new Map([['v-render-scale-divider',{value:'4'}],['v-temporal-cell-rate',{value:'4'}]]);
+  const preview = { gradeStyle:29 };
+  const valueSource = source.slice(source.indexOf('let savedLayerCamera ='), source.indexOf('async function applyCloudLayerPreset('));
+  const apply = new Function('$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(
+    id=>controls.get(id),(id,value)=>controls.set(id,{value:String(value)}),presets,preview);
+  apply('flowing_shelf');
+  assert.equal(controls.get('sh-axis-x').value,'0.28');
+  assert.equal(controls.get('t-minOutputAlpha').value,'0.035');
+  assert.equal(preview.cloudShading,'sculpted');
+  assert.equal(preview.gradeStyle,29);
+  assert.equal(controls.get('v-render-scale-divider').value,'4');
+  assert.equal(controls.get('v-temporal-cell-rate').value,'4');
+  apply('rain_shelf');
+  for(const prefix of ['we','sh','de'])for(const axis of ['x','z'])assert.equal(controls.get(`${prefix}-axis-${axis}`).value,'1');
+  assert.equal(controls.get('t-minOutputAlpha').value,'0.12');
+  assert.equal(preview.gradeStyle,29);
+});
+
+test('vertical ink layers preserve sculpted rendering and restore the original shelf view and domain', () => {
+  const cameraIds = ['v-cx','v-cy','v-cz','v-yaw','v-pitch'];
+  const original = ['-0.75','-1.2','-0.95','35','28'];
+  const controls = new Map(cameraIds.map((id,i)=>[id,{value:original[i]}]));
+  controls.set('v-render-scale-divider',{value:'4'});
+  controls.set('v-temporal-cell-rate',{value:'4'});
+  const preview = { gradeStyle:38 };
+  const valueSource = source.slice(source.indexOf('let savedLayerCamera ='), source.indexOf('async function applyCloudLayerPreset('));
+  const apply = new Function('$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(
+    id=>controls.get(id),(id,value)=>controls.set(id,{value:String(value)}),presets,preview);
+  for (const key of ['rising_ink_shelf','billowing_ink_bank','wind_torn_curtains','dense_wind_folded_bank']) {
+    apply(key);
+    assert.equal(controls.get('t-formType').value,'0');
+    assert.equal(preview.cloudShading,'sculpted');
+    assert.ok(Number(controls.get('v-box-hy').value)>.3);
+    assert.ok(Number(controls.get('t-shelfFlow').value)>0);
+    assert.ok(Number(controls.get('sh-axis-y').value)<presets.wind_folded_shelf.values['sh-axis-y']);
+    assert.ok(Math.abs(Number(controls.get('v-box-cy').value)-Number(controls.get('v-box-hy').value)+.3)<1e-6);
+    assert.equal(controls.get('v-render-scale-divider').value,'4');
+    assert.equal(controls.get('v-temporal-cell-rate').value,'4');
+    assert.equal(preview.gradeStyle,38);
+  }
+  apply('rain_shelf');
+  assert.deepEqual(cameraIds.map(id=>controls.get(id).value),original);
+  assert.equal(controls.get('t-shelfFlow').value,'0');
+  assert.equal(controls.get('v-box-cy').value,'0');
+  assert.equal(controls.get('v-box-hy').value,'0.3');
+  assert.equal(controls.get('sh-axis-y').value,'1.42');
+  assert.equal(controls.get('de-axis-y').value,'1.55');
+  assert.equal(controls.get('sh-bias').value,'0.4');
+});

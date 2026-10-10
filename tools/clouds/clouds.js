@@ -194,8 +194,8 @@ export class CloudComputeBuilder {
     this._abPerf = new ArrayBuffer(16);
     this._dvPerf = new DataView(this._abPerf);
 
-    // TUNE: 256 bytes
-    this._abTuning = new ArrayBuffer(256);
+    // TUNE: 272 bytes (including the optional procedural shelf-flow domain).
+    this._abTuning = new ArrayBuffer(272);
     this._dvTuning = new DataView(this._abTuning);
 
 
@@ -1810,7 +1810,7 @@ export class CloudComputeBuilder {
     });
 
     this.tuningBuffer = d.createBuffer({
-      size: 256,
+      size: this._abTuning.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -2466,6 +2466,7 @@ export class CloudComputeBuilder {
     putF(244, Math.max(0.75, s.puffScale ?? 3.6));
     putF(248, Math.max(0, Math.min(1, s.aoStrength ?? 0)));
     putF(252, Math.max(0, Math.min(0.9, s.towerHeightVariation ?? 0.35)));
+    putF(256, Math.max(0, Math.min(2, s.shelfFlow ?? 0)));
 
     this._writeIfChanged("tuning", this.tuningBuffer, this._abTuning);
   }
