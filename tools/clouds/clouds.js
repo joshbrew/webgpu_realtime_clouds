@@ -2011,19 +2011,21 @@ export class CloudComputeBuilder {
     if (_has(v, "detailBias")) s.detailBias = +v.detailBias;
     if (_has(v, "weatherBias")) s.weatherBias = +v.weatherBias;
 
+    if (_has(v, "planetWarpAmount")) s.planetWarpAmount = +v.planetWarpAmount;
+    if (_has(v, "planetWarpPhase")) s.planetWarpPhase = +v.planetWarpPhase;
     const dv = this._dvNTransform;
 
     // shapeOffsetWorld (0..15)
     dv.setFloat32(0, s.shapeOffsetWorld[0] || 0.0, true);
     dv.setFloat32(4, s.shapeOffsetWorld[1] || 0.0, true);
     dv.setFloat32(8, s.shapeOffsetWorld[2] || 0.0, true);
-    dv.setFloat32(12, 0.0, true);
+    dv.setFloat32(12, Number.isFinite(s.planetWarpAmount) ? s.planetWarpAmount : 1, true);
 
     // detailOffsetWorld (16..31)
     dv.setFloat32(16, s.detailOffsetWorld[0] || 0.0, true);
     dv.setFloat32(20, s.detailOffsetWorld[1] || 0.0, true);
     dv.setFloat32(24, s.detailOffsetWorld[2] || 0.0, true);
-    dv.setFloat32(28, 0.0, true);
+    dv.setFloat32(28, Number.isFinite(s.planetWarpPhase) ? s.planetWarpPhase : s.weatherOffsetWorld[0]*2*Math.PI, true);
 
     // shapeScale, detailScale, weatherScale, pad (32..47)
     dv.setFloat32(32, +s.shapeScale || 0.0, true);

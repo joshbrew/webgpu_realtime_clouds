@@ -26,6 +26,8 @@ const checkPlugins=process.env.CLOUD_POP_BASELINE==='1'?[{name:'old-storm-identi
 await build({entryPoints:[source('./weatherAnvil.js')],outfile:join(temp,'check.js'),bundle:true,format:'esm',platform:'browser',loader,plugins:checkPlugins});
 await build({entryPoints:[source('./planetGas.js')],outfile:join(temp,'planet-gas.js'),bundle:true,format:'esm',platform:'browser',loader});
 await build({entryPoints:[source('./planetFlowBenchmark.js')],outfile:join(temp,'planet-flow-benchmark.js'),bundle:true,format:'esm',platform:'browser',loader});
+await build({entryPoints:[source('./planetRegeneration.js')],outfile:join(temp,'planet-regeneration.js'),bundle:true,format:'esm',platform:'browser',loader});
+await build({entryPoints:[source('./planetControlsSmoke.js')],outfile:join(temp,'planet-controls-smoke.js'),bundle:true,format:'esm',platform:'browser',loader});
 await build({entryPoints:[source('../../cloudTest.worker.js')],outfile:join(temp,'worker.js'),bundle:true,format:'iife',platform:'browser',loader});
 // Keep this cloud review independent of the lab's scratchpad index entry.
 await build({stdin:{contents:`
@@ -37,7 +39,7 @@ await build({stdin:{contents:`
  outfile:join(temp,'demo.js'),bundle:true,format:'esm',platform:'browser',loader,
  plugins:[{name:'test-worker-url',setup(b){
   b.onLoad({filter:/cloudTest\.worker\.js$/},()=>({contents:'export default "/worker.js";',loader:'js'}));
-  if(process.env.PLANET_REVIEW==='1')b.onLoad({filter:/noisePlanetTest\.js$/},async({path})=>({
+  if(process.env.PLANET_REVIEW_FREEZE_SUN==='1')b.onLoad({filter:/noisePlanetTest\.js$/},async({path})=>({
    contents:(await readFile(path,'utf8')).replace('const t = performance.now() * 0.00008;','const t = 1.1;'),loader:'js',
   }));
  }}]});
@@ -45,14 +47,14 @@ const html=script=>`<!doctype html><meta charset="utf-8"><title>Weather anvil ve
 createServer(async(req,res)=>{
  try{
   const path=new URL(req.url,'http://localhost').pathname;
-  if(path==='/check'||path==='/demo'||path==='/planet-gas'||path==='/planet-flow-benchmark'){
-   let page=path==='/demo'?html('/demo.js').replace('<pre id="result">Checking…</pre>',''):html(path==='/planet-flow-benchmark'?'/planet-flow-benchmark.js':path==='/planet-gas'?'/planet-gas.js':'/check.js');
+  if(path==='/check'||path==='/demo'||path==='/planet-gas'||path==='/planet-flow-benchmark'||path==='/planet-controls-smoke'||path==='/planet-regeneration'){
+   let page=path==='/demo'?html('/demo.js').replace('<pre id="result">Checking…</pre>',''):html(path==='/planet-regeneration'?'/planet-regeneration.js':path==='/planet-controls-smoke'?'/planet-controls-smoke.js':path==='/planet-flow-benchmark'?'/planet-flow-benchmark.js':path==='/planet-gas'?'/planet-gas.js':'/check.js');
    // A repeatable actual-simulation review: fixed terrain seed and sun only.
    // Production shader, noise, scene and camera remain the real demo.
    if(path==='/demo'&&process.env.PLANET_REVIEW==='1')page=page.replace('<script type="module"','<script>window.NOISE_PLANET_TEST_OPTIONS={seed:17,clouds:{cloudStyle:"hail_mary"}};</script><script type="module"');
    res.writeHead(200,{'content-type':'text/html'}).end(page);return;
   }
-  const routes={'/check.js':'check.js','/demo.js':'demo.js','/worker.js':'worker.js','/planet-gas.js':'planet-gas.js','/planet-flow-benchmark.js':'planet-flow-benchmark.js'};
+  const routes={'/planet-regeneration.js':'planet-regeneration.js','/planet-controls-smoke.js':'planet-controls-smoke.js','/check.js':'check.js','/demo.js':'demo.js','/worker.js':'worker.js','/planet-gas.js':'planet-gas.js','/planet-flow-benchmark.js':'planet-flow-benchmark.js'};
   if(!routes[path]){res.writeHead(404).end();return;}
   let body=await readFile(join(temp,routes[path]),'utf8');
   if(path==='/worker.js'&&process.env.WEATHER_REVIEW_LIVE!=='1'){

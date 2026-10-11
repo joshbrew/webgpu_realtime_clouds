@@ -5,7 +5,7 @@ import {PLANET_CLOUD_STYLES,planetCloudStyleOptions} from '../planetCloudStyles.
 import {PlanetCloudNoise} from '../planetCloudNoise.js';
 
 test('planet styles scale with radius and keep one regular shader variant',()=>{
- assert.equal(PLANET_CLOUD_STYLES.length,8);
+ assert.equal(PLANET_CLOUD_STYLES.length,11);
  for(const {id} of PLANET_CLOUD_STYLES.slice(1)){
   const small=planetCloudStyleOptions(id,50),large=planetCloudStyleOptions(id,100);
   assert.equal(large.cloudBottom,small.cloudBottom*2);
@@ -37,7 +37,7 @@ test('styled planet close normals stay cheap and weather rotates in a continuous
  const source=await readFile(new URL('../shaders/cloudPlanet.wgsl',import.meta.url),'utf8');
  assert.match(source,/let wind=NTransform.weatherOffsetWorld/);
  assert.match(source,/moved=sphericalDriftedWorld\(p,wind\)/);
- assert.match(source,/gasWeatherDirection\(normalize\(p-B.center\)/);
+ assert.match(source,/planetWarpDirection\(normalize\(p-B.center\)/);
  assert.match(source,/min\(sunStride,2\)/);
  assert.match(source,/clamp\(TUNE.sunSteps,1,3\)/);
  assert.doesNotMatch(source,/frameIndex.*planetPixelRandom|planetPixelRandom.*frameIndex/);
@@ -75,11 +75,20 @@ test('planet setup noise shares tiny stages, records dimensions/seed and release
  await bake.bake({key:'a',shapeSize:32});assert.equal(calls.compile,3);assert.equal(calls.submit,2);
  assert.ok(allocations.slice(0,3).every(r=>r.destroyed));
  await bake.bake({key:'gas-again',shapeSize:32,gas:true});assert.equal(calls.compile,3,'gas bake pipeline must be reused');
- for(const [weatherStyle,mode] of [['gas_giant',1],['neptune',2],['hail_mary',3]]){
+ for(const [weatherStyle,mode] of [['gas_giant',1],['neptune',2],['hail_mary',3],['satellite',4],['cyclonic',5],['trade_winds',6]]){
   await bake.bake({key:weatherStyle,seed:17,shapeSize:32,weatherWidth:64,weatherHeight:32,weatherStyle});
   assert.deepEqual(calls.uniform,[32,64,32,0,17,mode,0,0]);
-  assert.equal(calls.compile,3,'all gas atmospheres reuse the same pipeline');
+  assert.equal(calls.compile,mode<4?3:4,'each family reuses its lazy bake pipeline');
  }
+ const saved=bake.resources.get('hail_mary'),count=allocations.length,compileCount=calls.compile,dispatchCount=calls.groups.length;
+ assert.equal(bake.regenerateWeather('hail_mary',.125),true);
+ assert.equal(bake.resources.get('hail_mary'),saved);
+ assert.equal(allocations.length,count);assert.equal(calls.compile,compileCount);
+ assert.equal(calls.groups.length,dispatchCount+1);
+ assert.deepEqual(calls.groups.at(-1),[8,4,1]);
+ assert.deepEqual(calls.uniform,[.125]);assert.equal(saved.weatherPhase,.125);
+ assert.equal(bake.regenerateWeather('hail_mary',NaN),false);
+ assert.equal(bake.regenerateWeather('missing',1),false);
  bake.destroy();assert.ok(allocations.every(r=>r.destroyed));assert.equal(bake.resources.size,0);
 });
 

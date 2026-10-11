@@ -1,0 +1,99 @@
+{
+  "complete": true,
+  "pass": true,
+  "timing": "GPU timestamps, weather dispatch only",
+  "rows": [
+    {
+      "style": "realistic",
+      "width": 2048,
+      "height": 1024,
+      "frameChangedChannels": 765,
+      "evolvedChangedChannels": 1168,
+      "restoresExactly": true,
+      "shapeUnchanged": true,
+      "sameTexture": true,
+      "medianGpuMs": 2.228224,
+      "maxGpuMs": 5.046272,
+      "pass": true
+    },
+    {
+      "style": "satellite",
+      "width": 2048,
+      "height": 1024,
+      "frameChangedChannels": 911,
+      "evolvedChangedChannels": 1013,
+      "restoresExactly": true,
+      "shapeUnchanged": true,
+      "sameTexture": true,
+      "medianGpuMs": 10.223616,
+      "maxGpuMs": 11.075584,
+      "pass": true
+    },
+    {
+      "style": "cyclonic",
+      "width": 2048,
+      "height": 1024,
+      "frameChangedChannels": 912,
+      "evolvedChangedChannels": 1010,
+      "restoresExactly": true,
+      "shapeUnchanged": true,
+      "sameTexture": true,
+      "medianGpuMs": 3.801088,
+      "maxGpuMs": 5.308416,
+      "pass": true
+    },
+    {
+      "style": "trade_winds",
+      "width": 2048,
+      "height": 1024,
+      "frameChangedChannels": 921,
+      "evolvedChangedChannels": 1014,
+      "restoresExactly": true,
+      "shapeUnchanged": true,
+      "sameTexture": true,
+      "medianGpuMs": 2.94912,
+      "maxGpuMs": 4.194304,
+      "pass": true
+    },
+    {
+      "style": "gas_giant",
+      "width": 2048,
+      "height": 1024,
+      "frameChangedChannels": 1270,
+      "evolvedChangedChannels": 1547,
+      "restoresExactly": true,
+      "shapeUnchanged": true,
+      "sameTexture": true,
+      "medianGpuMs": 3.080192,
+      "maxGpuMs": 4.653056,
+      "pass": true
+    },
+    {
+      "style": "neptune",
+      "width": 2048,
+      "height": 1024,
+      "frameChangedChannels": 635,
+      "evolvedChangedChannels": 1035,
+      "restoresExactly": true,
+      "shapeUnchanged": true,
+      "sameTexture": true,
+      "medianGpuMs": 1.114112,
+      "maxGpuMs": 1.245184,
+      "pass": true
+    },
+    {
+      "style": "hail_mary",
+      "width": 2048,
+      "height": 1024,
+      "frameChangedChannels": 1419,
+      "evolvedChangedChannels": 1848,
+      "restoresExactly": true,
+      "shapeUnchanged": true,
+      "sameTexture": true,
+      "medianGpuMs": 5.24288,
+      "maxGpuMs": 6.094848,
+      "pass": true
+    }
+  ],
+  "errors": []
+}

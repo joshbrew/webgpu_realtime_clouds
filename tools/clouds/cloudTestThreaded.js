@@ -1371,7 +1371,7 @@ function populateCloudQuickDock() {
   for(const id of ['v-field-quality','quick-field-quality','v-cloud-turbulence','quick-cloud-turbulence']) if($(id)) $(id).disabled=!fluffy;
   if($('quick-render-path-hint')) $('quick-render-path-hint').textContent=fluffy
     ? 'Fluffy volume: detail and turbulence shape the clouds. Lighting finish changes their appearance; Sculpted works here too.'
-    : ['rising_ink_shelf','billowing_ink_bank','wind_torn_curtains','dense_wind_folded_bank'].includes(preview.layerPreset)
+    : ['rising_ink_shelf','billowing_ink_bank','wind_torn_curtains','dense_wind_folded_bank','dense_wind_folded_shelf'].includes(preview.layerPreset)
       ? `${CLOUD_LAYER_PRESETS[preview.layerPreset].description} Color grade changes lighting independently.`
     : preview.layerPreset === 'wind_folded_shelf'
       ? 'Wind-folded Shelf: curved material folds and tapered strands. Pair with Indigo Ink Currents or Pearl Ink Wisps; color and shape stay independent.'
@@ -2761,6 +2761,16 @@ CLOUD_LAYER_PRESETS.wind_folded_shelf = {
   },
 };
 
+CLOUD_LAYER_PRESETS.dense_wind_folded_shelf = {
+  description: "The same low wind-folded shelf, with fuller connected bodies and fewer empty gaps. Keeps the sweeping curls and fine edge wisps.",
+  values: {
+    ...CLOUD_LAYER_PRESETS.wind_folded_shelf.values,
+    "p-density": 13.2, "sh-bias": 0.45,
+    "t-sparsity": 0.20, "t-fluffFactor": 2.65,
+    "t-topJitter": 0.14,
+  },
+};
+
 // Taller layered forms retain the direct procedural / sculpted path. Their
 // vertical shape comes from the material domain, rather than the voxel puffs.
 CLOUD_LAYER_PRESETS.rising_ink_shelf = {
@@ -2801,20 +2811,22 @@ CLOUD_LAYER_PRESETS.wind_torn_curtains = {
     "p-density": 13.0, "sh-bias": 0.46, "t-sparsity": 0.20,
     "t-shelfFlow": 1.5, "t-topJitter": 0.20,
     "t-verticalTextureHomogeneity": 0.70, "t-verticalLayerDecorrelation": 0.18,
-    "sh-axis-y": 1.10, "de-axis-y": 1.30,
+    "de-scale": 0.70, "de-zoom": 4.2, "de-freq": 0.95,
+    "sh-axis-y": 0.90, "de-axis-y": 0.55,
   },
 };
 
 CLOUD_LAYER_PRESETS.dense_wind_folded_bank = {
   description: "Full connected wind-folded masses with broad turbulent curls and fine edge wisps. Denser than Wind-folded Shelf.",
-  form: { type: 0, halfY: 0.85, puffScale: 3.6, ao: 0, heightVariation: 0.35, camera: [-0.75, -0.55, -0.95, 62, 18] },
+  form: { type: 0, halfY: 0.55, puffScale: 3.6, ao: 0, heightVariation: 0.35, camera: [-0.75, -0.75, -0.95, 62, 18] },
   values: {
-    ...CLOUD_LAYER_PRESETS.wind_folded_shelf.values,
-    "p-density": 14.2, "sh-bias": 0.50,
+    ...CLOUD_LAYER_PRESETS.dense_wind_folded_shelf.values,
+    "p-density": 13.8, "sh-bias": 0.46,
     "t-sparsity": 0.18, "t-fluffFactor": 2.8,
     "t-shelfFlow": 1.3, "t-verticalLayerDecorrelation": 0.18,
     "t-topJitter": 0.20,
-    "sh-axis-y": 1.15, "de-axis-y": 1.35,
+    "de-scale": 0.80, "de-zoom": 4.2, "de-freq": 0.95,
+    "sh-axis-y": 1.15, "de-axis-y": 0.80,
   },
 };
 
@@ -2848,6 +2860,7 @@ function injectPreviewLookControls() {
           <option value="rain_shelf">Rain Shelf · Sculpted</option>
           <option value="flowing_shelf">Flowing Shelf · Sculpted / Wispy</option>
           <option value="wind_folded_shelf">Wind-folded Shelf · Sculpted / Inky</option>
+          <option value="dense_wind_folded_shelf">Dense Wind-folded Shelf · Sculpted / Inky</option>
           <option value="dense_wind_folded_bank">Dense Wind-folded Bank · Sculpted / Tall</option>
           <option value="rising_ink_shelf">Rising Ink Shelf · Sculpted / Tall</option>
           <option value="billowing_ink_bank">Billowing Ink Bank · Sculpted / Tall</option>

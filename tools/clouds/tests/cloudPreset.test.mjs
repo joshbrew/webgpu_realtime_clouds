@@ -155,6 +155,13 @@ test('Flowing Shelf stretching restores cleanly without changing grade or ray bu
   assert.equal(preview.gradeStyle,29);
   assert.equal(controls.get('v-render-scale-divider').value,'4');
   assert.equal(controls.get('v-temporal-cell-rate').value,'4');
+  apply('dense_wind_folded_shelf');
+  assert.equal(controls.get('v-box-hy').value,'0.3');
+  assert.equal(controls.get('sh-axis-x').value,'0.35');
+  assert.equal(preview.cloudShading,'sculpted');
+  assert.equal(preview.gradeStyle,29);
+  assert.equal(controls.get('v-render-scale-divider').value,'4');
+  assert.equal(controls.get('v-temporal-cell-rate').value,'4');
   apply('rain_shelf');
   for(const prefix of ['we','sh','de'])for(const axis of ['x','z'])assert.equal(controls.get(`${prefix}-axis-${axis}`).value,'1');
   assert.equal(controls.get('t-minOutputAlpha').value,'0.12');

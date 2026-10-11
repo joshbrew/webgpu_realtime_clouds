@@ -11,5 +11,6 @@ export function planetCloudSimStylePatch(style='realistic',radius=50) {
  return {...base,nearSurfaceAdaptiveQuality:p.nearSurfaceAdaptiveQuality,surface:{surfaceOpacity:p.surfaceOpacity},
   shell:{cloudBottom:p.cloudBottom,cloudTop:p.cloudTop,maxHalfHeight:p.maxHalfHeight},
   render:{worldToUV:p.worldToUV,stepBase:p.stepBase,stepInc:p.stepInc,opacity:p.opacity,alphaPower:p.alphaPower,alphaCutoff:p.alphaCutoff},
+  ...(p.weatherWidth?{textures:{weatherWidth:p.weatherWidth,weatherHeight:p.weatherHeight}}:{}),
   motion:{spinSpeed:p.spinSpeed},params:p.params,tuning:p.tuning,transforms:p.transforms};
 }

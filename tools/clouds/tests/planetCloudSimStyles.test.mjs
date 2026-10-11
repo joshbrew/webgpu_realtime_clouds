@@ -11,6 +11,10 @@ test('simulation nested controls use the exact radius-relative production preset
   assert.equal(patch.surface.surfaceOpacity,p.surfaceOpacity);
   assert.deepEqual(patch.params,p.params);assert.deepEqual(patch.transforms,p.transforms);assert.deepEqual(patch.tuning,p.tuning);
   assert.equal(patch.cloudRenderMode,'raymarch');assert.equal(patch.showCloudStyleControl,false);
+  if(['gas_giant','neptune','hail_mary','satellite','cyclonic','trade_winds'].includes(id)){
+   assert.equal(patch.textures.weatherWidth,2048);
+   assert.equal(patch.textures.weatherHeight,1024);
+  }
  }
  assert.equal(planetCloudSimStylePatch().cloudStyle,'realistic');
  assert.equal(planetCloudSimStylePatch('legacy').shell,undefined);

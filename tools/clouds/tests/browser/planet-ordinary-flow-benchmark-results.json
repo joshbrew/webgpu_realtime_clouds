@@ -1,0 +1,462 @@
+{
+  "complete": true,
+  "pass": true,
+  "flowChecks": {
+    "maxUnitError": 4.4823744771438356e-7,
+    "maxIdentityError": 2.3276356841961388e-7,
+    "maxFrameDirectionDelta": 0.00034698485978879035,
+    "maxSeamGap": 0.000002506940465547215,
+    "invalid": 0,
+    "byForm": [
+      {
+        "form": 1,
+        "maxLatitudeShift": 0.03642701357603073
+      },
+      {
+        "form": 2,
+        "maxLatitudeShift": 0.03642701357603073
+      },
+      {
+        "form": 3,
+        "maxLatitudeShift": 0.03642701357603073
+      },
+      {
+        "form": 4,
+        "maxLatitudeShift": 0.03642701357603073
+      },
+      {
+        "form": 5,
+        "maxLatitudeShift": 0.05298729985952377
+      },
+      {
+        "form": 6,
+        "maxLatitudeShift": 0
+      },
+      {
+        "form": 7,
+        "maxLatitudeShift": 0.09665825963020325
+      }
+    ]
+  },
+  "timing": "GPU timestamp queries",
+  "adapter": {
+    "vendor": "nvidia",
+    "architecture": "lovelace",
+    "device": "",
+    "description": ""
+  },
+  "warmupDispatches": 2,
+  "measuredDispatches": 7,
+  "rows": [
+    {
+      "style": "realistic",
+      "size": 512,
+      "weather": {
+        "medianMs": 0.12288,
+        "minMs": 0.12288,
+        "maxMs": 0.12288,
+        "batchDispatches": 8
+      },
+      "shape128": {
+        "medianMs": 2.195456,
+        "minMs": 1.523712,
+        "maxMs": 2.203648,
+        "batchDispatches": 8
+      },
+      "sampling": [
+        {
+          "samples": 1,
+          "warped": false,
+          "medianMs": 0.006144,
+          "minMs": 0.00512,
+          "maxMs": 0.006144,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 1,
+          "warped": true,
+          "medianMs": 0.008192,
+          "minMs": 0.008192,
+          "maxMs": 0.009216,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 16,
+          "warped": false,
+          "medianMs": 0.049152,
+          "minMs": 0.049152,
+          "maxMs": 0.057344,
+          "batchDispatches": 8
+        },
+        {
+          "samples": 16,
+          "warped": true,
+          "medianMs": 0.098304,
+          "minMs": 0.098304,
+          "maxMs": 0.098304,
+          "batchDispatches": 8
+        }
+      ],
+      "coldSetupAndBakeMs": 68.70000004768372
+    },
+    {
+      "style": "diorama",
+      "size": 512,
+      "weather": {
+        "medianMs": 0.090112,
+        "minMs": 0.08192,
+        "maxMs": 0.090112,
+        "batchDispatches": 8
+      },
+      "shape128": {
+        "medianMs": 1.540096,
+        "minMs": 1.51552,
+        "maxMs": 1.581056,
+        "batchDispatches": 8
+      },
+      "sampling": [
+        {
+          "samples": 1,
+          "warped": false,
+          "medianMs": 0.006144,
+          "minMs": 0.006144,
+          "maxMs": 0.006144,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 1,
+          "warped": true,
+          "medianMs": 0.007168,
+          "minMs": 0.007168,
+          "maxMs": 0.008192,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 16,
+          "warped": false,
+          "medianMs": 0.049152,
+          "minMs": 0.04096,
+          "maxMs": 0.049152,
+          "batchDispatches": 8
+        },
+        {
+          "samples": 16,
+          "warped": true,
+          "medianMs": 0.090112,
+          "minMs": 0.08192,
+          "maxMs": 0.106496,
+          "batchDispatches": 8
+        }
+      ],
+      "coldSetupAndBakeMs": 14.5
+    },
+    {
+      "style": "gas_giant",
+      "size": 512,
+      "weather": {
+        "medianMs": 0.360448,
+        "minMs": 0.352256,
+        "maxMs": 0.466944,
+        "batchDispatches": 8
+      },
+      "shape128": {
+        "medianMs": 1.499136,
+        "minMs": 1.4336,
+        "maxMs": 1.523712,
+        "batchDispatches": 8
+      },
+      "sampling": [
+        {
+          "samples": 1,
+          "warped": false,
+          "medianMs": 0.00512,
+          "minMs": 0.00512,
+          "maxMs": 0.006144,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 1,
+          "warped": true,
+          "medianMs": 0.007168,
+          "minMs": 0.007168,
+          "maxMs": 0.008192,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 16,
+          "warped": false,
+          "medianMs": 0.049152,
+          "minMs": 0.04096,
+          "maxMs": 0.049152,
+          "batchDispatches": 8
+        },
+        {
+          "samples": 16,
+          "warped": true,
+          "medianMs": 0.090112,
+          "minMs": 0.08192,
+          "maxMs": 0.090112,
+          "batchDispatches": 8
+        }
+      ],
+      "coldSetupAndBakeMs": 210.5
+    },
+    {
+      "style": "hail_mary",
+      "size": 512,
+      "weather": {
+        "medianMs": 0.630784,
+        "minMs": 0.581632,
+        "maxMs": 0.638976,
+        "batchDispatches": 8
+      },
+      "shape128": {
+        "medianMs": 1.507328,
+        "minMs": 1.417216,
+        "maxMs": 1.531904,
+        "batchDispatches": 8
+      },
+      "sampling": [
+        {
+          "samples": 1,
+          "warped": false,
+          "medianMs": 0.00512,
+          "minMs": 0.00512,
+          "maxMs": 0.00512,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 1,
+          "warped": true,
+          "medianMs": 0.008192,
+          "minMs": 0.007168,
+          "maxMs": 0.008192,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 16,
+          "warped": false,
+          "medianMs": 0.049152,
+          "minMs": 0.04096,
+          "maxMs": 0.049152,
+          "batchDispatches": 8
+        },
+        {
+          "samples": 16,
+          "warped": true,
+          "medianMs": 0.090112,
+          "minMs": 0.08192,
+          "maxMs": 0.106496,
+          "batchDispatches": 8
+        }
+      ],
+      "coldSetupAndBakeMs": 10.799999952316284
+    },
+    {
+      "style": "realistic",
+      "size": 1024,
+      "weather": {
+        "medianMs": 0.303104,
+        "minMs": 0.294912,
+        "maxMs": 0.344064,
+        "batchDispatches": 8
+      },
+      "shape128": {
+        "medianMs": 1.466368,
+        "minMs": 1.318912,
+        "maxMs": 1.540096,
+        "batchDispatches": 8
+      },
+      "sampling": [
+        {
+          "samples": 1,
+          "warped": false,
+          "medianMs": 0.018432,
+          "minMs": 0.017408,
+          "maxMs": 0.018432,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 1,
+          "warped": true,
+          "medianMs": 0.028672,
+          "minMs": 0.0256,
+          "maxMs": 0.033792,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 16,
+          "warped": false,
+          "medianMs": 0.180224,
+          "minMs": 0.172032,
+          "maxMs": 0.2048,
+          "batchDispatches": 8
+        },
+        {
+          "samples": 16,
+          "warped": true,
+          "medianMs": 0.335872,
+          "minMs": 0.335872,
+          "maxMs": 0.344064,
+          "batchDispatches": 8
+        }
+      ],
+      "coldSetupAndBakeMs": 18.700000047683716
+    },
+    {
+      "style": "diorama",
+      "size": 1024,
+      "weather": {
+        "medianMs": 0.311296,
+        "minMs": 0.311296,
+        "maxMs": 0.352256,
+        "batchDispatches": 8
+      },
+      "shape128": {
+        "medianMs": 1.482752,
+        "minMs": 1.368064,
+        "maxMs": 1.540096,
+        "batchDispatches": 8
+      },
+      "sampling": [
+        {
+          "samples": 1,
+          "warped": false,
+          "medianMs": 0.017408,
+          "minMs": 0.016384,
+          "maxMs": 0.017408,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 1,
+          "warped": true,
+          "medianMs": 0.026624,
+          "minMs": 0.026624,
+          "maxMs": 0.029696,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 16,
+          "warped": false,
+          "medianMs": 0.172032,
+          "minMs": 0.172032,
+          "maxMs": 0.180224,
+          "batchDispatches": 8
+        },
+        {
+          "samples": 16,
+          "warped": true,
+          "medianMs": 0.352256,
+          "minMs": 0.32768,
+          "maxMs": 0.376832,
+          "batchDispatches": 8
+        }
+      ],
+      "coldSetupAndBakeMs": 22.90000009536743
+    },
+    {
+      "style": "gas_giant",
+      "size": 1024,
+      "weather": {
+        "medianMs": 1.523712,
+        "minMs": 1.490944,
+        "maxMs": 1.540096,
+        "batchDispatches": 8
+      },
+      "shape128": {
+        "medianMs": 1.51552,
+        "minMs": 1.458176,
+        "maxMs": 1.581056,
+        "batchDispatches": 8
+      },
+      "sampling": [
+        {
+          "samples": 1,
+          "warped": false,
+          "medianMs": 0.018432,
+          "minMs": 0.017408,
+          "maxMs": 0.018432,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 1,
+          "warped": true,
+          "medianMs": 0.027648,
+          "minMs": 0.027648,
+          "maxMs": 0.036864,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 16,
+          "warped": false,
+          "medianMs": 0.180224,
+          "minMs": 0.172032,
+          "maxMs": 0.180224,
+          "batchDispatches": 8
+        },
+        {
+          "samples": 16,
+          "warped": true,
+          "medianMs": 0.344064,
+          "minMs": 0.335872,
+          "maxMs": 0.36864,
+          "batchDispatches": 8
+        }
+      ],
+      "coldSetupAndBakeMs": 20.100000023841858
+    },
+    {
+      "style": "hail_mary",
+      "size": 1024,
+      "weather": {
+        "medianMs": 2.875392,
+        "minMs": 2.465792,
+        "maxMs": 2.998272,
+        "batchDispatches": 8
+      },
+      "shape128": {
+        "medianMs": 1.51552,
+        "minMs": 1.47456,
+        "maxMs": 1.613824,
+        "batchDispatches": 8
+      },
+      "sampling": [
+        {
+          "samples": 1,
+          "warped": false,
+          "medianMs": 0.018432,
+          "minMs": 0.018432,
+          "maxMs": 0.021504,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 1,
+          "warped": true,
+          "medianMs": 0.028672,
+          "minMs": 0.027648,
+          "maxMs": 0.029696,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 16,
+          "warped": false,
+          "medianMs": 0.180224,
+          "minMs": 0.172032,
+          "maxMs": 0.180224,
+          "batchDispatches": 8
+        },
+        {
+          "samples": 16,
+          "warped": true,
+          "medianMs": 0.352256,
+          "minMs": 0.335872,
+          "maxMs": 0.393216,
+          "batchDispatches": 8
+        }
+      ],
+      "coldSetupAndBakeMs": 18.899999976158142
+    }
+  ],
+  "errors": [],
+  "note": "Sampling is a microbenchmark with the production flow and texture reads; it is not total frame time. Bake timings exclude allocation and shader compilation. One-read warp also represents generating an animated warped map once per frame; 16-read workload approximates repeated volume sampling."
+}

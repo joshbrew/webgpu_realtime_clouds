@@ -677,6 +677,10 @@ export const NOISE_PLANET_TEST_CLOUDS = {
   motion: {
     animate: true,
     spinSpeed: 0.001,
+    warpAmount: 1,
+    warpSpeed: 1,
+    textureMotion: 'warp',
+    textureScrollSpeed: 1,
     meridionalDrift: 0.0,
     shapeSpinFactor: 0.82,
     detailSpinFactor: 0.93,
@@ -1504,7 +1508,7 @@ function makeFullControlReferenceOptions() {
     cloudComputeBuilder: {
       shell: ['cloudBottom', 'cloudTop'],
       textures: ['weatherWidth', 'weatherHeight', 'shapeSize', 'detailSize', 'blueWidth', 'blueHeight', 'renderScaleDivider', 'updateEvery', 'outputFormat'],
-      motion: ['animate', 'spinSpeed', 'meridionalDrift', 'shapeSpinFactor', 'detailSpinFactor', 'offsets.weatherOffsetWorld', 'offsets.shapeOffsetWorld', 'offsets.detailOffsetWorld', 'velocities.weather', 'velocities.shape', 'velocities.detail'],
+      motion: ['animate', 'spinSpeed', 'warpAmount', 'warpSpeed', 'textureMotion', 'textureScrollSpeed', 'meridionalDrift', 'shapeSpinFactor', 'detailSpinFactor', 'offsets.weatherOffsetWorld', 'offsets.shapeOffsetWorld', 'offsets.detailOffsetWorld', 'velocities.weather', 'velocities.shape', 'velocities.detail'],
       transformsAcceptedBySetNoiseTransforms: ['shapeOffsetWorld', 'detailOffsetWorld', 'weatherOffsetWorld', 'shapeScale', 'detailScale', 'weatherScale', 'shapeAxisScale', 'detailAxisScale', 'weatherAxisScale', 'shapeBias', 'detailBias', 'weatherBias'],
       paramsAcceptedBySetParams: Object.keys(PLANET_CLOUD_FLAT_LAB_PRESET.params),
       tuningAcceptedBySetTuning: Object.keys(PLANET_CLOUD_FLAT_LAB_PRESET.tuning),
@@ -2221,7 +2225,7 @@ function createTweakPanel(options = {}) {
 
   function setPendingEdits() {
     pendingEdits = true;
-    rebakeButton.textContent = 'Apply edits •';
+    rebakeButton.textContent = 'Apply edits ·';
     status.textContent = 'Manual changes pending. Choose Apply edits to update the render.';
   }
 
@@ -3558,7 +3562,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
 
   const cloudTransformPanel = makeCompactControlPanel(
     'Cloud transform/motion controls',
-    'Texture scale, bias, axis scale, offsets, and channel motion.',
+    'Enable Animate clouds to run motion. Regeneration updates the existing weather texture every frame. Scroll speed: 0 still, 1 gentle, 50 fast. Apply numeric edits below.',
   );
 
   function addCloudTransformControl(path, label, type = 'number', step = 'any', opts = {}) {
@@ -3596,6 +3600,15 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     }
   }
 
+  addCloudTransformControl('motion.animate', 'Animate clouds', 'checkbox', 'any', {fallback:true}).wrap.style.gridColumn='1 / -1';
+  const textureMotionControl=addCloudTransformControl('motion.textureMotion', 'Cloud motion preset', 'select', 'any', {fallback:'warp',options:[{value:'off',label:'Off (warp + texture regeneration)'},{value:'warp',label:'Warp texture'},{value:'warp_regenerate',label:'Warp + texture regeneration'}]});
+  textureMotionControl.input.id='planet-texture-motion';
+  textureMotionControl.wrap.style.gridColumn='1 / -1';
+  addCloudTransformControl('motion.warpAmount', 'Warp amount', 'number', '0.1', {fallback:1,min:0,max:2}).input.id='planet-warp-amount';
+  addCloudTransformControl('motion.warpSpeed', 'Warp speed', 'number', '0.5', {fallback:1,min:0,max:50}).input.id='planet-warp-speed';
+  const textureScrollControl=addCloudTransformControl('motion.textureScrollSpeed', 'Texture scroll speed', 'number', '0.5', {fallback:1,min:0,max:50});
+  textureScrollControl.input.id='planet-texture-scroll-speed';
+  textureScrollControl.wrap.style.gridColumn='1 / -1';
   addCloudTransformControl('transforms.weatherScale', 'weatherScale', 'number', '0.01');
   addCloudTransformControl('transforms.shapeScale', 'shapeScale', 'number', '0.01');
   addCloudTransformControl('transforms.detailScale', 'detailScale', 'number', '0.01');
@@ -3622,8 +3635,13 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     onChange:(style)=>{
       updateEditorValue(clouds,'Planet cloud style',(cfg)=>{
         const radius=Number(readOptions().radius) || DEFAULT_RADIUS;
+        const keptMotion={animate:cfg.motion?.animate,warpAmount:cfg.motion?.warpAmount,warpSpeed:cfg.motion?.warpSpeed,textureMotion:cfg.motion?.textureMotion,textureScrollSpeed:cfg.motion?.textureScrollSpeed};
         const {aurora,textures,...presetConfig}=cloudConfigForStyle(style,radius);
+        if(['gas_giant','neptune','hail_mary','satellite','cyclonic','trade_winds'].includes(style)){
+          cfg.textures={...cfg.textures,weatherWidth:2048,weatherHeight:1024};
+        }
         Object.assign(cfg,mergePlain(cfg,presetConfig));
+        Object.assign(cfg.motion,keptMotion);
       },{path:'cloudStyle',forceCloudLiveApply:true});
       syncEditorPathInputs(clouds);
     },
@@ -4690,6 +4708,10 @@ function buildPlanetCloudConfig(runtime, result, seed, options = {}) {
     outputFormat: config.textures?.outputFormat,
     animate: config.motion?.animate,
     spinSpeed: config.motion?.spinSpeed,
+    warpAmount: config.motion?.warpAmount,
+    warpSpeed: config.motion?.warpSpeed,
+    textureMotion: config.motion?.textureMotion,
+    textureScrollSpeed: config.motion?.textureScrollSpeed,
     meridionalDrift: config.motion?.meridionalDrift,
     shapeSpinFactor: config.motion?.shapeSpinFactor,
     detailSpinFactor: config.motion?.detailSpinFactor,

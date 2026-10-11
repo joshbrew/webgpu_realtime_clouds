@@ -3,7 +3,7 @@ import { CloudComputeBuilder } from './clouds.js';
 import { CloudTimingReport } from './cloudTiming.js';
 import { CloudVolumeMips } from './cloudVolumeMips.js';
 import { PlanetCloudNoise } from './planetCloudNoise.js';
-import { advancePlanetCloudTime, planetCloudMotion } from './planetCloudMotion.js';
+import { advancePlanetCloudTime, planetCloudMotion, regeneratePlanetCloudWeather } from './planetCloudMotion.js';
 import { PLANET_CLOUD_STYLES, planetCloudStyleOptions } from './planetCloudStyles.js';
 export { PLANET_CLOUD_STYLES, planetCloudStyleOptions } from './planetCloudStyles.js';
 import {
@@ -2598,6 +2598,9 @@ export async function updatePlanetCloudLayer(layer) {
       // Styled clouds share one slow wind and evolve locally, not by rotating
       // their shape/detail fields at different (often additive) angular speeds.
       const motion = planetCloudMotion(opt, advancePlanetCloudTime(layer, t));
+      regeneratePlanetCloudWeather(layer, PLANET_STYLE_NOISE.get(layer.noiseBuilder), layer.resourceKeys?.shape, layer.animationClock.time);
+      transforms.planetWarpAmount=motion.warpAmount;
+      transforms.planetWarpPhase=motion.warpPhase;
       transforms.weatherOffsetWorld = addScaled(baseTransforms.weatherOffsetWorld || [0, 0, 0], motion.weatherOffsetWorld, 1);
       transforms.shapeOffsetWorld = addScaled(baseTransforms.shapeOffsetWorld || [0, 0, 0], motion.shapeOffsetWorld, 1);
       transforms.detailOffsetWorld = addScaled(baseTransforms.detailOffsetWorld || [0, 0, 0], motion.detailOffsetWorld, 1);
@@ -2738,7 +2741,8 @@ export async function updatePlanetCloudLayer(layer) {
   ));
   const auroraRollMagnitude = auroraEnabled ? Math.abs(finiteNumber(opt.auroraRollSpeed, 0.0065)) : 0.0;
   const cloudAnimating = opt.animate !== false && (
-    configuredSpinMagnitude > 0.000001 || auroraRollMagnitude > 0.000001 || velocityMagnitude > 0.000001
+    configuredSpinMagnitude > 0.000001 || auroraRollMagnitude > 0.000001 || velocityMagnitude > 0.000001 ||
+    (styledMotion && opt.textureMotion === 'warp_regenerate' && finiteNumber(opt.textureScrollSpeed, 1) > 0)
   );
   const baseTemporalCellRate = normalizeTemporalRateLocal(reprojBase.temporalCellRate ?? 4);
   const animatedTemporalCellRate = normalizeTemporalRateLocal(

@@ -1596,6 +1596,14 @@ the same coordinates. The small-angle rotations add arithmetic without extra
 texture reads or per-frame map generation, and remain continuous at the poles
 and longitude seam. Wind speed controls both advection and this deformation.
 
+The same bounded flow also animates **Thin realistic layer**, **Big diorama
+clouds**, **Cloudy hemisphere**, and **A few puffy clouds**. These use gentler
+eddies (38% of Hail Mary's strength) without gas-planet latitude jets. Coverage,
+3D billows and detail erosion share the deformation, preserving cloud radius
+and keeping the raymarch and MC33 paths aligned. Custom/legacy clouds retain
+their original motion. No extra texture reads, bakes, voxels or simulation
+buffers are introduced; paused animation and zero wind remain stationary.
+
 Planet temporal history is allocated at the actual coarse raymarch dimensions,
 not the reconstructed overlay size. Changing that size seeds one full fresh
 frame before interleaving resumes; this avoids a smaller corner-copy ghost when
@@ -1639,6 +1647,14 @@ the actual WGSL flow at zero time, across longitude/poles, and at long-running
 wind phases. See `tests/browser/planet-flow-benchmark-results.json` for the
 raw measurements and error bounds; results depend on GPU and workload.
 
+`tests/browser/planet-ordinary-flow-benchmark-results.json` extends those
+measurements to ordinary clouds and validates all seven styled forms on the
+GPU. On the same GPU, the 1024² realistic map measured 0.303 ms to generate,
+0.018 ms to sample, and 0.029 ms to warp and sample (about 0.010 ms added).
+Sixteen lookups added 0.156 ms. These are weather-lookup microbenchmarks;
+ordinary cloud shape/detail deformation adds arithmetic in their existing
+lookups too, so the numbers do not represent whole-frame overhead.
+
 The flat demo's **Color grade → Watercolor / Gouache lighting** group contains
 Lavender Gouache, Lavender Glaze, Violet Underpainting, Lavender Sunwash,
 Indigo Gouache, Rose Gold Wash and Copper Ochre Gouache. These use
@@ -1675,7 +1691,54 @@ with upright folds, fuller banks, or connected turbulent curtains. These presets
 height and material structure independently of the selected color grade. They
 frame the taller layers from below and restore the original shelf camera
 when switching back. They preserve playback and raymarch resolution settings.
-**Dense Wind-folded Bank** keeps the turbulent shelf domain but broadens its
+**Dense Wind-folded Shelf** fills the gaps in the original low shelf while
+retaining its swept silhouette. **Dense Wind-folded Bank** offers a taller
+version and keeps the turbulent shelf domain but broadens its
 connected masses with shape support, less erosion, and higher density. Flowing
 shelves use a slower continuous height distortion to avoid repeated horizontal
-ribs in taller layers; the original non-flowing layers retain their sampling.
+ribs in taller layers. The taller folds also bend their weather coverage mask
+through height, so coverage holes do not extrude into straight columns. These
+warps reuse the existing textures and sampling budget; the original thin
+Wind-folded Shelf keeps its coverage mapping.
+
+### Satellite planet clouds and flow controls
+
+**Satellite / weather fronts**, **Satellite / spiral storms**, and
+**Satellite / trade-wind clouds** add thin white cloud shields, stretched
+fronts, local comma-shaped storms and smaller broken maritime clouds. A lazy
+GPU weather bake backtraces seamless spherical curl fields and seeded local
+vortices once. Both raymarch and MC33 then reuse the same coverage field;
+neither renderer simulates fluid flow each frame. These are procedural visual
+approximations, rather than a meteorological simulation or satellite data.
+
+In the planet demo, open **Cloud shape, motion & quality** for **Animate clouds**,
+**Warp amount** (0 off, 1 default, 2 strong) and **Warp speed** (0 still, 1 default,
+up to 50). Numeric edits wait for **Apply edits**. Speed is independent of the
+global cloud drift; pausing animation stops both. Preset selections preserve
+the chosen warp controls and playback state. Neptune keeps its gentler zonal
+shear, while ordinary clouds, Jupiter and Hail Mary also use spherical eddies.
+Amount controls this animated deformation, not the curls already baked into
+the selected weather pattern. Legacy/custom clouds retain their original motion.
+
+Jupiter, Neptune, Hail Mary and the satellite presets use **2048 × 1024**
+weather maps in the demo (previous gas maps were 1024 × 1024). The 3D texture
+sizes and marching budgets remain unchanged. Explicit resolution edits in the
+menu still wait for Apply. The weather texture itself grows from 8 to 16 MiB.
+
+The local GPU diagnostic at `/planet-flow-benchmark` compares the original
+1024² map with 2048 × 1024. On the current test GPU, warm generation of the
+larger satellite maps took 4.4–4.6 ms, Jupiter 6.3 ms, Neptune 1.5 ms and Hail
+Mary 10.8 ms. These are setup-only GPU dispatch timings, excluding allocation
+and compilation, and will vary by device and load. Sampling timings remain
+microbenchmarks, not full-frame performance. Results are saved in
+`tests/browser/planet-satellite-flow-benchmark-results.json`.
+`/planet-controls-smoke` additionally extracts and renders actual MC33 clouds
+for all six presets at zero, 12× and 50× warp speed, checking GPU validation
+and nonempty geometry. Its results are saved beside the benchmark report.
+
+
+### Per-frame planet weather regeneration
+
+In **Cloud shape, motion & quality**, **Cloud motion preset** offers **Off (warp + texture regeneration)**, **Warp texture**, and **Warp + texture regeneration**. The combined mode dispatches weather generation every animated frame. **Texture scroll speed** pans the continuous Cartesian noise domain (0 freezes it, 1 is gentle, up to 50). The texture, view, bindings and seed are reused; shape/detail volumes stay cached. This works with ordinary styled clouds, satellite patterns, Jupiter, Neptune and Hail Mary in raymarch and MC33 modes. **Animate clouds** pauses motion. The selector previews automatically; numeric speed edits require **Apply edits**. Warp-only remains the default; global drift is independent of this preset.
+
+`tests/browser/planetRegeneration.js` verifies evolving pixels, exact restoration at phase zero, unchanged shape data and in-place reuse, and measures warm 2048 x 1024 weather dispatches using GPU timestamps. `tests/browser/planet-regeneration-results.json` records the local result. Dispatch timings exclude rendering and do not imply total scene FPS.

@@ -1,0 +1,119 @@
+{
+  "complete": true,
+  "pass": true,
+  "rows": [
+    {
+      "style": "realistic",
+      "counts": [
+        74742,
+        65808,
+        65118
+      ],
+      "regeneration": {
+        "phase": 0.0012263999977111411,
+        "paused": true,
+        "sameTexture": true
+      },
+      "pass": true
+    },
+    {
+      "style": "diorama",
+      "counts": [
+        40620,
+        39300,
+        39798
+      ],
+      "regeneration": {
+        "phase": 0.0012264000005721698,
+        "paused": true,
+        "sameTexture": true
+      },
+      "pass": true
+    },
+    {
+      "style": "satellite",
+      "counts": [
+        57522,
+        50058,
+        48948
+      ],
+      "regeneration": {
+        "phase": 0.0012239999999999612,
+        "paused": true,
+        "sameTexture": true
+      },
+      "pass": true
+    },
+    {
+      "style": "cyclonic",
+      "counts": [
+        45198,
+        39060,
+        38934
+      ],
+      "regeneration": {
+        "phase": 0.0012264000005721698,
+        "paused": true,
+        "sameTexture": true
+      },
+      "pass": true
+    },
+    {
+      "style": "trade_winds",
+      "counts": [
+        62394,
+        48312,
+        48288
+      ],
+      "regeneration": {
+        "phase": 0.0012264000005721698,
+        "paused": true,
+        "sameTexture": true
+      },
+      "pass": true
+    },
+    {
+      "style": "gas_giant",
+      "counts": [
+        74706,
+        74652,
+        74544
+      ],
+      "regeneration": {
+        "phase": 0.0012239999999999612,
+        "paused": true,
+        "sameTexture": true
+      },
+      "pass": true
+    },
+    {
+      "style": "neptune",
+      "counts": [
+        57318,
+        57270,
+        57222
+      ],
+      "regeneration": {
+        "phase": 0.0012264000005721698,
+        "paused": true,
+        "sameTexture": true
+      },
+      "pass": true
+    },
+    {
+      "style": "hail_mary",
+      "counts": [
+        58146,
+        58050,
+        58320
+      ],
+      "regeneration": {
+        "phase": 0.0012239999999999612,
+        "paused": true,
+        "sameTexture": true
+      },
+      "pass": true
+    }
+  ],
+  "errors": []
+}

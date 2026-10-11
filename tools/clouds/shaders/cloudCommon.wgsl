@@ -151,10 +151,10 @@ struct CloudParams {
 // ---------------------- NoiseTransforms (binding 3)
 struct NoiseTransforms {
   shapeOffsetWorld: vec3<f32>,
-  _pad0: f32,
+  planetWarpAmount: f32,
 
   detailOffsetWorld: vec3<f32>,
-  _pad1: f32,
+  planetWarpPhase: f32,
 
   shapeScale: f32,
   detailScale: f32,
@@ -1082,8 +1082,11 @@ fn shelfFlowDomain(pos: vec3<f32>) -> vec3<f32> {
   // Smooth nested waves deform material coordinates, not the camera or pixel
   // grid. Shape and erosion share the same bend, including their sun probes.
   let q = pos - B.center;
-  let bend = sin(q.x * 0.72 + sin(q.z * 0.47) * 1.8);
-  let sweep = sin(q.z * 0.54 + q.x * 0.16 + bend * 0.65);
+  // Taller banks bend sideways through their height rather than extruding
+  // each shelf contour into a straight column. Thin shelves keep their warp.
+  let rise = q.y * tallBoxBlend();
+  let bend = sin(q.x * 0.72 + rise * 0.90 + sin(q.z * 0.47 - rise * 0.65) * 1.8);
+  let sweep = sin(q.z * 0.54 + q.x * 0.16 + rise * 1.25 + bend * 0.65);
   return pos + vec3<f32>(sweep * 0.48, bend * 0.28 + sweep * 0.10, bend * 0.22) * TUNE.shelfFlow;
 }
 
@@ -1204,7 +1207,13 @@ fn weatherUV_from(pos_world: vec3<f32>, wScale: f32) -> vec2<f32> {
     return centered + vec2<f32>(0.5, 0.5) + uvOffset;
   }
 
-  let p = pos_world + NTransform.weatherOffsetWorld;
+  var p = pos_world + NTransform.weatherOffsetWorld;
+  // The coverage mask must turn with a tall fold as well. Leaving this 2D
+  // mask fixed through Y extrudes its holes into straight bright curtains,
+  // even when the shape and detail textures already bend through the bank.
+  if (TUNE.shelfFlow > 0.001 && TUNE.formType < 0.5 && tallBoxBlend() > 0.001) {
+    p = shelfFlowDomain(p);
+  }
   let rel = (p.xz - B.center.xz) * vec2<f32>(wAxis.x, wAxis.z);
 
   // Keep the current weather-map scale when the cloud box is stretched outward.
@@ -1603,7 +1612,9 @@ fn styledPlanetForm(ph: f32, wm: vec4<f32>, s: vec4<f32>) -> vec2<f32> {
   let threshold = select(mix_f(0.82, 0.46, coverage), 0.63, scattered) - select(0.0,0.030,cute>0.5&&!gas);
   // Smooth volumetric FBM, not a thresholded Worley edge texture extruded
   // through a shell. Broad bands form the mass, fine erosion only the rim.
-  let mass = select(s.r * 0.72 + s.g * 0.20 + s.b * 0.08, 0.58 + wm.a * 0.18 + (s.g-0.5)*0.12, gas);
+  var mass = select(s.r * 0.72 + s.g * 0.20 + s.b * 0.08, 0.58 + wm.a * 0.18 + (s.g-0.5)*0.12, gas);
+  // Satellite coverage is a connected weather field, with 3D billows at its rim.
+  if(TUNE.formType>1.2 && TUNE.formType<1.5){mass=0.29+wm.r*0.45+(s.r-0.5)*0.12+(s.g-0.5)*0.04;}
   let lower = smoothstep(0.025, mix_f(0.16, 0.22, cute), ph);
   let summit = clamp(0.78 + (s.a - 0.5) * mix_f(0.24, 0.42, cute), 0.48, 0.97);
   let upper = 1.0 - smoothstep(summit - 0.28, summit, ph);

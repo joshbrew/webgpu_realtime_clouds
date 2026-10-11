@@ -6,6 +6,9 @@ export const PLANET_CLOUD_STYLES = Object.freeze([
   {id:'diorama',label:'Big diorama clouds'},
   {id:'hemisphere',label:'Cloudy hemisphere'},
   {id:'scattered',label:'A few puffy clouds'},
+  {id:'satellite',label:'Satellite / weather fronts'},
+  {id:'cyclonic',label:'Satellite / spiral storms'},
+  {id:'trade_winds',label:'Satellite / trade-wind clouds'},
   {id:'gas_giant',label:'Jupiter / curled storms'},
   {id:'neptune',label:'Neptune / blue storm bands'},
   {id:'hail_mary',label:'Hail Mary / green-orange swirls'},
@@ -15,10 +18,20 @@ export function planetCloudStyleOptions(style, radius = 50) {
   if (style === 'legacy') return {};
   if (!PLANET_CLOUD_STYLES.some(s=>s.id===style)) throw new RangeError(`Unknown planet cloud style: ${style}`);
   const r = Number.isFinite(radius) && radius > 0 ? radius : 50;
+  if(['satellite','cyclonic','trade_winds'].includes(style)){
+    const base=planetCloudStyleOptions('realistic',r);
+    return {...base,cloudStyle:style,weatherWidth:2048,weatherHeight:1024,
+      cloudBottom:r*.014,cloudTop:r*.040,maxHalfHeight:r*.012,
+      params:{...base.params,globalCoverage:1.0,globalDensity:12,
+        frontLightColor:[1.40,1.42,1.44],shadowLightColor:[.42,.48,.58]},
+      tuning:{...base.tuning,formType:1.25},
+      transforms:{...base.transforms,shapeScale:2.3,detailScale:2.2}};
+  }
   const cute = style !== 'realistic',gas=['gas_giant','neptune','hail_mary'].includes(style);
   const gasForm=style==='neptune'?6:style==='hail_mary'?7:5;
   const translucent = style === 'hail_mary';
   return {
+    ...(gas?{weatherWidth:2048,weatherHeight:1024}:{}),
     cloudStyle:style,cloudRenderMode:'raymarch',progressiveStartup:false,bootstrapFrames:0,
     cloudBottom:r*(cute?.025:.012),cloudTop:r*(gas?.055:style==='diorama'?.225:cute?.155:.032),
     worldToUV:2.4/r,stepBase:r*(cute?.0018:.00065),stepInc:.025,
