@@ -1,0 +1,173 @@
+{
+  "complete": true,
+  "pass": false,
+  "lightingSteps": [
+    {
+      "stepBase": 0.005,
+      "rgb": [
+        0.69287109375,
+        0.67822265625,
+        0.6689453125
+      ],
+      "alpha": 1
+    },
+    {
+      "stepBase": 0.02,
+      "rgb": [
+        0.697265625,
+        0.68212890625,
+        0.6728515625
+      ],
+      "alpha": 1
+    },
+    {
+      "stepBase": 0.08,
+      "rgb": [
+        0.7099609375,
+        0.6953125,
+        0.6865234375
+      ],
+      "alpha": 1
+    }
+  ],
+  "lightingStepDelta": 0.017578125,
+  "rows": [
+    {
+      "camera": [
+        0,
+        0,
+        4
+      ],
+      "maxSteps": 16,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    },
+    {
+      "camera": [
+        0,
+        0,
+        4
+      ],
+      "maxSteps": 32,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    },
+    {
+      "camera": [
+        0,
+        0,
+        4
+      ],
+      "maxSteps": 96,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    },
+    {
+      "camera": [
+        0,
+        0,
+        0
+      ],
+      "maxSteps": 16,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    },
+    {
+      "camera": [
+        0,
+        0,
+        0
+      ],
+      "maxSteps": 32,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    },
+    {
+      "camera": [
+        0,
+        0,
+        0
+      ],
+      "maxSteps": 96,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    }
+  ],
+  "march": [
+    {
+      "pitch": -0.025,
+      "meanAbsoluteError": 0.005492694581334945,
+      "pass": true
+    },
+    {
+      "pitch": 0,
+      "meanAbsoluteError": 0.005391898412199225,
+      "pass": true
+    },
+    {
+      "pitch": 0.025,
+      "meanAbsoluteError": 0.005271028196148109,
+      "pass": true
+    }
+  ],
+  "turns": [
+    {
+      "yaw": 0,
+      "pitch": 0,
+      "alphaError": 0.00018089637160301208,
+      "rgbError": 0.0036873333156108856,
+      "pass": true
+    },
+    {
+      "yaw": 0.3,
+      "pitch": 0.1,
+      "alphaError": 0.00018431246280670166,
+      "rgbError": 0.00624105582634608,
+      "pass": true
+    },
+    {
+      "yaw": 0.3,
+      "pitch": 0.5,
+      "alphaError": 0.00014943256974220276,
+      "rgbError": 0.0014142729341983795,
+      "pass": true
+    },
+    {
+      "yaw": 1.1,
+      "pitch": -0.4,
+      "alphaError": 0.000017240643501281738,
+      "rgbError": 0.0006318477292855581,
+      "pass": true
+    }
+  ],
+  "paintedAlphaDelta": 0,
+  "paintedChangedPixels": 2048,
+  "paintRestored": true,
+  "paintedViewRestored": true,
+  "paintedViewChanged": true,
+  "thinWideError": 0,
+  "thinAlpha": 0.0016584396362304688,
+  "emptyAlpha": 0,
+  "errors": [],
+  "reliefNormals": [
+    -1,
+    0,
+    0,
+    1,
+    -1,
+    0,
+    0,
+    1,
+    0.1805061250925064,
+    0.28078731894493103,
+    0.9426431059837341,
+    1
+  ],
+  "reliefPass": false
+}

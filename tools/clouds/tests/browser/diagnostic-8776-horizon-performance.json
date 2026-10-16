@@ -1,0 +1,244 @@
+{
+  "complete": true,
+  "gpuTiming": true,
+  "compile": [
+    {
+      "layout": "8x8",
+      "ms": 11.099999994039536
+    },
+    {
+      "layout": "16x8",
+      "ms": 0.20000000298023224
+    }
+  ],
+  "width": 773,
+  "height": 435,
+  "rows": [
+    {
+      "scene": "dense horizon",
+      "layout": "8x8",
+      "medianMs": 1.9660799999999998,
+      "p90Ms": 2.6214399999999998
+    },
+    {
+      "scene": "dense horizon",
+      "layout": "16x8",
+      "medianMs": 2.031616,
+      "p90Ms": 2.031616
+    },
+    {
+      "scene": "thin horizon",
+      "layout": "8x8",
+      "medianMs": 47.316992,
+      "p90Ms": 50.921471999999994
+    },
+    {
+      "scene": "thin horizon",
+      "layout": "16x8",
+      "medianMs": 43.843584,
+      "p90Ms": 50.003968
+    },
+    {
+      "scene": "upward",
+      "layout": "8x8",
+      "medianMs": 1.507328,
+      "p90Ms": 1.835008
+    },
+    {
+      "scene": "upward",
+      "layout": "16x8",
+      "medianMs": 1.507328,
+      "p90Ms": 2.555904
+    },
+    {
+      "scene": "downward",
+      "layout": "8x8",
+      "medianMs": 1.572864,
+      "p90Ms": 2.031616
+    },
+    {
+      "scene": "downward",
+      "layout": "16x8",
+      "medianMs": 1.507328,
+      "p90Ms": 1.572864
+    },
+    {
+      "scene": "tower horizon",
+      "layout": "8x8",
+      "medianMs": 68.15744,
+      "p90Ms": 70.320128
+    },
+    {
+      "scene": "tower horizon",
+      "layout": "16x8",
+      "medianMs": 62.2592,
+      "p90Ms": 65.077248
+    },
+    {
+      "scene": "oblique horizon",
+      "layout": "8x8",
+      "medianMs": 47.185919999999996,
+      "p90Ms": 49.086464
+    },
+    {
+      "scene": "oblique horizon",
+      "layout": "16x8",
+      "medianMs": 42.205183999999996,
+      "p90Ms": 44.761088
+    },
+    {
+      "scene": "medium horizon",
+      "layout": "8x8",
+      "medianMs": 14.09024,
+      "p90Ms": 14.942207999999999
+    },
+    {
+      "scene": "medium horizon",
+      "layout": "16x8",
+      "medianMs": 12.845056,
+      "p90Ms": 13.697023999999999
+    },
+    {
+      "scene": "thicker horizon",
+      "layout": "8x8",
+      "medianMs": 3.801088,
+      "p90Ms": 4.194304
+    },
+    {
+      "scene": "thicker horizon",
+      "layout": "16x8",
+      "medianMs": 3.670016,
+      "p90Ms": 4.128768
+    }
+  ],
+  "parity": [
+    {
+      "scene": "dense horizon",
+      "layout": "16x8",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "thin horizon",
+      "layout": "16x8",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "upward",
+      "layout": "16x8",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "downward",
+      "layout": "16x8",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "tower horizon",
+      "layout": "16x8",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "oblique horizon",
+      "layout": "16x8",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "medium horizon",
+      "layout": "16x8",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "thicker horizon",
+      "layout": "16x8",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "nonzero warp 0.4",
+      "layout": "16x8",
+      "changedComponents": 0,
+      "pass": true
+    },
+    {
+      "scene": "nonzero warp 2.1",
+      "layout": "16x8",
+      "changedComponents": 0,
+      "pass": true
+    },
+    {
+      "scene": "compact x2",
+      "changedComponents": 0,
+      "updatedPixels": 168127,
+      "pass": true
+    },
+    {
+      "scene": "compact x4",
+      "changedComponents": 0,
+      "updatedPixels": 84064,
+      "pass": true
+    },
+    {
+      "scene": "compact x8",
+      "changedComponents": 0,
+      "updatedPixels": 42032,
+      "pass": true
+    },
+    {
+      "scene": "compact x16",
+      "changedComponents": 0,
+      "updatedPixels": 20995,
+      "pass": true
+    },
+    {
+      "scene": "compact x32",
+      "changedComponents": 0,
+      "updatedPixels": 10422,
+      "pass": true
+    },
+    {
+      "scene": "compact x64",
+      "changedComponents": 0,
+      "updatedPixels": 5238,
+      "pass": true
+    },
+    {
+      "scene": "partial tile",
+      "wrongInside": 0,
+      "wrongOutside": 0,
+      "pass": true
+    }
+  ],
+  "errors": [],
+  "pass": true
+}

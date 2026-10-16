@@ -4,7 +4,10 @@
 import cloudWGSL from "./shaders/clouds.wgsl";
 import baseCommonWGSL from "./shaders/cloudCommon.wgsl";
 import aircraftWGSL from "./shaders/cloudAircraft.wgsl";
-const commonWGSL = baseCommonWGSL + '\n' + aircraftWGSL;
+import terrainWGSL from "./shaders/cloudTerrain.wgsl";
+import {createTerrainMesh} from "./cloudTerrainMesh.js";
+import { FLIGHT_CHASE_DISTANCE, FLIGHT_CHASE_HEIGHT } from './cloudNavigation.js';
+const commonWGSL = baseCommonWGSL + '\n' + aircraftWGSL + '\n' + terrainWGSL;
 import layerWGSL from "./shaders/cloudLayer.wgsl";
 import resolveWGSL from "./shaders/cloudResolve.wgsl";
 import scratchWGSL from "./shaders/cloudScratch.wgsl";
@@ -33,7 +36,10 @@ function createTimedCloudModule(device, label, code, timing) {
       timing.validationMs = performance.now() - validationStarted;
       const errors = info.messages.filter(message => message.type === "error");
       timing.status = errors.length ? "error" : "validated";
-      if (errors.length) timing.error = errors.map(message => message.message).join("\n");
+      if (errors.length) {
+        timing.error = errors.map(message => `${message.lineNum}:${message.linePos} ${message.message}`).join("\n");
+        console.error(`[${label}] ${timing.error}`);
+      }
     }).catch(error => {
       timing.validationMs = performance.now() - validationStarted;
       timing.status = "error";
@@ -199,8 +205,8 @@ export class CloudComputeBuilder {
     this._dvTuning = new DataView(this._abTuning);
 
 
-    // Preview render params: 304 bytes
-    this._abRender = new ArrayBuffer(304);
+    // Preview render params: 320 bytes, including optional terrain
+    this._abRender = new ArrayBuffer(320);
     this._dvRender = new DataView(this._abRender);
 
     // Upsample params: 32 bytes
@@ -635,6 +641,9 @@ export class CloudComputeBuilder {
           CLOUD_DETAILED_LIGHTING: (key & 16) ? 1 : 0,
           CLOUD_STAGED_RESOLVE: (key & 32) ? 1 : 0,
           CLOUD_USE_FIELDS: (key & 64) ? 1 : 0,
+          // Consecutive horizontal rays share more of the long horizon march.
+          // Field and planet modules have their own fixed workgroup layouts.
+          ...(mode === 0 && !(key & 64) ? { CLOUD_WORKGROUP_WIDTH: 16 } : {}),
         },
       },
     };
@@ -1025,9 +1034,9 @@ export class CloudComputeBuilder {
     }
     dv.setFloat32(76, this._state.cloudTurbulence || 0, true);
     this._writeIfChanged("fieldParams", this._fieldParamsBuffer, this._fieldParamsAB);
-    // AO is a lighting blend, not geometry. Changing its strength or the camera
+    // AO and painted layers are lighting, not geometry. Changing them or the camera
     // must not rebake either field.
-    const densitySignature = [this._abParams.slice(0,12), this._abNTransform, this._abTuning.slice(0,12), this._abTuning.slice(16, 248), this._abTuning.slice(252), this._abBox, this._fieldParamsAB.slice(0, 76)].map(ab => this._sum32(ab)).concat(
+    const densitySignature = [this._abParams.slice(0,12), this._abNTransform, this._abTuning.slice(0,12), this._abTuning.slice(16, 248), this._abTuning.slice(252,260), this._abBox, this._fieldParamsAB.slice(0, 76)].map(ab => this._sum32(ab)).concat(
       this._getResId(this.weatherView), this._getResId(this.shape3DView), this._getResId(this.detail3DView),
       this._dvView.getFloat32(96, true), this._dvView.getFloat32(92, true),
     ).join("|");
@@ -1680,6 +1689,7 @@ export class CloudComputeBuilder {
             visibility: GPUShaderStage.COMPUTE,
             texture: { sampleType: "float", viewDimension: "2d" },
           },
+          {binding:17,visibility:GPUShaderStage.COMPUTE,texture:{sampleType:"float",viewDimension:"2d"}},
         ],
       });
     }
@@ -2311,6 +2321,8 @@ export class CloudComputeBuilder {
       viewExtraB = 0.0,
       viewExtraC = 0.0,
       aircraft = {},
+      terrainEnabled = false,
+      cloudScale,
     } = opts;
 
     const dv = this._dvView;
@@ -2356,7 +2368,7 @@ export class CloudComputeBuilder {
       f[0],
       f[1],
       f[2],
-      0,
+      terrainEnabled && planetRadius <= 0 ? 1 : 0,
       (fovYDeg * Math.PI) / 180,
       a,
       stepBase,
@@ -2366,12 +2378,12 @@ export class CloudComputeBuilder {
       cloudTop,
       volumeLayers,
       worldToUV,
-      viewExtraA,
+      planetRadius <= 0 && cloudScale != null ? Math.max(1, Math.min(8, Number(cloudScale) || 1)) : viewExtraA,
       viewExtraB,
       viewExtraC,
-      aircraft.position?.[0] ?? camPos[0]+f[0]*2.4-u[0]*.55,
-      aircraft.position?.[1] ?? camPos[1]+f[1]*2.4-u[1]*.55,
-      aircraft.position?.[2] ?? camPos[2]+f[2]*2.4-u[2]*.55,
+      aircraft.position?.[0] ?? camPos[0]+f[0]*FLIGHT_CHASE_DISTANCE-u[0]*FLIGHT_CHASE_HEIGHT,
+      aircraft.position?.[1] ?? camPos[1]+f[1]*FLIGHT_CHASE_DISTANCE-u[1]*FLIGHT_CHASE_HEIGHT,
+      aircraft.position?.[2] ?? camPos[2]+f[2]*FLIGHT_CHASE_DISTANCE-u[2]*FLIGHT_CHASE_HEIGHT,
       aircraft.yaw || 0,
     ];
 
@@ -2464,11 +2476,12 @@ export class CloudComputeBuilder {
     putF(232, s.sparsity ?? 0.42);
     putF(236, s.definition ?? 0.62);
 
-    putF(240, Math.max(0, Math.min(7, s.formType ?? 0)));
+    putF(240, Math.max(0, Math.min(9, s.formType ?? 0)));
     putF(244, Math.max(0.75, s.puffScale ?? 3.6));
     putF(248, Math.max(0, Math.min(1, s.aoStrength ?? 0)));
     putF(252, Math.max(0, Math.min(0.9, s.towerHeightVariation ?? 0.35)));
     putF(256, Math.max(0, Math.min(2, s.shelfFlow ?? 0)));
+    putF(260, Math.max(0, Math.min(1, s.paintedLayers ?? 0)));
 
     this._writeIfChanged("tuning", this.tuningBuffer, this._abTuning);
   }
@@ -2758,6 +2771,7 @@ export class CloudComputeBuilder {
       this._getResId(this.historyPrevView || this._dummyHistoryPrevView),
       this._getResId(this.motionView || this._dummy2DMotionView),
       this._getResId(this.depthPrevView || this._dummy2DDepthView),
+      this._getResId(this._terrainView || this._dummy2DMotionView),
     ];
     return ids.join("|");
   }
@@ -2854,6 +2868,7 @@ export class CloudComputeBuilder {
         { binding: 11, resource: historyPrev },
         { binding: 13, resource: motionView },
         { binding: 15, resource: depthView },
+        { binding: 17, resource: this._terrainView || this._dummy2DMotionView },
       ],
     });
   }
@@ -3285,6 +3300,13 @@ export class CloudComputeBuilder {
     pass.end();
   }
 
+  _rayDispatchShape(key, compactShape = null) {
+    const groupWidth = (key & 3) === 0 && !(key & 64) ? 16 : 8;
+    const w = compactShape?.w ?? (this._dvFrame.getUint32(8, true) || this._dvFrame.getUint32(0, true));
+    const h = compactShape?.h ?? (this._dvFrame.getUint32(12, true) || this._dvFrame.getUint32(4, true));
+    return [Math.max(1, Math.ceil(w / groupWidth)), Math.max(1, Math.ceil(h / 8))];
+  }
+
   _encodeCurrentComputePass(enc) {
     const compactInterleave = this._canUseCompactInterleave();
     this._setCompactInterleaveUniform(compactInterleave);
@@ -3314,7 +3336,8 @@ export class CloudComputeBuilder {
     pass.setBindGroup(1, this._currentBg1);
     const staged = !!(this._computePipelineKey & 32);
     if (stageBindGroup) pass.setBindGroup(2, stageBindGroup);
-    pass.dispatchWorkgroups(compactShape ? compactShape.wgX : this._wgX, compactShape ? compactShape.wgY : this._wgY, 1);
+    const [rayGroupsX, rayGroupsY] = this._rayDispatchShape(this._computePipelineKey, compactShape);
+    pass.dispatchWorkgroups(rayGroupsX, rayGroupsY, 1);
     timings.push({ stage: "cloud-raymarch", encodeMs: performance.now() - rayStarted, dispatched: true });
     if (staged) {
       const resolveStarted = performance.now();
@@ -3333,6 +3356,7 @@ export class CloudComputeBuilder {
     if (!this.outView && !directCoarse)
       throw new Error("encodeDispatchPasses: createOutputTexture/setOutputView first.");
 
+    this._encodeTerrainPass(enc);
     this._renderSourceView = this.outView;
     if (cf < 2) {
       const layer = this._dvFrame.getInt32(36, true) | 0;
@@ -3671,11 +3695,49 @@ export class CloudComputeBuilder {
     pass.end();
   }
 
+  _encodeTerrainPass(enc) {
+    if(!this._dvView || this._dvView.getFloat32(60,true)<.5){return;}
+    if(!this._terrainMesh){
+      const {vertices,indices}=createTerrainMesh();
+      const vertex=this.device.createBuffer({size:vertices.byteLength,usage:GPUBufferUsage.VERTEX|GPUBufferUsage.COPY_DST});
+      const index=this.device.createBuffer({size:indices.byteLength,usage:GPUBufferUsage.INDEX|GPUBufferUsage.COPY_DST});
+      this.queue.writeBuffer(vertex,0,vertices);this.queue.writeBuffer(index,0,indices);
+      const viewStruct=baseCommonWGSL.slice(baseCommonWGSL.indexOf('struct View {'),baseCommonWGSL.indexOf('@group(1) @binding(9)'));
+      const module=this.device.createShaderModule({code:`${viewStruct}
+      @group(0) @binding(0) var<uniform> V:View;
+      struct Sun{direction:vec3<f32>}; @group(0) @binding(1) var<uniform> sun:Sun;
+      ${terrainWGSL}
+      struct TerrainVertex{@builtin(position) clip:vec4<f32>,@location(0) world:vec3<f32>,@location(1) color:vec3<f32>};
+      @vertex fn vertexMain(@location(0) p:vec3<f32>,@location(1) n:vec3<f32>)->TerrainVertex{
+        let q=p-V.camPos;let z=dot(q,V.fwd);let tanY=tan(V.fovY*.5);
+        var out:TerrainVertex;out.clip=vec4<f32>(dot(q,V.right)/(V.aspect*tanY),dot(q,V.up)/tanY,(65536.0*z-1310.72)/65535.98,z);
+        out.world=p;out.color=cloudTerrainColor(p,n,normalize(sun.direction));return out;
+      }
+      @fragment fn fragmentMain(v:TerrainVertex)->@location(0) vec4<f32>{
+        return vec4<f32>(v.color,length(v.world-V.camPos));
+      }`});
+      const pipeline=this.device.createRenderPipeline({layout:'auto',vertex:{module,entryPoint:'vertexMain',buffers:[{arrayStride:24,attributes:[{shaderLocation:0,offset:0,format:'float32x3'},{shaderLocation:1,offset:12,format:'float32x3'}]}]},
+        fragment:{module,entryPoint:'fragmentMain',targets:[{format:'rgba16float'}]},primitive:{topology:'triangle-list',frontFace:'cw',cullMode:'back'},depthStencil:{format:'depth24plus',depthWriteEnabled:true,depthCompare:'less'}});
+      const group=this.device.createBindGroup({layout:pipeline.getBindGroupLayout(0),entries:[{binding:0,resource:{buffer:this.viewBuffer}},{binding:1,resource:{buffer:this.lightBuffer}}]});
+      this._terrainMesh={vertex,index,count:indices.length,pipeline,group};
+    }
+    if(this._terrainWidth!==this.width||this._terrainHeight!==this.height){
+      this._terrainColor?.destroy();this._terrainDepth?.destroy();
+      this._terrainWidth=this.width;this._terrainHeight=this.height;
+      this._terrainColor=this.device.createTexture({label:'mountain-color-distance',size:[this.width,this.height],format:'rgba16float',usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING});
+      this._terrainDepth=this.device.createTexture({label:'mountain-depth',size:[this.width,this.height],format:'depth24plus',usage:GPUTextureUsage.RENDER_ATTACHMENT});
+      this._terrainView=this._terrainColor.createView();this._bg1Dirty=true;
+    }
+    const pass=enc.beginRenderPass({colorAttachments:[{view:this._terrainView,clearValue:{r:0,g:0,b:0,a:0},loadOp:'clear',storeOp:'store'}],
+      depthStencilAttachment:{view:this._terrainDepth.createView(),depthClearValue:1,depthLoadOp:'clear',depthStoreOp:'store'}});
+    const mesh=this._terrainMesh;pass.setPipeline(mesh.pipeline);pass.setBindGroup(0,mesh.group);pass.setVertexBuffer(0,mesh.vertex);pass.setIndexBuffer(mesh.index,'uint32');pass.drawIndexed(mesh.count);pass.end();
+  }
+
   // -------------------- preview render --------------------
   _createRenderPipelineSetup(format = "bgra8unorm") {
     const deviceCache = getCloudGpuCache(this.device);
     if (!deviceCache.previewModule) {
-      deviceCache.previewModule = this.device.createShaderModule({ code: previewWGSL + '\n' + aircraftWGSL });
+      deviceCache.previewModule = this.device.createShaderModule({ code: previewWGSL + '\n' + aircraftWGSL + '\n' + terrainWGSL });
     }
 
     const bgl = this.device.createBindGroupLayout({
@@ -3695,6 +3757,7 @@ export class CloudComputeBuilder {
           visibility: GPUShaderStage.FRAGMENT,
           buffer: { type: "uniform" },
         },
+        {binding:3,visibility:GPUShaderStage.FRAGMENT,texture:{sampleType:"float",viewDimension:"2d"}},
       ],
     });
     const descriptor = {
@@ -3785,7 +3848,7 @@ export class CloudComputeBuilder {
       "|" +
       this._getResId(samp) +
       "|" +
-      this._getResId(this.renderParams);
+      this._getResId(this.renderParams)+"|"+this._getResId(this._terrainView||this._dummy2DMotionView);
     if (map.has(key)) return map.get(key);
     const bg = this.device.createBindGroup({
       layout: bgl,
@@ -3796,6 +3859,7 @@ export class CloudComputeBuilder {
           binding: 2,
           resource: { buffer: this.renderParams, offset: 0, size: this._abRender.byteLength },
         },
+        {binding:3,resource:this._terrainView||this._dummy2DMotionView},
       ],
     });
     map.set(key, bg);
@@ -3869,8 +3933,18 @@ export class CloudComputeBuilder {
     const fogHorizon = Math.max(0, Math.min(2.0, opts.fogHorizon ?? 0.30));
     const fogSun = Math.max(0, Math.min(2.0, opts.fogSun ?? 1.50));
     const renderBox = opts.box ?? this._state.box ?? { center: [0, 0, 0], half: [18, 0.6, 18] };
-    const boxCenter = renderBox.center ?? [0, 0, 0];
-    const boxHalf = renderBox.half ?? [18, 0.6, 18];
+    const materialCenter = renderBox.center ?? [0, 0, 0];
+    const materialHalf = renderBox.half ?? [18, 0.6, 18];
+    // Fog is evaluated in world space, after the flat marcher has enlarged its
+    // material around the lower support. An unscaled fog box can sit inside an
+    // 8x cloud and draw its top/bottom faces across otherwise opaque radiance.
+    const flatPreview = this._dvOptions.getFloat32(16, true) <= 0;
+    const worldScale = flatPreview ? Math.max(1, Math.min(8, Number(opts.cloudScale) || 1)) : 1;
+    const tuning = this._state.tuning;
+    const lowerSupport = tuning.formType > 0.5 ? 0 : 2 * materialHalf[1] * Math.abs(tuning.baseJitterFrac);
+    const anchorY = materialCenter[1] - materialHalf[1] - lowerSupport;
+    const boxCenter = [materialCenter[0], anchorY + (materialCenter[1] - anchorY) * worldScale, materialCenter[2]];
+    const boxHalf = materialHalf.map(v => v * worldScale);
 
     let camPos, right, up, fwd, fovYRad, aspect, sunDir;
 
@@ -3965,11 +4039,12 @@ export class CloudComputeBuilder {
     dv.setFloat32(268, outputHeight, true);
     writeVec3Padded(dv, 272, boxCenter);
     writeVec3Padded(dv, 288, boxHalf);
-    const aircraftPosition=opts.aircraft?.position || camPos.map((v,i)=>v+fwd[i]*2.4-up[i]*.55);
+    const aircraftPosition=opts.aircraft?.position || camPos.map((v,i)=>v+fwd[i]*FLIGHT_CHASE_DISTANCE-up[i]*FLIGHT_CHASE_HEIGHT);
     dv.setFloat32(172, aircraftPosition[0], true);
     dv.setFloat32(188, aircraftPosition[1], true);
     dv.setFloat32(284, aircraftPosition[2], true);
     dv.setFloat32(300, opts.aircraft?.yaw || 0, true);
+    dv.setFloat32(304, opts.terrainEnabled ? 1 : 0, true);
 
     this._writeIfChanged("render", this.renderParams, this._abRender);
   }

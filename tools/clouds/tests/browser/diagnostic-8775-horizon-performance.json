@@ -1,0 +1,116 @@
+{
+  "complete": true,
+  "gpuTiming": true,
+  "compile": [
+    {
+      "layout": "8x8",
+      "ms": 7.299999997019768
+    },
+    {
+      "layout": "exact horizon shortcuts",
+      "ms": 7.5
+    }
+  ],
+  "width": 512,
+  "height": 288,
+  "rows": [
+    {
+      "scene": "dense horizon",
+      "layout": "8x8",
+      "medianMs": 2.228224,
+      "p90Ms": 2.424832
+    },
+    {
+      "scene": "dense horizon",
+      "layout": "exact horizon shortcuts",
+      "medianMs": 2.29376,
+      "p90Ms": 2.4903679999999997
+    },
+    {
+      "scene": "thin horizon",
+      "layout": "8x8",
+      "medianMs": 30.670848,
+      "p90Ms": 31.653888
+    },
+    {
+      "scene": "thin horizon",
+      "layout": "exact horizon shortcuts",
+      "medianMs": 30.80192,
+      "p90Ms": 31.981568
+    },
+    {
+      "scene": "upward",
+      "layout": "8x8",
+      "medianMs": 0.786432,
+      "p90Ms": 2.031616
+    },
+    {
+      "scene": "upward",
+      "layout": "exact horizon shortcuts",
+      "medianMs": 0.6553599999999999,
+      "p90Ms": 1.9660799999999998
+    },
+    {
+      "scene": "downward",
+      "layout": "8x8",
+      "medianMs": 1.441792,
+      "p90Ms": 2.031616
+    },
+    {
+      "scene": "downward",
+      "layout": "exact horizon shortcuts",
+      "medianMs": 1.441792,
+      "p90Ms": 2.097152
+    }
+  ],
+  "parity": [
+    {
+      "scene": "dense horizon",
+      "layout": "exact horizon shortcuts",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "thin horizon",
+      "layout": "exact horizon shortcuts",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "upward",
+      "layout": "exact horizon shortcuts",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "downward",
+      "layout": "exact horizon shortcuts",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "nonzero warp 0.4",
+      "changedComponents": 0,
+      "pass": true
+    },
+    {
+      "scene": "nonzero warp 2.1",
+      "changedComponents": 0,
+      "pass": true
+    }
+  ],
+  "errors": [],
+  "pass": true
+}

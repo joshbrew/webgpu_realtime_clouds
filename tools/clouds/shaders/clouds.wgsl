@@ -109,6 +109,80 @@ fn cloudRayJitter(pix:vec2<u32>) -> f32 {
   return f32(h >> 8u)*(1.0/16777216.0);
 }
 
+// Reuse the periodic noise tiles as a continuous material-space deformation.
+// These coordinates are shared by density and lighting; the bake stays regular.
+fn cachedDomainStrength() -> f32 {
+  return select(0.0,clamp(FIELD.morphology.w,0.0,1.5),FIELD.volume.x<0.5);
+}
+fn cachedDomainAmplitudes() -> mat2x3<f32> {
+  let spacing=FIELD.gridSize.xyz/vec3<f32>(FIELD.dimensions.xyz);
+  let strength=cachedDomainStrength();
+  let broad=select(vec3<f32>(0.0),vec3<f32>(FIELD.gridSize.x*0.40,FIELD.gridSize.y*0.12,FIELD.gridSize.z*0.40),FIELD.dimensions.w>0u);
+  return mat2x3<f32>(broad*strength,spacing*vec3<f32>(1.25,1.8,1.25)*strength);
+}
+fn cachedDomainPosition(p:vec3<f32>)->vec3<f32> {
+  if(cachedDomainStrength()<0.001){return p;}
+  let amplitudes=cachedDomainAmplitudes();
+  var displacement=vec3<f32>(0.0);
+  if(FIELD.dimensions.w>0u){
+    let scale=1.0/(max(FIELD.gridSize.x,FIELD.gridSize.z)*4.7);
+    let lod=max(f32(textureNumLevels(shape3D))-4.0,0.0);
+    let noise=textureSampleLevel(shape3D,sampShape,(p+NTransform.shapeOffsetWorld)*scale+vec3<f32>(0.17,0.39,0.61),lod).gbr;
+    displacement+=(clamp((noise-0.5)*3.0,vec3<f32>(-0.5),vec3<f32>(0.5))*2.0)*amplitudes[0];
+  }
+  let lod=max(f32(textureNumLevels(detail3D))-4.0,0.0);
+  let noise=textureSampleLevel(detail3D,sampDetail,(p+NTransform.detailOffsetWorld)*(0.22/max(TUNE.puffScale,0.75)),lod).brg;
+  displacement+=(clamp((noise-0.5)*3.0,vec3<f32>(-0.5),vec3<f32>(0.5))*2.0)*amplitudes[1];
+  // Fade vertical displacement before the volume boundary, preserving its halo.
+  let ph=clamp((p.y-FIELD.gridMin.y)/FIELD.gridSize.y,0.0,1.0);
+  displacement.y*=smoothstep(0.0,0.12,ph)*(1.0-smoothstep(0.88,1.0,ph));
+  return p+displacement;
+}
+// Bound the deformed interval using the maximum slope of filtered noise texels.
+// Empty-space queries include cubic support and cannot jump warped cloud edges.
+fn cachedDomainSkipFootprint(length:f32,rd:vec3<f32>,spacing:vec3<f32>)->f32 {
+  let amplitudes=cachedDomainAmplitudes();
+  let macroLod=max(i32(textureNumLevels(shape3D))-4,0);
+  let microLod=max(i32(textureNumLevels(detail3D))-4,0);
+  let macroRate=vec3<f32>(textureDimensions(shape3D,macroLod))/(max(FIELD.gridSize.x,FIELD.gridSize.z)*4.7);
+  let microRate=vec3<f32>(textureDimensions(detail3D,microLod))*(0.22/max(TUNE.puffScale,0.75));
+  let broadDelta=min(2.0,3.0*length*dot(abs(rd),macroRate));
+  let fineDelta=min(2.0,3.0*length*dot(abs(rd),microRate));
+  var extent=amplitudes[0]*broadDelta+amplitudes[1]*fineDelta;
+  extent.y+=(amplitudes[0].y+amplitudes[1].y)*min(2.0,12.5*length*abs(rd.y)/FIELD.gridSize.y);
+  let cells=(abs(rd)*length+extent*2.0)/spacing;
+  return max(max(cells.x,cells.y),cells.z)+4.0;
+}
+// Positive cubic B-spline reconstruction uses eight hardware trilinear reads.
+// Unlike a sharp interpolator, it cannot create negative density or bright halos.
+fn cachedCubicSample(tex:texture_3d<f32>,uv:vec3<f32>)->vec4<f32> {
+  let dims=vec3<f32>(textureDimensions(tex));
+  let coord=uv*dims-0.5;
+  let cell=floor(coord);
+  let f=fract(coord);
+  let w0=(1.0-f)*(1.0-f)*(1.0-f)/6.0;
+  let w1=(3.0*f*f*f-6.0*f*f+4.0)/6.0;
+  let w2=(-3.0*f*f*f+3.0*f*f+3.0*f+1.0)/6.0;
+  let w3=f*f*f/6.0;
+  let g0=w0+w1;
+  let g1=w2+w3;
+  let a=(cell-1.0+w1/g0+0.5)/dims;
+  let b=(cell+1.0+w3/g1+0.5)/dims;
+  var result=vec4<f32>(0.0);
+  for(var z=0u;z<2u;z++){for(var y=0u;y<2u;y++){for(var x=0u;x<2u;x++){
+    let at=vec3<f32>(select(a.x,b.x,x==1u),select(a.y,b.y,y==1u),select(a.z,b.z,z==1u));
+    let weight=select(g0.x,g1.x,x==1u)*select(g0.y,g1.y,y==1u)*select(g0.z,g1.z,z==1u);
+    result+=textureSampleLevel(tex,cloudFieldSampler,at,0.0)*weight;
+  }}}
+  return result;
+}
+fn cachedVisibleSample(tex:texture_3d<f32>,uv:vec3<f32>,lod:f32)->vec4<f32> {
+  if(TUNE.formType>8.5 && lod<1.0){
+    return mix(cachedCubicSample(tex,uv),textureSampleLevel(tex,cloudFieldSampler,uv,1.0),lod);
+  }
+  return textureSampleLevel(tex,cloudFieldSampler,uv,lod);
+}
+
 fn turbulentCloudDensity(p:vec3<f32>, density:vec4<f32>, footprint:f32) -> f32 {
   let base = max(density.r, 0.0);
   let amount = clamp(FIELD.morphology.w, 0.0, 1.5);
@@ -151,7 +225,13 @@ fn computeCloudBox(@builtin(global_invocation_id) gid: vec3<u32>) {
   let ndc = uv * 2.0 - 1.0;
   let tanY = tan(V.fovY * 0.5);
   let rd = normalize(V.fwd + V.right * (ndc.x * V.aspect * tanY) - V.up * (ndc.y * tanY));
-  let aircraft = sceneAircraft(ro,rd,V.aircraftPosition,V.right,V.up,V.fwd,V._v0,V._v1,V._v2,V.aircraftYaw,normalize(L.sunDir));
+  var aircraft = sceneAircraft(ro,rd,V.aircraftPosition,V.right,V.up,V.fwd,V._v0,V._v1,V._v2,V.aircraftYaw,normalize(L.sunDir));
+  let worldTerrainDistance=cloudTerrainDepth(cloudTerrainTexture,uv,V._v3);
+  if(worldTerrainDistance<aircraft.distance){aircraft.distance=1000000.0;}
+  let cloudScale=flatCloudScale();
+  let terrainDistance=worldTerrainDistance/cloudScale;
+  if(aircraft.distance<1000000.0){aircraft.distance/=cloudScale;}
+  ro=flatCloudMaterialOrigin(ro);
   let rayMin=select(FIELD.gridMin.xyz,B.center-B.half,FIELD.dimensions.w>0u);
   let rayMax=select(FIELD.gridMin.xyz+FIELD.gridSize.xyz,B.center+B.half,FIELD.dimensions.w>0u);
   var hit = intersectAABB_robust(ro, rd, rayMin,rayMax);
@@ -159,71 +239,117 @@ fn computeCloudBox(@builtin(global_invocation_id) gid: vec3<u32>) {
   if(aircraft.distance<1000000.0 && (hit.y<=begin || aircraft.distance<=begin)){
     storeRoundedSample(pix,vec4<f32>(aircraft.color,1.0),0.0);return;
   }
-  hit.y=min(hit.y,aircraft.distance);
+  hit.y=min(hit.y,min(aircraft.distance,terrainDistance));
   if (hit.y <= begin) { storeRoundedSample(pix, vec4<f32>(0.0), 0.0); return; }
   let spacing = FIELD.gridSize.xyz / vec3<f32>(FIELD.dimensions.xyz);
   let voxelStep = 1.0 / max(max(abs(rd.x) / spacing.x, abs(rd.y) / spacing.y), abs(rd.z) / spacing.z);
   let budget = max(TUNE.maxSteps, 1);
   // Cover the entire segment without thin-sheet thickBox/vertical step boosts.
   let baseStep=max(voxelStep * 0.65, TUNE.minStep);
-  var step = select(max(baseStep,(hit.y - begin) / f32(budget)),baseStep,FIELD.dimensions.w>0u);
-  let jitter = cloudRayJitter(vec2<u32>(pix));
-  var t = begin + step * jitter * clamp(TUNE.phaseJitter, 0.0, 1.0);
+  var step=baseStep;
+  let jitter=cloudRayJitter(vec2<u32>(pix))*clamp(TUNE.phaseJitter,0.0,0.15);
+  var t=begin;
+  // Phase-lock the near ray intervals under translation. These are intervals
+  // along the actual camera ray, not cells of an axis-aligned spatial grid.
+  // Integrate the first partial interval instead of leaving a jittered gap.
+  let firstInterval=baseStep*(1.0-fract((dot(ro-B.center,rd)+begin)/baseStep-jitter));
+  let nearCount=min(max(ceil(max(TUNE.puffScale*2.0,voxelStep*8.0)/baseStep),1.0),max(floor(f32(budget)*0.38),1.0));
+  let nearEnd=begin+firstInterval+baseStep*(nearCount-1.0);
+  let farCount=max(f32(budget)-nearCount,1.0);
+  let farLength=max(hit.y-nearEnd-baseStep*farCount,0.0);
+  var previousDensity=vec4<f32>(0.0);
+  var previousDomain=vec3<f32>(0.0);
+  var previousEnd=-1.0;
+  var previousLod=-1.0;
   var transmittance = 1.0;
   var radiance = vec3<f32>(0.0);
   let sun = normalizeOr(L.sunDir, vec3<f32>(0.0, 1.0, 0.0));
   let phase = saturate(dot(rd, sun) * 0.5 + 0.5);
+  let scatterPhase=0.10+0.30*pow(phase,4.0);
+  let silverPhase=pow(phase,max(6.0,C.silverExponent*8.0));
+  let sunColor=max(C.frontLightColor,vec3<f32>(0.0));
+  let skyColor=max(C.shadowLightColor,vec3<f32>(0.0));
   for (var i = 0; i < budget; i++) {
     if (t >= hit.y || transmittance < 0.008) { break; }
     let pixelFootprint = t * (2.0 * tanY) / f32(frame.fullHeight);
-    if(FIELD.dimensions.w>0u){
-      // Growing horizon steps are safe only in empty space. Sampling cloud
-      // lighting with them (several world units per sample) amplified phase
-      // jitter into grain even though the tiled density field stayed detailed.
-      step=max(baseStep,pixelFootprint*0.65);
-      let nearDensity=textureSampleLevel(cloudDensityField,cloudFieldSampler,cloudFieldUV(ro+rd*t),0.0).r;
-      if(nearDensity<0.00001){
-        var skip=min(max(step,(t-begin)*0.045),hit.y-t);
-        var skipped=false;
-        for(var attempt=0;attempt<3;attempt++){
-          if(skip<=step*1.25){break;}
-          // The full mip chain stores maxima in B, so a thin cloud cannot
-          // disappear into an averaged empty-space test. Include interpolation
-          // support around the entire proposed interval, not just its center.
-          let lod=clamp(ceil(log2(max(skip/voxelStep+2.0,1.0))),0.0,f32(textureNumLevels(cloudDensityField)-1u));
-          let bound=textureSampleLevel(cloudDensityField,cloudFieldSampler,cloudFieldUV(ro+rd*(t+skip*0.5)),lod).b;
-          if(bound<0.00001){t+=skip;skipped=true;break;}
-          skip*=0.25;
-        }
-        if(skipped){continue;}
-      }
+    if(f32(i)<nearCount){
+      step=max(begin+firstInterval+baseStep*f32(i)-t,0.000001);
+    }else{
+      let farIndex=f32(i)+1.0-nearCount;
+      let progress=farIndex/farCount;
+      let plannedEnd=nearEnd+baseStep*farIndex+farLength*progress*progress*progress;
+      step=max(max(baseStep,pixelFootprint*0.65),plannedEnd-t);
     }
-    let p = ro + rd * t;
-    let fieldUV = cloudFieldUV(p);
+    let p = ro + rd * (t + min(step,hit.y-t)*0.5);
     let distance = min(step, hit.y - t);
-    let fieldLod=clamp(log2(max(max(pixelFootprint,step*0.35)/min(min(spacing.x,spacing.y),spacing.z),1.0)),0.0,3.0);
-    let density = textureSampleLevel(cloudDensityField, cloudFieldSampler, fieldUV, fieldLod);
-    let fineDensity = turbulentCloudDensity(p, density, max(step * 0.65, pixelFootprint));
+    // The thin morning deck varies mostly across X/Z. Selecting isotropic
+    // mips from its much smaller Y spacing blurs several horizontal cells
+    // together, erasing the ruffles even in a full-resolution close-up.
+    let fieldFilterSpacing=select(min(min(spacing.x,spacing.y),spacing.z),
+      min(spacing.x,spacing.z),TUNE.formType>7.5&&TUNE.formType<8.5);
+    let fieldLod=clamp(log2(max(max(pixelFootprint,step*0.35)/fieldFilterSpacing,1.0)),0.0,3.0);
+    // Integrate a linear density segment. The previous endpoint is reused,
+    // replacing the separate near-density probe rather than adding two reads
+    // per interval. This smooths camera-relative slice changes in thin cloud.
+    var domainStart=previousDomain;
+    var densityStart=previousDensity;
+    if(abs(previousEnd-t)>0.00001){
+      domainStart=cachedDomainPosition(ro+rd*t);
+      densityStart=cachedVisibleSample(cloudDensityField,cloudFieldUV(domainStart),fieldLod);
+    }else if(abs(previousLod-fieldLod)>0.25){
+      densityStart=cachedVisibleSample(cloudDensityField,cloudFieldUV(domainStart),fieldLod);
+    }
+    let domainEnd=cachedDomainPosition(ro+rd*(t+distance));
+    let densityEnd=cachedVisibleSample(cloudDensityField,cloudFieldUV(domainEnd),fieldLod);
+    previousDensity=densityEnd;previousDomain=domainEnd;
+    previousEnd=t+distance;previousLod=fieldLod;
+    var density=(densityStart+densityEnd)*0.5;
+    var lightWeight=0.5+(densityEnd.r-densityStart.r)/(6.0*max(densityStart.r+densityEnd.r,0.000001));
+    // Resolve the near integral with Simpson weights. Its midpoint read
+    // replaces the old occupancy-only probe; fade to the cheaper endpoint
+    // integral at distance so transparent close wisps keep their detail.
+    let nearBlend=1.0-smoothstep(max(TUNE.puffScale,voxelStep*4.0),max(TUNE.puffScale*2.0,voxelStep*8.0),t-begin);
+    if(nearBlend>0.001){
+      let middle=cachedVisibleSample(cloudDensityField,cloudFieldUV(cachedDomainPosition(p)),fieldLod);
+      let integral=(densityStart+middle*4.0+densityEnd)/6.0;
+      density=mix(density,integral,nearBlend);
+      let midpointWeight=(middle.r*2.0+densityEnd.r)/max(densityStart.r+middle.r*4.0+densityEnd.r,0.000001);
+      lightWeight=mix(lightWeight,midpointWeight,nearBlend);
+      density.b=max(density.b,middle.b);
+    }
+    density.b=max(density.b,max(densityStart.b,densityEnd.b));
+    if(FIELD.dimensions.w>0u && f32(i)>=nearCount && density.b<0.00001){
+      var skip=min(max(step,(t-begin)*0.045),hit.y-t);
+      var skipped=false;
+      for(var attempt=0;attempt<3;attempt++){
+        if(skip<=step*1.25){break;}
+        let lod=clamp(ceil(log2(max(cachedDomainSkipFootprint(skip,rd,spacing),1.0))),0.0,f32(textureNumLevels(cloudDensityField)-1u));
+        let bound=textureSampleLevel(cloudDensityField,cloudFieldSampler,cloudFieldUV(cachedDomainPosition(ro+rd*(t+skip*0.5))),lod).b;
+        if(bound<0.00001){t+=skip;skipped=true;break;}
+        skip*=0.25;
+      }
+      if(skipped){continue;}
+    }
+    let fieldUV=cloudFieldUV(mix(domainStart,domainEnd,lightWeight));
+    let fineDensity = turbulentCloudDensity(p, density, max(step, pixelFootprint));
     let alpha = 1.0 - exp(-fineDensity * distance * VIEW_EXTINCTION_SCALE);
     if (alpha > 0.00001) {
-      let lighting = textureSampleLevel(cloudLightField, cloudFieldSampler, fieldUV, fieldLod);
+      let lighting = cachedVisibleSample(cloudLightField, fieldUV, fieldLod);
       let diffuse = clamp(lighting.r, 0.0, 1.0);
       let visibility = clamp(lighting.b, 0.0, 1.0);
       let ao = mix_f(1.0, lighting.a, saturate(TUNE.aoStrength));
       let upper = clamp(lighting.g, 0.0, 1.0);
       let direct = visibility * (0.20 + 0.80 * diffuse);
-      let asperitasFill = select(FIELD.morphology.z, 1.0, TUNE.formType >= 6.5);
+      let asperitasFill = select(FIELD.morphology.z, 1.0, TUNE.formType >= 6.5 && TUNE.formType < 7.5);
       let ambient = (0.10 + 0.19 * upper + asperitasFill * 0.22) * ao;
       // Low-order multiple-scattering fill reuses the cached sun visibility.
       // It reveals billows on the shaded face without another density probe or
       // a secondary raymarch, including grades with very dark shadow tints.
-      let bounce = (0.035 + asperitasFill * 0.045 + 0.18 * sqrt(sqrt(visibility))) * (0.25 + 0.75 * upper) * ao;
-      let scatter = visibility * (0.10 + 0.30 * pow(phase, 4.0));
-      let silverPhase=pow(phase,max(6.0,C.silverExponent*8.0));
+      let rootVisibility=sqrt(visibility);
+      let bounce = (0.035 + asperitasFill * 0.045 + 0.18 * sqrt(rootVisibility)) * (0.25 + 0.75 * upper) * ao;
+      let scatter = visibility * scatterPhase;
       let exposedEdge=1.0-smoothstep(0.02,0.20,density.w);
-      let silver = silverPhase * pow(visibility,0.50) * pow(1.0 - diffuse, 0.90) * exposedEdge * max(C.silverIntensity, 0.0) * 1.4;
-      let sunColor = max(C.frontLightColor, vec3<f32>(0.0));
-      let skyColor = max(C.shadowLightColor, vec3<f32>(0.0));
+      let silver = silverPhase * rootVisibility * pow(1.0 - diffuse, 0.90) * exposedEdge * max(C.silverIntensity, 0.0) * 1.4;
       let color = sunColor * (direct + scatter + bounce) + skyColor * ambient + max(C.sunColor, vec3<f32>(0.0)) * silver;
       radiance += transmittance * alpha * color;
       transmittance *= 1.0 - alpha;
@@ -246,6 +372,6 @@ fn computeCloudBox(@builtin(global_invocation_id) gid: vec3<u32>) {
     else if (opt.outputChannel == 2u) { result = vec4<f32>(0.0,0.0,a,1.0); }
     else { result = vec4<f32>(0.0,0.0,0.0,a); }
   }
-  let farHistory = saturate((hit.y - TUNE.farStart) / max(TUNE.farFull - TUNE.farStart, EPS));
+  let farHistory = saturate((hit.y * cloudScale - TUNE.farStart) / max(TUNE.farFull - TUNE.farStart, EPS));
   storeRoundedSample(pix, result, farHistory);
 }

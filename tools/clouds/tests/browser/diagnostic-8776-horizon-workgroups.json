@@ -1,0 +1,106 @@
+{
+  "complete": true,
+  "gpuTiming": true,
+  "compile": [
+    {
+      "layout": "8x8",
+      "ms": 8.599999994039536
+    },
+    {
+      "layout": "exact horizon shortcuts",
+      "ms": 7.600000008940697
+    }
+  ],
+  "width": 512,
+  "height": 288,
+  "rows": [
+    {
+      "scene": "dense horizon",
+      "layout": "8x8",
+      "medianMs": 0.9830399999999999,
+      "p90Ms": 12.910592
+    },
+    {
+      "scene": "dense horizon",
+      "layout": "exact horizon shortcuts",
+      "medianMs": 0.917504,
+      "p90Ms": 15.335424
+    },
+    {
+      "scene": "thin horizon",
+      "layout": "8x8",
+      "medianMs": 104.85759999999999,
+      "p90Ms": 124.32179199999999
+    },
+    {
+      "scene": "thin horizon",
+      "layout": "exact horizon shortcuts",
+      "medianMs": 100.92544,
+      "p90Ms": 125.10822399999999
+    },
+    {
+      "scene": "upward",
+      "layout": "8x8",
+      "medianMs": 0.9830399999999999,
+      "p90Ms": 5.505024
+    },
+    {
+      "scene": "upward",
+      "layout": "exact horizon shortcuts",
+      "medianMs": 0.851968,
+      "p90Ms": 12.713984
+    },
+    {
+      "scene": "downward",
+      "layout": "8x8",
+      "medianMs": 3.2767999999999997,
+      "p90Ms": 16.449536
+    },
+    {
+      "scene": "downward",
+      "layout": "exact horizon shortcuts",
+      "medianMs": 3.014656,
+      "p90Ms": 15.794175999999998
+    }
+  ],
+  "parity": [
+    {
+      "scene": "dense horizon",
+      "layout": "exact horizon shortcuts",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "thin horizon",
+      "layout": "exact horizon shortcuts",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "upward",
+      "layout": "exact horizon shortcuts",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "downward",
+      "layout": "exact horizon shortcuts",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    }
+  ],
+  "errors": [],
+  "pass": true
+}

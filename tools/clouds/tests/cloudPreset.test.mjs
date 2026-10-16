@@ -38,7 +38,7 @@ test('rare weather presets own distinct cached forms and resolved translucent ed
 test('gallery uses five independently rotating volume masks and is centered like the donut',async()=>{
   assert.equal(presets.rotating_gallery.form.volumeShape,'gallery');
   assert.equal(presets.rotating_gallery.form.halfY,14);
-  assert.match(source,/setControlValue\("v-box-cy", preview\.volumeShape === "torus" \|\| preview\.volumeShape === "gallery" \? 0/);
+  assert.match(source,/setControlValue\("v-box-cy", \(preview\.volumeShape === "torus" \|\| preview\.volumeShape === "gallery" \? 0/);
   const fields=await readFile(new URL('../shaders/cloudFields.wgsl',import.meta.url),'utf8');
   for(const rate of ['t*1.7','t*2.3','t*2.8','t*3.2'])assert.ok(fields.includes(rate));
 });

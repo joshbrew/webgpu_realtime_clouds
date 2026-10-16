@@ -1,0 +1,559 @@
+{
+  "complete": true,
+  "pass": true,
+  "lightingSteps": [
+    {
+      "stepBase": 0.005,
+      "rgb": [
+        0.67236328125,
+        0.6572265625,
+        0.64697265625
+      ],
+      "alpha": 1
+    },
+    {
+      "stepBase": 0.02,
+      "rgb": [
+        0.67236328125,
+        0.6572265625,
+        0.64697265625
+      ],
+      "alpha": 1
+    },
+    {
+      "stepBase": 0.08,
+      "rgb": [
+        0.67333984375,
+        0.658203125,
+        0.64794921875
+      ],
+      "alpha": 1
+    }
+  ],
+  "lightingStepDelta": 0.0009765625,
+  "rows": [
+    {
+      "camera": [
+        0,
+        0,
+        4
+      ],
+      "maxSteps": 16,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    },
+    {
+      "camera": [
+        0,
+        0,
+        4
+      ],
+      "maxSteps": 32,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    },
+    {
+      "camera": [
+        0,
+        0,
+        4
+      ],
+      "maxSteps": 96,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    },
+    {
+      "camera": [
+        0,
+        0,
+        0
+      ],
+      "maxSteps": 16,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    },
+    {
+      "camera": [
+        0,
+        0,
+        0
+      ],
+      "maxSteps": 32,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    },
+    {
+      "camera": [
+        0,
+        0,
+        0
+      ],
+      "maxSteps": 96,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    }
+  ],
+  "march": [
+    {
+      "pitch": -0.025,
+      "meanAbsoluteError": 0,
+      "pass": true
+    },
+    {
+      "pitch": 0,
+      "meanAbsoluteError": 0,
+      "pass": true
+    },
+    {
+      "pitch": 0.025,
+      "meanAbsoluteError": 0,
+      "pass": true
+    }
+  ],
+  "turns": [
+    {
+      "yaw": 0,
+      "pitch": 0,
+      "alphaError": 0.00044693052768707275,
+      "rgbError": 0.0009757702549298605,
+      "pass": true
+    },
+    {
+      "yaw": 0.3,
+      "pitch": 0.1,
+      "alphaError": 0.0005525648593902588,
+      "rgbError": 0.002014756202697754,
+      "pass": true
+    },
+    {
+      "yaw": 0.3,
+      "pitch": 0.5,
+      "alphaError": 0,
+      "rgbError": 0,
+      "pass": true
+    },
+    {
+      "yaw": 1.1,
+      "pitch": -0.4,
+      "alphaError": 0,
+      "rgbError": 0,
+      "pass": true
+    }
+  ],
+  "paintedAlphaDelta": 0,
+  "paintedChangedPixels": 2048,
+  "paintRestored": true,
+  "paintedViewRestored": true,
+  "paintedViewChanged": true,
+  "thinWideError": 0,
+  "thinAlpha": 0.0016603469848632812,
+  "emptyAlpha": 0,
+  "errors": [],
+  "paddingOpacity": {
+    "unpaddedOpacity": 0.1248779296875,
+    "paddedOpacity": 0.12548828125,
+    "error": 0.0006103515625,
+    "pass": true
+  },
+  "jitteredHeadroomAlpha": 1,
+  "jitteredHeadroomPass": true,
+  "reliefNormals": [
+    -0.9999896883964539,
+    0.0012920376611873507,
+    0.004337554797530174,
+    1,
+    -0.9999866485595703,
+    0.0014712541596964002,
+    0.004939210135489702,
+    1,
+    -0.9999897480010986,
+    0.001292042201384902,
+    0.004337570164352655,
+    1
+  ],
+  "reliefPass": true,
+  "pigmentOpacity": {
+    "before": 0.365966796875,
+    "after": 0.438720703125,
+    "plainWisp": 0.0007605552673339844,
+    "boostedWisp": 0.0007605552673339844,
+    "pass": true
+  },
+  "pigmentRamps": [
+    {
+      "style": 41,
+      "flatIntervals": 0,
+      "maxAdjacentChange": 0.008579522371292114,
+      "maxValueDrift": 1.1920928955078125e-7,
+      "pass": true
+    },
+    {
+      "style": 44,
+      "flatIntervals": 0,
+      "maxAdjacentChange": 0.0065659284591674805,
+      "maxValueDrift": 1.1920928955078125e-7,
+      "pass": true
+    }
+  ],
+  "reconstruction": {
+    "pass": true,
+    "cachedUnchanged": true,
+    "fullResolutionUnchanged": true,
+    "baseline": {
+      "rmse": 0.002336817027933551,
+      "bounded": true,
+      "submitToCompletionMs": 0.11250000004656613
+    },
+    "resolved": {
+      "rmse": 0.0010016621014769349,
+      "bounded": true,
+      "submitToCompletionMs": 0.08749999990686774
+    },
+    "cached": {
+      "rmse": 0.002336817027933551,
+      "bounded": true,
+      "submitToCompletionMs": 0.0625
+    },
+    "full": {
+      "rmse": 0.002336817027933551,
+      "bounded": true,
+      "submitToCompletionMs": 0.10312500013969839
+    }
+  },
+  "morningEvolution": {
+    "changedAlphaPixels": 875,
+    "pausedStable": true,
+    "restored": true,
+    "pass": true
+  },
+  "cachedTiles": [
+    {
+      "formType": 8,
+      "tileSpan": 38,
+      "maxAlphaError": 0.076202392578125,
+      "alphaRange": 0.084228515625,
+      "seamError": 0.000732421875,
+      "deterministic": true,
+      "regularError": 0.00006103515625,
+      "pass": true
+    },
+    {
+      "formType": 9,
+      "tileSpan": 38,
+      "maxAlphaError": 0.1322174072265625,
+      "alphaRange": 0.282958984375,
+      "seamError": 0.0009765625,
+      "deterministic": true,
+      "regularError": 0.0001220703125,
+      "pass": true
+    }
+  ],
+  "horizonCoverage": [
+    {
+      "yaw": 0,
+      "alpha": 0.183837890625,
+      "referenceAlpha": 0.18359375,
+      "error": 0.000244140625,
+      "pass": true
+    },
+    {
+      "yaw": 0.55,
+      "alpha": 0.21484375,
+      "referenceAlpha": 0.2117919921875,
+      "error": 0.0030517578125,
+      "pass": true
+    },
+    {
+      "yaw": 1.1,
+      "alpha": 0.20361328125,
+      "referenceAlpha": 0.2034912109375,
+      "error": 0.0001220703125,
+      "pass": true
+    }
+  ],
+  "terrainOcclusion": [
+    {
+      "formType": 0,
+      "cloudScale": 1,
+      "behind": true,
+      "plain": 1,
+      "clipped": 0,
+      "pass": true
+    },
+    {
+      "formType": 0,
+      "cloudScale": 2,
+      "behind": true,
+      "plain": 1,
+      "clipped": 0,
+      "pass": true
+    },
+    {
+      "formType": 0,
+      "cloudScale": 1,
+      "behind": false,
+      "plain": 1,
+      "clipped": 1,
+      "pass": true
+    },
+    {
+      "formType": 0,
+      "cloudScale": 2,
+      "behind": false,
+      "plain": 1,
+      "clipped": 1,
+      "pass": true
+    },
+    {
+      "formType": 9,
+      "cloudScale": 1,
+      "behind": true,
+      "plain": 0.9921875,
+      "clipped": 0,
+      "pass": true
+    },
+    {
+      "formType": 9,
+      "cloudScale": 2,
+      "behind": true,
+      "plain": 0.9921875,
+      "clipped": 0,
+      "pass": true
+    },
+    {
+      "formType": 9,
+      "cloudScale": 1,
+      "behind": false,
+      "plain": 0.9921875,
+      "clipped": 0.9921875,
+      "pass": true
+    },
+    {
+      "formType": 9,
+      "cloudScale": 2,
+      "behind": false,
+      "plain": 0.9921875,
+      "clipped": 0.9921875,
+      "pass": true
+    }
+  ],
+  "terrainFloorHorizon": {
+    "distance": 2638,
+    "pass": true
+  },
+  "cloudScaling": [
+    {
+      "formType": 0,
+      "scale": 2,
+      "referenceAlpha": 1,
+      "maxError": 0,
+      "cacheReused": true,
+      "dimensionsUnchanged": true,
+      "belowBaseAlpha": 0,
+      "pass": true
+    },
+    {
+      "formType": 0,
+      "scale": 5,
+      "referenceAlpha": 1,
+      "maxError": 0,
+      "cacheReused": true,
+      "dimensionsUnchanged": true,
+      "belowBaseAlpha": 0,
+      "pass": true
+    },
+    {
+      "formType": 0,
+      "scale": 8,
+      "referenceAlpha": 1,
+      "maxError": 0,
+      "cacheReused": true,
+      "dimensionsUnchanged": true,
+      "belowBaseAlpha": 0,
+      "pass": true
+    },
+    {
+      "formType": 3,
+      "scale": 2,
+      "referenceAlpha": 0.9970703125,
+      "maxError": 0,
+      "cacheReused": true,
+      "dimensionsUnchanged": true,
+      "belowBaseAlpha": 0,
+      "pass": true
+    },
+    {
+      "formType": 3,
+      "scale": 5,
+      "referenceAlpha": 0.9970703125,
+      "maxError": 0,
+      "cacheReused": true,
+      "dimensionsUnchanged": true,
+      "belowBaseAlpha": 0,
+      "pass": true
+    },
+    {
+      "formType": 3,
+      "scale": 8,
+      "referenceAlpha": 0.9970703125,
+      "maxError": 0,
+      "cacheReused": true,
+      "dimensionsUnchanged": true,
+      "belowBaseAlpha": 0,
+      "pass": true
+    },
+    {
+      "formType": 9,
+      "scale": 2,
+      "referenceAlpha": 0.99462890625,
+      "maxError": 0,
+      "cacheReused": true,
+      "dimensionsUnchanged": true,
+      "belowBaseAlpha": 0,
+      "pass": true
+    },
+    {
+      "formType": 9,
+      "scale": 5,
+      "referenceAlpha": 0.99462890625,
+      "maxError": 0,
+      "cacheReused": true,
+      "dimensionsUnchanged": true,
+      "belowBaseAlpha": 0,
+      "pass": true
+    },
+    {
+      "formType": 9,
+      "scale": 8,
+      "referenceAlpha": 0.99462890625,
+      "maxError": 0,
+      "cacheReused": true,
+      "dimensionsUnchanged": true,
+      "belowBaseAlpha": 0,
+      "pass": true
+    }
+  ],
+  "volumeFlightSampling": [
+    {
+      "formType": 2,
+      "pose": 0,
+      "alphaError": 0,
+      "rgbError": 0,
+      "pass": true
+    },
+    {
+      "formType": 2,
+      "pose": 1,
+      "alphaError": 0,
+      "rgbError": 0,
+      "pass": true
+    },
+    {
+      "formType": 2,
+      "pose": 2,
+      "alphaError": 0,
+      "rgbError": 0,
+      "pass": true
+    },
+    {
+      "formType": 9,
+      "pose": 0,
+      "alphaError": 0,
+      "rgbError": 0,
+      "pass": true
+    },
+    {
+      "formType": 9,
+      "pose": 1,
+      "alphaError": 0,
+      "rgbError": 0,
+      "pass": true
+    },
+    {
+      "formType": 9,
+      "pose": 2,
+      "alphaError": 0,
+      "rgbError": 0,
+      "pass": true
+    }
+  ],
+  "sparseSampling": [
+    {
+      "width": 18,
+      "alphaMin": 0.015745550394058228,
+      "alphaRange": 7.37607479095459e-7,
+      "redRange": 7.152557373046875e-7,
+      "pass": true
+    },
+    {
+      "width": 180,
+      "alphaMin": 0.0912630558013916,
+      "alphaRange": 0.0000019073486328125,
+      "redRange": 0.000002682209014892578,
+      "pass": true
+    },
+    {
+      "method": "procedural",
+      "alphaMin": 0.2466270476579666,
+      "alphaCurvature": 0.00004571676254272461,
+      "redCurvature": 0.00006628036499023438,
+      "pass": true
+    }
+  ],
+  "methodTimings": [
+    {
+      "formType": 0,
+      "evolving": false,
+      "width": 512,
+      "height": 288,
+      "medianMs": 28.399999998509884,
+      "p90Ms": 30.900000005960464
+    },
+    {
+      "formType": 0,
+      "evolving": true,
+      "width": 512,
+      "height": 288,
+      "medianMs": 27.69999999552965,
+      "p90Ms": 30.80000000447035
+    },
+    {
+      "formType": 9,
+      "evolving": false,
+      "width": 512,
+      "height": 288,
+      "medianMs": 3.9000000059604645,
+      "p90Ms": 4.799999997019768
+    },
+    {
+      "formType": 9,
+      "evolving": true,
+      "width": 512,
+      "height": 288,
+      "medianMs": 3.600000001490116,
+      "p90Ms": 4.700000002980232
+    }
+  ],
+  "wideWarpTimings": [
+    {
+      "turbulence": 0,
+      "width": 512,
+      "height": 288,
+      "medianMs": 2.9000000059604645,
+      "p90Ms": 3.8000000044703484
+    },
+    {
+      "turbulence": 0.75,
+      "width": 512,
+      "height": 288,
+      "medianMs": 3.2999999970197678,
+      "p90Ms": 4.299999997019768
+    }
+  ]
+}

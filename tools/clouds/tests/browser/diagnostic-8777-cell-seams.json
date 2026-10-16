@@ -1,0 +1,9 @@
+{
+  "errors": [],
+  "beforeRmse": 0.06572446651937228,
+  "afterRmse": 0.020147430795086154,
+  "rampMaxChange": 0,
+  "silhouetteMaxChange": 0,
+  "msPer128x96": 0.07187499990686774,
+  "pass": true
+}

@@ -100,7 +100,7 @@ struct CloudTuning {
   aoStrength: f32,
   towerHeightVariation: f32,
   shelfFlow: f32,
-  _flowPad0: f32,
+  paintedLayers: f32,
   _flowPad1: f32,
   _flowPad2: f32,
 };
@@ -263,6 +263,7 @@ struct Box {
 @group(1) @binding(13) var motionTex: texture_2d<f32>;
 
 @group(1) @binding(15) var depthPrev: texture_2d<f32>;
+@group(1) @binding(17) var cloudTerrainTexture: texture_2d<f32>;
 
 // ---------------------- Workgroup cache
 var<workgroup> wg_weatherDim: vec2<f32>;
@@ -295,6 +296,35 @@ var<workgroup> wg_boxMinCached: vec3<f32>;
 var<workgroup> wg_boxMaxCached: vec3<f32>;
 
 // ---------------------- helpers
+// Uniform world enlargement: trace the unchanged material in smaller camera
+// coordinates. Keep its lowest supported point fixed so growth goes upward.
+// Flat mode reuses the first extra view lane; planet extras retain their meaning.
+fn materialCellExit(ro:vec3<f32>,rd:vec3<f32>,t:f32,origin:vec3<f32>,pitch:vec3<f32>)->f32 {
+  let at=ro+rd*t;
+  let cell=floor((at-origin)/pitch+sign(rd)*0.0001);
+  let face=origin+(cell+select(vec3<f32>(0.0),vec3<f32>(1.0),rd>=vec3<f32>(0.0)))*pitch;
+  let delta=select(vec3<f32>(1000000.0),abs((face-at)/rd),abs(rd)>vec3<f32>(0.000001));
+  return max(min(min(delta.x,delta.y),delta.z),0.000001);
+}
+fn wideCloudBoundaryFade(p:vec3<f32>)->f32 {
+  let width=min(B.half.x,B.half.z);
+  if(sphericalCloudMode() || width<=36.0){return 1.0;}
+  let inside=B.half.xz-abs(p.xz-B.center.xz);
+  return smoothstep(0.0,max(width*.12,1.0),min(inside.x,inside.y));
+}
+fn flatCloudScale() -> f32 {
+  return select(clamp(max(V._a,1.0),1.0,8.0),1.0,sphericalCloudMode());
+}
+fn flatCloudScaleAnchor() -> vec3<f32> {
+  let lowerSupport=select(2.0*B.half.y*abs(TUNE.baseJitterFrac),0.0,TUNE.formType>0.5);
+  return vec3<f32>(B.center.x,B.center.y-B.half.y-lowerSupport,B.center.z);
+}
+fn flatCloudMaterialOrigin(world:vec3<f32>) -> vec3<f32> {
+  let scale=flatCloudScale();
+  if(scale==1.0){return world;}
+  let anchor=flatCloudScaleAnchor();
+  return anchor+(world-anchor)/scale;
+}
 fn saturate(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
 fn mix_f(a: f32, b: f32, t: f32) -> f32 { return a * (1.0 - t) + b * t; }
 fn mix_v3(a: vec3<f32>, b: vec3<f32>, t: f32) -> vec3<f32> { return a * (1.0 - t) + b * t; }
@@ -1325,7 +1355,7 @@ fn activeColumnGuard() -> f32 {
 
 fn globalActiveYRange() -> vec2<f32> {
   let guard = activeColumnGuard();
-  let boxRange = vec2<f32>(B.center.y - B.half.y - guard, B.center.y + B.half.y + anvilLiftWorld() + guard);
+  let boxRange = vec2<f32>(boxMin().y - guard, boxMax().y + guard);
   return select(boxRange, vec2<f32>(-1.0e9, 1.0e9), sphericalCloudMode());
 }
 
@@ -1640,6 +1670,29 @@ fn styledPlanetDensity(ph: f32, wm: vec4<f32>, s: vec4<f32>, erosion: f32) -> f3
   return density * geometry.y * smoothstep(0.0, 0.10, C.globalCoverage) * max(C.globalDensity * 10.0, 0.0);
 }
 
+// Pigment overlap belongs to the material, not the ray iteration or the screen.
+// The broad shape bands bend continuous wash boundaries through the cloud. This
+// only modulates lighting: it never cuts density into disconnected layer cards.
+fn paintedLayerValue(ph: f32, shape: vec4<f32>) -> f32 {
+  let phase = ph * 3.4 + (shape.g - 0.5) * 1.10 + (shape.b - 0.5) * 0.58 + (shape.a - 0.5) * 0.32;
+  let f = fract(phase);
+  let wash = smoothstep(0.12, 0.25, f) * (1.0 - smoothstep(0.76, 0.90, f));
+  let lap = smoothstep(0.015, 0.08, f) * (1.0 - smoothstep(0.12, 0.22, f));
+  let ripple = sin(phase * 43.9823 + shape.b * 5.0) * 0.045;
+  return max((0.48 + wash * 1.67) * (1.0 - lap * 0.30) + ripple, 0.24);
+}
+
+// Connected material beneath the fine shelf erosion. The broad 3D bands carry
+// density through height; detail carves the shoulders rather than separating
+// the bank into transparent horizontal sheets. No view-dependent density.
+fn foldedShelfCore(ph: f32, wm: vec4<f32>, s: vec4<f32>) -> f32 {
+  if (sphericalCloudMode() || TUNE.formType > 0.5 || TUNE.shelfFlow <= 0.001) { return 0.0; }
+  let mass = saturate(s.r * 0.70 + s.g * 0.22 + s.b * 0.08);
+  let occupied = smoothstep(0.44, 0.76, mass) * smoothstep(0.40, 0.80, max(wm.r, wm.g * 0.92));
+  let body = smoothstep(0.07, 0.25, ph) * (1.0 - smoothstep(0.74, 0.98, ph));
+  return occupied * body * mix_f(0.34, 0.18, cloudSparsity01()) * saturate(TUNE.shelfFlow);
+}
+
 fn densityFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>) -> f32 {
   if (ph < 0.0) { return 0.0; }
   if (wm.b > 1.0) { return 0.0; }
@@ -1718,6 +1771,7 @@ fn densityFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>) -> f
   core = max(core, depthSupport * mix_f(0.07, 0.18, fluff01) * mix_f(1.0, 0.72, sparse));
   core = pow(core, mix_f(1.08, 1.22, fluff01) * mix_f(1.0, 1.30, sparse) * mix_f(1.0, 1.12, definition));
 
+  core = max(core, foldedShelfCore(phD, wm, s));
   return max(core * densityHeight(phD) * weatherBCutoutWeight(phD, wm), 0.0);
 }
 
@@ -1776,6 +1830,7 @@ fn densityMacroFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>) -> f32 {
   let pocketCarve = pow(saturate(1.0 - macroPocket), mix_f(1.28, 1.02, definition)) * (0.020 + 0.038 * saturate(TUNE.fluffFactor / (TUNE.fluffFactor + 1.45))) * mix_f(0.92, 1.42, sparse);
   let carve = 1.0 - (0.08 * saturate(breakup) * mix_f(1.0, 1.32, sparse) + 0.04 * contour * mix_f(1.0, 1.28, definition) + pocketCarve) * carveMask;
   core = max(saturate(core * saturate(carve)), macroDepthSupport * 0.13 * mix_f(1.0, 0.62, sparse));
+  core = max(core, foldedShelfCore(phD, wm, s));
   return max(core * densityHeight(phD) * weatherBCutoutWeight(phD, wm), 0.0);
 }
 
@@ -2319,6 +2374,16 @@ fn CalculateLight(
   return max(radiance + vec3<f32>(noiseLift), vec3<f32>(0.0));
 }
 // approximate surface normal from coarse shape mip
+fn sampleShapeRelief(pos: vec3<f32>, ph: f32, lod: f32) -> f32 {
+  if (sphericalCloudMode()) { return sampleShapeRGBA(pos, ph, lod).r; }
+  let warp = worldWarpXZ(pos.xz, ph, wg_boxMaxXZ);
+  let uvw = shapeUVW_fromWarp(pos, ph, warp);
+  // Coverage bias deliberately saturates density, but must not flatten the
+  // relief signal used for lighting inside those dense cloud bodies.
+  let material = textureSampleLevel(shape3D, sampShape, uvw * wg_shapeUvMul + wg_shapeUvAdd, lod);
+  return dot(material, vec4<f32>(0.55, 0.28, 0.12, 0.05));
+}
+
 fn approxShapeNormal(pos: vec3<f32>, ph: f32, lodShape: f32) -> vec3<f32> {
 
     let probe = shapeNormalProbeWorld(lodShape, 1.25);
@@ -2329,9 +2394,15 @@ fn approxShapeNormal(pos: vec3<f32>, ph: f32, lodShape: f32) -> vec3<f32> {
 );
     var samples: array<f32, 6>;
     for (var i = 0u; i < 6u; i++) {
-      samples[i] = sampleShapeRGBA(pos + offsets[i] * probe, ph, lodShape).r;
+      samples[i] = sampleShapeRelief(pos + offsets[i] * probe, ph, lodShape);
     }
     let g = vec3<f32>(samples[0] - samples[1], samples[2] - samples[3], samples[4] - samples[5]) * (0.5 / probe);
+    if (!sphericalCloudMode()) {
+      // Raw material channels can also contain flat plateaus. Fade toward the
+      // fallback continuously instead of flipping direction at a hard epsilon.
+      let regularized = -g + normalize(vec3<f32>(0.18, 0.28, 0.94)) * 0.001;
+      return regularized * inverseSqrt(max(dot(regularized, regularized), 1e-12));
+    }
     if (dot(g, g) < 1e-8) { return normalize(vec3<f32>(0.18, 0.28, 0.94)); }
     return normalize(-g);
 }
@@ -2346,9 +2417,13 @@ fn approxShapeNormalFast(pos: vec3<f32>, ph: f32, lodShape: f32) -> vec3<f32> {
 );
     var samples: array<f32, 6>;
     for (var i = 0u; i < 6u; i++) {
-      samples[i] = sampleShapeRGBA(pos + offsets[i] * probe, ph, lodShape).r;
+      samples[i] = sampleShapeRelief(pos + offsets[i] * probe, ph, lodShape);
     }
     let g = vec3<f32>(samples[0] - samples[1], samples[2] - samples[3], samples[4] - samples[5]) * (0.5 / probe);
+    if (!sphericalCloudMode()) {
+      let regularized = -g + normalize(vec3<f32>(0.18, 0.28, 0.94)) * 0.001;
+      return regularized * inverseSqrt(max(dot(regularized, regularized), 1e-12));
+    }
     if (dot(g, g) < 1e-8) { return normalize(vec3<f32>(0.18, 0.28, 0.94)); }
     return normalize(-g);
 }
@@ -2573,7 +2648,11 @@ fn sunTransmittance(
   let distSteps = i32(ceil(availableDist / targetStep));
   let distLimitedSteps = min(distSteps, max(requestedSteps + 2, 4));
   let maxLightSteps = clamp(TUNE.sunSteps + 6, 8, 18);
-  let steps = clamp(max(requestedSteps, distLimitedSteps), 1, maxLightSteps);
+  // Keep flat light quadrature continuous as its ray exits the top/bottom
+  // face. ceil(availableDist / targetStep) changed the entire sample lattice
+  // at horizontal height thresholds, even with fine primary-ray steps.
+  let steps = select(clamp(max(TUNE.sunSteps, 1) + 2, 1, maxLightSteps),
+    clamp(max(requestedSteps, distLimitedSteps), 1, maxLightSteps), sphericalCloudMode());
   let lightStep = availableDist / f32(steps);
 
   var opticalDepth = 0.0;

@@ -1,0 +1,102 @@
+{
+  "rows": [
+    {
+      "label": "before",
+      "clear": false,
+      "strength": 0,
+      "max": 0,
+      "mean": 0,
+      "contrast": 0
+    },
+    {
+      "label": "before",
+      "clear": false,
+      "strength": 0.5,
+      "max": 0.04095458984375,
+      "mean": 0.01997345950215908,
+      "contrast": 0.008184951241786486
+    },
+    {
+      "label": "before",
+      "clear": false,
+      "strength": 2,
+      "max": 0.163818359375,
+      "mean": 0.07989383800863632,
+      "contrast": 0.032739804967145944
+    },
+    {
+      "label": "after",
+      "clear": false,
+      "strength": 0,
+      "max": 0,
+      "mean": 0,
+      "contrast": 0
+    },
+    {
+      "label": "after",
+      "clear": false,
+      "strength": 0.5,
+      "max": 0.053192138671875,
+      "mean": 0.01798944620259583,
+      "contrast": 0.010149400401170303
+    },
+    {
+      "label": "after",
+      "clear": false,
+      "strength": 2,
+      "max": 1,
+      "mean": 0.5137956311256427,
+      "contrast": 0.27421066720620907
+    },
+    {
+      "label": "before",
+      "clear": true,
+      "strength": 0,
+      "max": 0,
+      "mean": 0,
+      "contrast": 0
+    },
+    {
+      "label": "before",
+      "clear": true,
+      "strength": 0.5,
+      "max": 0,
+      "mean": 0,
+      "contrast": 0
+    },
+    {
+      "label": "before",
+      "clear": true,
+      "strength": 2,
+      "max": 0,
+      "mean": 0,
+      "contrast": 0
+    },
+    {
+      "label": "after",
+      "clear": true,
+      "strength": 0,
+      "max": 0,
+      "mean": 0,
+      "contrast": 0
+    },
+    {
+      "label": "after",
+      "clear": true,
+      "strength": 0.5,
+      "max": 0,
+      "mean": 0,
+      "contrast": 0
+    },
+    {
+      "label": "after",
+      "clear": true,
+      "strength": 2,
+      "max": 0,
+      "mean": 0,
+      "contrast": 0
+    }
+  ],
+  "errors": [],
+  "pass": true
+}

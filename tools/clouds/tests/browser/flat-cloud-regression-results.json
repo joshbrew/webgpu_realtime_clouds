@@ -1,0 +1,58 @@
+{
+  "complete": true,
+  "pass": true,
+  "densityMaxDelta": 0,
+  "lightMaxDelta": 0,
+  "changedPixels": 0,
+  "occupied": 11192,
+  "transitionMaxDelta": 0.1728515625,
+  "worstTransition": 17.5,
+  "refinedTransitionMaxDelta": 0.0859375,
+  "identityMaxDelta": 0,
+  "windMaxDelta": 0.203125,
+  "qualityGrids": {
+    "low": [
+      96,
+      48,
+      96
+    ],
+    "high": [
+      192,
+      96,
+      192
+    ],
+    "ultra": [
+      256,
+      128,
+      256
+    ],
+    "cinematic": [
+      384,
+      192,
+      384
+    ],
+    "reference": [
+      512,
+      256,
+      512
+    ],
+    "balanced": [
+      128,
+      64,
+      128
+    ]
+  },
+  "unsupportedQualities": [],
+  "compiledBefore": 4,
+  "compiledAfter": 4,
+  "turbulenceChangedPixels": 12322,
+  "turbulenceFieldDelta": 0,
+  "turbulenceRepeatDelta": 0,
+  "turbulenceAlphaDelta": 0.00244140625,
+  "turbulenceEmptySkyAdded": 0,
+  "turbulenceCachesReused": true,
+  "turbulenceCameraReusesFields": true,
+  "turbulenceCameraRestored": true,
+  "turbulenceOffRestored": true,
+  "errors": []
+}

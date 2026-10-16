@@ -1,0 +1,181 @@
+{
+  "complete": true,
+  "pass": false,
+  "lightingSteps": [
+    {
+      "stepBase": 0.005,
+      "rgb": [
+        0.68701171875,
+        0.671875,
+        0.66259765625
+      ],
+      "alpha": 1
+    },
+    {
+      "stepBase": 0.02,
+      "rgb": [
+        0.69091796875,
+        0.67578125,
+        0.66650390625
+      ],
+      "alpha": 1
+    },
+    {
+      "stepBase": 0.08,
+      "rgb": [
+        0.69091796875,
+        0.67578125,
+        0.66650390625
+      ],
+      "alpha": 1
+    }
+  ],
+  "lightingStepDelta": 0.00390625,
+  "rows": [
+    {
+      "camera": [
+        0,
+        0,
+        4
+      ],
+      "maxSteps": 16,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    },
+    {
+      "camera": [
+        0,
+        0,
+        4
+      ],
+      "maxSteps": 32,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    },
+    {
+      "camera": [
+        0,
+        0,
+        4
+      ],
+      "maxSteps": 96,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    },
+    {
+      "camera": [
+        0,
+        0,
+        0
+      ],
+      "maxSteps": 16,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    },
+    {
+      "camera": [
+        0,
+        0,
+        0
+      ],
+      "maxSteps": 32,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    },
+    {
+      "camera": [
+        0,
+        0,
+        0
+      ],
+      "maxSteps": 96,
+      "alpha": 1,
+      "softAlpha": 1,
+      "pass": true
+    }
+  ],
+  "march": [
+    {
+      "pitch": -0.025,
+      "meanAbsoluteError": 0,
+      "pass": true
+    },
+    {
+      "pitch": 0,
+      "meanAbsoluteError": 0,
+      "pass": true
+    },
+    {
+      "pitch": 0.025,
+      "meanAbsoluteError": 0,
+      "pass": true
+    }
+  ],
+  "turns": [
+    {
+      "yaw": 0,
+      "pitch": 0,
+      "alphaError": 0.00043288618326187134,
+      "rgbError": 0.008622477451960245,
+      "pass": true
+    },
+    {
+      "yaw": 0.3,
+      "pitch": 0.1,
+      "alphaError": 0.000489458441734314,
+      "rgbError": 0.013579510152339935,
+      "pass": true
+    },
+    {
+      "yaw": 0.3,
+      "pitch": 0.5,
+      "alphaError": 0.00032072514295578003,
+      "rgbError": 0.0018096504112084706,
+      "pass": true
+    },
+    {
+      "yaw": 1.1,
+      "pitch": -0.4,
+      "alphaError": 0.000019896775484085083,
+      "rgbError": 0.0006872254113356272,
+      "pass": true
+    }
+  ],
+  "paintedAlphaDelta": 0,
+  "paintedChangedPixels": 2048,
+  "paintRestored": true,
+  "paintedViewRestored": true,
+  "paintedViewChanged": true,
+  "thinWideError": 0,
+  "thinAlpha": 0.0016603469848632812,
+  "emptyAlpha": 0,
+  "errors": [],
+  "paddingOpacity": {
+    "unpaddedOpacity": 0.28173828125,
+    "paddedOpacity": 0.287109375,
+    "error": 0.00537109375,
+    "pass": false
+  },
+  "jitteredHeadroomAlpha": 1,
+  "jitteredHeadroomPass": true,
+  "reliefNormals": [
+    -0.9999896883964539,
+    0.0012920376611873507,
+    0.004337554797530174,
+    1,
+    -0.9999866485595703,
+    0.0014712541596964002,
+    0.004939210135489702,
+    1,
+    -0.9999897480010986,
+    0.001292042201384902,
+    0.004337570164352655,
+    1
+  ],
+  "reliefPass": true
+}

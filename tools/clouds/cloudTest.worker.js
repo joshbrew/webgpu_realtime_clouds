@@ -211,7 +211,13 @@ let shapeAxisScale = [1, 1.22, 1],
 
 const renderBundleCache = new Map();
 const log = (...a) => postMessage({ type: "log", data: a });
-function emitTimingProgress(report, phase) {
+let lastFrameTimingPost = -Infinity;
+let navigationStatsStart = 0, navigationStatsLast = 0, navigationStatsFrames = 0;
+function emitTimingProgress(report, phase, continuous = false) {
+  if (String(phase).startsWith('frame:') && (loopRunning || continuous)) {
+    if (phase !== 'frame:complete' || performance.now() - lastFrameTimingPost < 250) return;
+    lastFrameTimingPost = performance.now();
+  }
   try {
     postMessage({
       type: "timing",
@@ -1671,7 +1677,7 @@ function cloudViewSignature(preview, box, aspect) {
   const cam = preview?.cam || {};
   const sun = preview?.sun || {};
   return [
-    JSON.stringify(preview?.aircraft || {}),
+    JSON.stringify(preview?.aircraft || {}),!!preview?.terrainEnabled,signatureScalar(preview?.cloudScale ?? 1),
     signatureScalar(cam.x || 0),
     signatureScalar(cam.y || 0),
     signatureScalar(cam.z || 0),
@@ -1694,7 +1700,7 @@ function renderUniformSignature(preview, aspect, layerIndex, cloudParams = {}, c
   return [
     layerIndex,
     fieldLighting ? 1 : 0,
-    JSON.stringify(preview?.aircraft || {}),
+    JSON.stringify(preview?.aircraft || {}),!!preview?.terrainEnabled,signatureScalar(preview?.cloudScale ?? 1),
     preview?.skyCycle ? 1 : 0,
     preview?.styleSkyOverride ? 1 : 0,
     signatureScalar(preview?.nightAmount || 0),
@@ -1925,9 +1931,9 @@ function makeViewSignature(preview, w, h) {
   const sun = preview?.sun || {};
   // Evolving weather/light is expected motion, not a camera cut. Keeping its
   // colors in this invalidation key reset sparse history on every cycle frame.
-  if(preview?.weatherCycle) return ['weather-cycle',w,h,cam.x,cam.y,cam.z,cam.yawDeg,cam.pitchDeg,cam.fovYDeg,previewRenderScaleDivider(preview),preview.temporalCellRate,preview.fieldQuality || 'balanced',preview.cloudTurbulence ?? .75,JSON.stringify(preview?.aircraft || {})].join('|');
+  if(preview?.weatherCycle) return ['weather-cycle',w,h,cam.x,cam.y,cam.z,cam.yawDeg,cam.pitchDeg,cam.fovYDeg,previewRenderScaleDivider(preview),preview.temporalCellRate,preview.fieldQuality || 'balanced',preview.cloudTurbulence ?? .75,JSON.stringify(preview?.aircraft || {}),!!preview?.terrainEnabled,roundSig(preview?.cloudScale ?? 1)].join('|');
   return [
-    JSON.stringify(preview?.aircraft || {}),
+    JSON.stringify(preview?.aircraft || {}),!!preview?.terrainEnabled,roundSig(preview?.cloudScale ?? 1),
     roundSig(cam.x),
     roundSig(cam.y),
     roundSig(cam.z),
@@ -2024,6 +2030,7 @@ async function runFrame({
   waitForGpu = false,
   logFrame = false,
   bootstrapPreview = false,
+  navigationFrame = false,
 } = {}) {
   const frameStarted = performance.now();
   const frameReport = new CloudTimingReport("cloud-frame", {
@@ -2032,7 +2039,7 @@ async function runFrame({
     bootstrapPreview: !!bootstrapPreview,
     outputSize: [MAIN_W, MAIN_H],
   });
-  emitTimingProgress(frameReport, "frame:start");
+  emitTimingProgress(frameReport, "frame:start", navigationFrame);
   const deviceStage = frameReport.start("ensure-device", undefined, "setup");
   await ensureDevice();
   frameReport.end(deviceStage);
@@ -2340,6 +2347,8 @@ async function runFrame({
       stepInc: 0.04,
       volumeLayers: 1,
       aircraft: preview?.aircraft,
+      terrainEnabled: !!preview?.terrainEnabled,
+      cloudScale: Math.max(1,Math.min(8,finiteNumber(preview?.cloudScale,1))),
     });
 
     cb.setLight({
@@ -2499,6 +2508,8 @@ async function runFrame({
         gradeStyle: preview?.gradeStyle ?? 1,
         cloudShading: preview?.cloudShading || 'auto',
         aircraft: preview?.aircraft,
+      terrainEnabled: !!preview?.terrainEnabled,
+      cloudScale: Math.max(1,Math.min(8,finiteNumber(preview?.cloudScale,1))),
         sunColorTint: preview?.sunTint || [1.0, 1.0, 1.0],
         lightTint: preview?.cloudLitTint || [1.0, 1.0, 1.0],
         shadowTint: preview?.cloudShadowTint || [1.0, 1.0, 1.0],
@@ -2630,7 +2641,7 @@ async function runFrame({
     waitedForGpu: shouldWaitForGpu,
     directFullResReconstruction: !!encodedDispatch.directFullResReconstruction,
   });
-  emitTimingProgress(timings.timingReport, "frame:complete");
+  emitTimingProgress(timings.timingReport, "frame:complete", navigationFrame);
 
   if (shouldWaitForGpu || logFrame || submittedFrameCount % FRAME_LOG_EVERY === 0) {
     log(
@@ -3331,8 +3342,27 @@ async function _handleMessage(ev) {
     }
 
     if (type === "runFrame") {
+      // Paused orbit/flight does not use the animation loop, but must obey the
+      // same GPU backpressure. Bound work to two frames so camera input cannot
+      // build a long queue of obsolete views. Fresh history still prevents trails.
+      if (payload?.navigationFrame) await waitForLoopGpuBackpressure(1);
       if (payload?.tuning) mergeTuningPatch(payload.tuning);
       const timings = await runFrame(payload);
+      if (payload?.navigationFrame) {
+        enqueueLoopGpuFence();
+        const now = performance.now();
+        if (!navigationStatsStart || now - navigationStatsLast > 500) {
+          navigationStatsStart = now;
+          navigationStatsFrames = 0;
+        }
+        navigationStatsLast = now;
+        navigationStatsFrames++;
+        if (now - navigationStatsStart >= 250) {
+          postMessage({type:'frame',data:{loopFps:(navigationStatsFrames - 1) * 1000 / (now-navigationStatsStart),gpuQueueDepth:loopGpuFences.length}});
+          navigationStatsStart = now;
+          navigationStatsFrames = 1;
+        }
+      }
       respond(true, { timings });
       return;
     }

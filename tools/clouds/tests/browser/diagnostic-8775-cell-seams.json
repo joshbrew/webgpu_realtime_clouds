@@ -1,0 +1,11 @@
+{
+  "coverageMaxError": 7.152557373046875e-7,
+  "averageProbeRatio": 0.6503794124000706,
+  "errors": [],
+  "beforeRmse": 0.06572446651937228,
+  "afterRmse": 0.020147430795086154,
+  "rampMaxChange": 0,
+  "silhouetteMaxChange": 0,
+  "msPer128x96": 0.06875000009313226,
+  "pass": true
+}
