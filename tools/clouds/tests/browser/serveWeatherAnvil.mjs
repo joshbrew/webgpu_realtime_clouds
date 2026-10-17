@@ -77,7 +77,16 @@ const flatDiagnosticPlugins=(process.env.CLOUD_FLAT_UNLIT==='1'||process.env.CLO
   .replace('let TsunSmoothed = mix_f(Tsun_cached, prevTsun, raySmoothSunAdaptive);',process.env.CLOUD_FLAT_DIAGNOSTIC==='no-sun-shadow'?'let TsunSmoothed = 1.0;':'let TsunSmoothed = mix_f(Tsun_cached, prevTsun, raySmoothSunAdaptive);')
   .replace('stableNearSample || (!sphericalCloudMode() && (prevDens <= 0.00008 || refreshMaterialLighting))',process.env.CLOUD_FLAT_LIGHT_EVERY_STEP==='1'?'!sphericalCloudMode()':'stableNearSample || (!sphericalCloudMode() && (prevDens <= 0.00008 || refreshMaterialLighting))')}));
 }}]:[];
-await build({entryPoints:[source('../../cloudTest.worker.js')],outfile:join(temp,'worker.js'),bundle:true,format:'iife',platform:'browser',loader,plugins:[...planesPlugins,...flatDiagnosticPlugins,...intervalPlugins]});
+const uiPacingPlugins=[{name:'ui-pacing-controls',setup(b){
+ if(['0','1'].includes(process.env.CLOUD_DEFER_PRESENT))b.onLoad({filter:/cloudTest\.worker\.js$/},async({path})=>{
+  let contents=await readFile(path,'utf8');
+  contents=contents.replace('const deferPresentation = !loopRunning && !bootstrapPreviewMode && pausedFrameGpuMs > 100;',
+   process.env.CLOUD_DEFER_PRESENT==='0'?'const deferPresentation = false;':'const deferPresentation = !loopRunning && !bootstrapPreviewMode;');
+  return {loader:'js',contents};
+ });
+ if(process.env.CLOUD_RAY_GROUP_WIDTH==='8')b.onLoad({filter:/clouds\.js$/},async({path})=>({loader:'js',contents:(await readFile(path,'utf8')).replace('const PROCEDURAL_RAY_GROUP_WIDTH = 16;','const PROCEDURAL_RAY_GROUP_WIDTH = 8;')}));
+}}];
+await build({entryPoints:[source('../../cloudTest.worker.js')],outfile:join(temp,'worker.js'),bundle:true,format:'iife',platform:'browser',loader,plugins:[...planesPlugins,...flatDiagnosticPlugins,...intervalPlugins,...uiPacingPlugins]});
 // Keep this cloud review independent of the lab's scratchpad index entry.
 await build({stdin:{contents:`
  import {selectedCloudDemo,mountCloudDemoNavigation} from './tools/clouds/cloudDemoNavigation.js';
@@ -105,10 +114,12 @@ createServer(async(req,res)=>{
   if(path==='/test-result'&&req.method==='POST'){
    let body='';for await(const chunk of req){body+=chunk;if(body.length>1000000)throw new Error('Diagnostic report too large');}
    const {test,report}=JSON.parse(body);
-   if(!['flat-opacity','cell-seams','god-ray-checks','fog-continuity','ray-fog-band','horizon-performance'].includes(test)){res.writeHead(400).end();return;}
+   if(!['flat-opacity','cell-seams','god-ray-checks','fog-continuity','ray-fog-band','horizon-performance','ui-responsiveness','ui-visibility'].includes(test)){res.writeHead(400).end();return;}
    await writeFile(source('./diagnostic-'+Number(process.env.CLOUD_REVIEW_PORT||8766)+'-'+test+'.json'),JSON.stringify(report,null,2));res.writeHead(204).end();return;
   }
   if(path==='/horizon-performance'){res.writeHead(200,{'content-type':'text/html'}).end(html('/horizon-performance.js'));return;}
+  if(path==='/ui-responsiveness'){res.writeHead(200,{'content-type':'text/html'}).end(html('/demo.js').replace('<pre id="result">Checking…</pre>','<script src="/ui-responsiveness.js"></script>'));return;}
+  if(path==='/ui-responsiveness.js'){res.writeHead(200,{'content-type':'text/javascript','cache-control':'no-store'}).end(await readFile(source('./cloudUiResponsiveness.js'),'utf8'));return;}
   if(path==='/horizon-performance.js'){res.writeHead(200,{'content-type':'text/javascript','cache-control':'no-store'}).end(await readFile(join(temp,'horizon-performance.js'),'utf8'));return;}
   if(path==='/god-ray-checks'){res.writeHead(200,{'content-type':'text/html'}).end(html('/god-ray-checks.js'));return;}
   if(path==='/cell-seams'){res.writeHead(200,{'content-type':'text/html'}).end(html('/cell-seams.js'));return;}

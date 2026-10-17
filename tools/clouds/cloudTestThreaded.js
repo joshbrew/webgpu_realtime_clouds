@@ -1385,19 +1385,24 @@ function populateCloudQuickDock() {
   if (scaleLabel) scaleLabel.textContent = scale;
 }
 
-function updateCloudQuickDockState() {
-  const passValue = $("pass")?.value || "preview";
-  document.querySelectorAll("[data-cloud-pass]").forEach((button) => {
-    button.classList.toggle("active", button.getAttribute("data-cloud-pass") === passValue);
-  });
+function updateCloudQuickStatus() {
   const status = $("cloud-quick-status");
   if (status && status.dataset.manual !== "true") {
     const layer = $("v-layer-preset")?.selectedOptions?.[0]?.textContent || "Custom";
     const grade = $("v-grade")?.selectedOptions?.[0]?.textContent || "Grade";
     const shading = $("v-cloud-shading")?.selectedOptions?.[0]?.textContent || "Auto shading";
     const fps = $("fpsDisplay")?.textContent || "-";
-    status.textContent = `${layer} | ${grade} | ${shading} | ${fps}`;
+    const text = `${layer} | ${grade} | ${shading} | ${fps}`;
+    if (status.textContent !== text) status.textContent = text;
   }
+}
+
+function updateCloudQuickDockState() {
+  const passValue = $("pass")?.value || "preview";
+  document.querySelectorAll("[data-cloud-pass]").forEach((button) => {
+    button.classList.toggle("active", button.getAttribute("data-cloud-pass") === passValue);
+  });
+  updateCloudQuickStatus();
   populateCloudQuickDock();
 }
 
@@ -4426,7 +4431,9 @@ function getFreshFullFrameReprojPayload() {
 }
 
 function useFreshFullFrameReproj(payload) {
-  if (!payload || !cloudHistoryEnabled()) return payload;
+  // Send an explicit reset even when history is Off, otherwise the worker can
+  // retain the temporal rate from the previous scene or animation session.
+  if (!payload) return payload;
   payload.reproj = getFreshFullFrameReprojPayload();
   payload.coarseFactor = currentPreviewCoarseFactor();
   return payload;
@@ -6134,6 +6141,9 @@ async function init() {
 
   // spawn worker
   worker = new Worker(wrkr);
+  document.addEventListener('visibilitychange', () => {
+    rpc('setPageVisibility', {visible:!document.hidden}).catch(error => console.warn('preview visibility update failed',error));
+  });
   worker.onmessage = (ev) => {
     const { id, type, ok, data, error } = ev.data || {};
     if (id && _pending.has(id)) {
@@ -6183,7 +6193,7 @@ async function init() {
           const loop = fmt(info.loopFps ?? info.fps);
           fpsEl.textContent = `${loop} fps`;
         }
-        updateCloudQuickDockState();
+        updateCloudQuickStatus();
       }
     }
     if (type === "loop-stopped") {
@@ -6215,6 +6225,7 @@ async function init() {
   const initRes = await rpc(
     "init",
     {
+      pageVisible: !document.hidden,
       canvases: {
         main: offscreenMain,
         dbg: {

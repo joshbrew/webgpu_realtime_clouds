@@ -4,11 +4,11 @@
   "compile": [
     {
       "layout": "8x8",
-      "ms": 11.099999994039536
+      "ms": 12108
     },
     {
       "layout": "16x8",
-      "ms": 0.20000000298023224
+      "ms": 6.800000011920929
     }
   ],
   "width": 773,
@@ -17,98 +17,98 @@
     {
       "scene": "dense horizon",
       "layout": "8x8",
-      "medianMs": 1.9660799999999998,
-      "p90Ms": 2.6214399999999998
+      "medianMs": 3.801088,
+      "p90Ms": 6.815744
     },
     {
       "scene": "dense horizon",
       "layout": "16x8",
-      "medianMs": 2.031616,
-      "p90Ms": 2.031616
+      "medianMs": 3.997696,
+      "p90Ms": 7.405568
     },
     {
       "scene": "thin horizon",
       "layout": "8x8",
-      "medianMs": 47.316992,
-      "p90Ms": 50.921471999999994
+      "medianMs": 69.402624,
+      "p90Ms": 76.80819199999999
     },
     {
       "scene": "thin horizon",
       "layout": "16x8",
-      "medianMs": 43.843584,
-      "p90Ms": 50.003968
+      "medianMs": 64.356352,
+      "p90Ms": 73.793536
     },
     {
       "scene": "upward",
-      "layout": "8x8",
-      "medianMs": 1.507328,
-      "p90Ms": 1.835008
-    },
-    {
-      "scene": "upward",
-      "layout": "16x8",
-      "medianMs": 1.507328,
-      "p90Ms": 2.555904
-    },
-    {
-      "scene": "downward",
       "layout": "8x8",
       "medianMs": 1.572864,
-      "p90Ms": 2.031616
+      "p90Ms": 2.1626879999999997
+    },
+    {
+      "scene": "upward",
+      "layout": "16x8",
+      "medianMs": 1.6383999999999999,
+      "p90Ms": 2.1626879999999997
+    },
+    {
+      "scene": "downward",
+      "layout": "8x8",
+      "medianMs": 1.703936,
+      "p90Ms": 3.866624
     },
     {
       "scene": "downward",
       "layout": "16x8",
-      "medianMs": 1.507328,
-      "p90Ms": 1.572864
+      "medianMs": 1.703936,
+      "p90Ms": 1.9660799999999998
     },
     {
       "scene": "tower horizon",
       "layout": "8x8",
-      "medianMs": 68.15744,
-      "p90Ms": 70.320128
+      "medianMs": 90.243072,
+      "p90Ms": 97.97632
     },
     {
       "scene": "tower horizon",
       "layout": "16x8",
-      "medianMs": 62.2592,
-      "p90Ms": 65.077248
+      "medianMs": 89.849856,
+      "p90Ms": 94.830592
     },
     {
       "scene": "oblique horizon",
       "layout": "8x8",
-      "medianMs": 47.185919999999996,
-      "p90Ms": 49.086464
+      "medianMs": 61.472767999999995,
+      "p90Ms": 66.781184
     },
     {
       "scene": "oblique horizon",
       "layout": "16x8",
-      "medianMs": 42.205183999999996,
-      "p90Ms": 44.761088
+      "medianMs": 57.802752,
+      "p90Ms": 62.849024
     },
     {
       "scene": "medium horizon",
       "layout": "8x8",
-      "medianMs": 14.09024,
-      "p90Ms": 14.942207999999999
+      "medianMs": 22.740992,
+      "p90Ms": 26.345471999999997
     },
     {
       "scene": "medium horizon",
       "layout": "16x8",
-      "medianMs": 12.845056,
-      "p90Ms": 13.697023999999999
+      "medianMs": 20.381695999999998,
+      "p90Ms": 23.724031999999998
     },
     {
       "scene": "thicker horizon",
       "layout": "8x8",
-      "medianMs": 3.801088,
-      "p90Ms": 4.194304
+      "medianMs": 4.9152,
+      "p90Ms": 6.029312
     },
     {
       "scene": "thicker horizon",
       "layout": "16x8",
-      "medianMs": 3.670016,
-      "p90Ms": 4.128768
+      "medianMs": 4.653055999999999,
+      "p90Ms": 5.177344
     }
   ],
   "parity": [
@@ -122,8 +122,44 @@
       "pass": true
     },
     {
+      "scene": "dense horizon",
+      "layout": "split production",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "dense horizon",
+      "layout": "direct after split",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
       "scene": "thin horizon",
       "layout": "16x8",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "thin horizon",
+      "layout": "split production",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "thin horizon",
+      "layout": "direct after split",
       "changedComponents": 0,
       "maxAlpha": 0,
       "maxRgb": 0,
@@ -140,8 +176,44 @@
       "pass": true
     },
     {
+      "scene": "upward",
+      "layout": "split production",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "upward",
+      "layout": "direct after split",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
       "scene": "downward",
       "layout": "16x8",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "downward",
+      "layout": "split production",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "downward",
+      "layout": "direct after split",
       "changedComponents": 0,
       "maxAlpha": 0,
       "maxRgb": 0,
@@ -167,6 +239,24 @@
       "pass": true
     },
     {
+      "scene": "oblique horizon",
+      "layout": "split production",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "oblique horizon",
+      "layout": "direct after split",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
       "scene": "medium horizon",
       "layout": "16x8",
       "changedComponents": 0,
@@ -176,8 +266,44 @@
       "pass": true
     },
     {
+      "scene": "medium horizon",
+      "layout": "split production",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "medium horizon",
+      "layout": "direct after split",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
       "scene": "thicker horizon",
       "layout": "16x8",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "thicker horizon",
+      "layout": "split production",
+      "changedComponents": 0,
+      "maxAlpha": 0,
+      "maxRgb": 0,
+      "rgbRmse": 0,
+      "pass": true
+    },
+    {
+      "scene": "thicker horizon",
+      "layout": "direct after split",
       "changedComponents": 0,
       "maxAlpha": 0,
       "maxRgb": 0,
@@ -236,6 +362,16 @@
       "scene": "partial tile",
       "wrongInside": 0,
       "wrongOutside": 0,
+      "pass": true
+    },
+    {
+      "scene": "terrain split",
+      "changedComponents": 0,
+      "pass": true
+    },
+    {
+      "scene": "coarse terrain split",
+      "changedComponents": 0,
       "pass": true
     }
   ],

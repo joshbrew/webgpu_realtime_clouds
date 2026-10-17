@@ -12277,6 +12277,7 @@ fn weatherProbeEmpty(\r
   // tools/clouds/clouds.js
   var commonWGSL = cloudCommon_default + "\n" + cloudAircraft_default + "\n" + cloudTerrain_default;
   var CLOUD_GPU_CACHE = /* @__PURE__ */ new WeakMap();
+  var PROCEDURAL_RAY_GROUP_WIDTH = 16;
   var INLINE_LAYER_OUTPUT = `fn beginLayerSample(pix: vec2<i32>) {}
 fn storeLayerSample(pix: vec2<i32>, color: vec4<f32>, farHistory: f32, historyActive: bool) {
   resolveCloudColor(pix, color, farHistory, historyActive);
@@ -12816,7 +12817,7 @@ fn storeLayerSample(pix: vec2<i32>, color: vec4<f32>, farHistory: f32, historyAc
             CLOUD_USE_FIELDS: key & 64 ? 1 : 0,
             // Consecutive horizontal rays share more of the long horizon march.
             // Field and planet modules have their own fixed workgroup layouts.
-            ...mode === 0 && !(key & 64) ? { CLOUD_WORKGROUP_WIDTH: 16 } : {}
+            ...mode === 0 && !(key & 64) ? { CLOUD_WORKGROUP_WIDTH: PROCEDURAL_RAY_GROUP_WIDTH } : {}
           }
         }
       };
@@ -15157,7 +15158,7 @@ fn storeLayerSample(pix: vec2<i32>, color: vec4<f32>, farHistory: f32, historyAc
       pass.end();
     }
     _rayDispatchShape(key, compactShape = null) {
-      const groupWidth = (key & 3) === 0 && !(key & 64) ? 16 : 8;
+      const groupWidth = (key & 3) === 0 && !(key & 64) ? PROCEDURAL_RAY_GROUP_WIDTH : 8;
       const w = compactShape?.w ?? (this._dvFrame.getUint32(8, true) || this._dvFrame.getUint32(0, true));
       const h = compactShape?.h ?? (this._dvFrame.getUint32(12, true) || this._dvFrame.getUint32(4, true));
       return [Math.max(1, Math.ceil(w / groupWidth)), Math.max(1, Math.ceil(h / 8))];
@@ -16488,6 +16489,22 @@ fn storeLayerSample(pix: vec2<i32>, color: vec4<f32>, farHistory: f32, historyAc
   var navigationStatsStart = 0;
   var navigationStatsLast = 0;
   var navigationStatsFrames = 0;
+  var pausedFrameGpuMs = 0;
+  var workerPageVisible = true;
+  var wakeWorkerVisibility = null;
+  function setWorkerPageVisibility(visible) {
+    workerPageVisible = visible !== false;
+    const wake = wakeWorkerVisibility;
+    wakeWorkerVisibility = null;
+    wake?.();
+  }
+  async function waitForWorkerVisibility() {
+    while (!workerPageVisible && loopEnabled) {
+      await new Promise((resolve) => {
+        wakeWorkerVisibility = resolve;
+      });
+    }
+  }
   function emitTimingProgress(report, phase, continuous = false) {
     if (String(phase).startsWith("frame:") && (loopRunning || continuous)) {
       if (phase !== "frame:complete" || performance.now() - lastFrameTimingPost < 250) return;
@@ -18356,7 +18373,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         outputAllocationMs += performance.now() - outputAllocationStarted;
       }
     }
-    const shouldWaitForGpu = !!waitForGpu;
+    const shouldWaitForGpu = !!waitForGpu || !loopRunning && !bootstrapPreviewMode;
+    const deferPresentation = !loopRunning && !bootstrapPreviewMode && pausedFrameGpuMs > 100;
     if (!bootstrapPreviewMode && cloudPipelineWarmupState === "running") {
       try {
         postMessage({ type: "progress", data: { message: "Finishing cloud shader compilation..." } });
@@ -18397,21 +18415,28 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     const tP1 = performance.now();
     const tAll0 = performance.now();
     const tPreDrain0 = performance.now();
-    if (shouldWaitForGpu && typeof queue.onSubmittedWorkDone === "function") {
+    if (shouldWaitForGpu && !navigationFrame && typeof queue.onSubmittedWorkDone === "function") {
       frameReport.mark("pre-dispatch-queue-drain-start");
-      emitTimingProgress(frameReport, "frame:pre-dispatch-queue-drain");
+      emitTimingProgress(frameReport, "frame:pre-dispatch-queue-drain", navigationFrame);
       await queue.onSubmittedWorkDone();
     }
     const tPreDrain1 = performance.now();
     const cf = Math.max(1, effectiveCoarseFactor | 0);
     const tEncoder0 = performance.now();
-    const enc = device.createCommandEncoder();
+    let enc = device.createCommandEncoder();
     const tEncoder1 = performance.now();
     const tC0 = performance.now();
     const reconstructAtPresentation = cf >= 2;
     const encodedDispatch = bootstrapPreviewMode ? cb.encodeBootstrapPreviewPass?.(enc) : typeof cb.encodeDispatchPasses === "function" ? cb.encodeDispatchPasses(enc, { coarseFactor: cf, reconstructAtPresentation }) : null;
     if (!encodedDispatch) {
       throw new Error("CloudComputeBuilder.encodeDispatchPasses is required for fused frame submission.");
+    }
+    const tCEncodeEnd = performance.now();
+    if (deferPresentation) {
+      queue.submit([enc.finish()]);
+      encodedDispatch.restoreAfterSubmit?.();
+      await queue.onSubmittedWorkDone();
+      enc = device.createCommandEncoder();
     }
     const tC1 = performance.now();
     ensureMainPresentSize(MAIN_W, MAIN_H);
@@ -18515,7 +18540,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     const tFinish1 = performance.now();
     queue.submit([commandBuffer]);
     const tQueueSubmit1 = performance.now();
-    encodedDispatch.restoreAfterSubmit?.();
+    if (!deferPresentation) encodedDispatch.restoreAfterSubmit?.();
     if (useTemporalHistory && historyAllocated) {
       historyPrevView = historyOutView;
       historyUsesAasOut = !historyUsesAasOut;
@@ -18536,14 +18561,15 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     const tWait0 = performance.now();
     if (shouldWaitForGpu && typeof queue.onSubmittedWorkDone === "function") {
       frameReport.mark("post-submit-queue-wait-start");
-      emitTimingProgress(frameReport, "frame:post-submit-queue-wait");
+      emitTimingProgress(frameReport, "frame:post-submit-queue-wait", navigationFrame);
       await queue.onSubmittedWorkDone();
     }
     const tWait1 = performance.now();
     const tAll1 = performance.now();
     submittedFrameCount = submittedFrameCount + 1 >>> 0;
     const timings = {
-      computeMs: tC1 - tC0,
+      computeMs: tCEncodeEnd - tC0,
+      computeGpuWaitMs: tC1 - tCEncodeEnd,
       renderMs: tR1 - tR0,
       submitMs: tSubmit1 - tSubmit0,
       gpuWaitMs: tWait1 - tWait0,
@@ -18551,6 +18577,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       commandEncoderMs: tEncoder1 - tEncoder0,
       commandFinishMs: tFinish1 - tFinish0,
       queueSubmitMs: tQueueSubmit1 - tFinish1,
+      deferredPresentation: deferPresentation,
       totalMs: tAll1 - tAll0,
       pipelineMs: tP1 - tP0,
       pipelineWarmupWaitMs: tWarmupWait1 - tWarmupWait0,
@@ -18573,6 +18600,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       computeStages: encodedDispatch.stageTimings || [],
       frame: submittedFrameCount
     };
+    if (!loopRunning && !bootstrapPreviewMode) pausedFrameGpuMs = timings.computeGpuWaitMs + timings.gpuWaitMs + timings.queueSubmitMs;
     frameReport.record("pipeline-warmup-wait", timings.pipelineWarmupWaitMs, warmupTimings, "pipeline");
     frameReport.record("compute-pipeline-ready", timings.pipelineMs, void 0, "pipeline");
     frameReport.record("pre-dispatch-queue-drain", timings.preDispatchQueueDrainMs, { waited: shouldWaitForGpu }, "gpu-wait");
@@ -18580,6 +18608,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     frameReport.record("history-texture-allocation", historyAllocationMs, void 0, "buffering");
     frameReport.record("command-encoder-create", timings.commandEncoderMs, void 0, "dispatch");
     frameReport.record("cloud-dispatch-encode", timings.computeMs, { coarseFactor: cf }, "dispatch");
+    if (deferPresentation) frameReport.record("cloud-compute-completion", timings.computeGpuWaitMs, void 0, "gpu-wait");
     for (const stage of timings.computeStages) {
       frameReport.record(stage.stage, stage.encodeMs, stage, "dispatch");
     }
@@ -18595,7 +18624,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       directFullResReconstruction: !!encodedDispatch.directFullResReconstruction
     });
     emitTimingProgress(timings.timingReport, "frame:complete", navigationFrame);
-    if (shouldWaitForGpu || logFrame || submittedFrameCount % FRAME_LOG_EVERY === 0) {
+    if (!navigationFrame && shouldWaitForGpu || logFrame || submittedFrameCount % FRAME_LOG_EVERY === 0) {
       log(
         shouldWaitForGpu ? "[BENCH waited]" : "[BENCH submitted]",
         "compute(ms):",
@@ -18671,6 +18700,15 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         workerReproj.sampleOffset = workerReproj.sampleOffset >>> 0;
       }
       while (loopEnabled) {
+        if (!workerPageVisible) {
+          await waitForLoopGpuBackpressure(0);
+          await waitForWorkerVisibility();
+          prevTime = performance.now();
+          lastPresentedTime = prevTime;
+          submitWindowStart = prevTime;
+          submitWindowFrames = 0;
+          continue;
+        }
         if (pendingResizePayload) {
           try {
             await waitForLoopGpuBackpressure(1);
@@ -18777,6 +18815,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
           }
         }
       }
+      await waitForLoopGpuBackpressure(0);
+      try {
+        await queue?.onSubmittedWorkDone?.();
+      } catch {
+      }
       loopRunning = false;
       log("animation loop stopped");
       postMessage({ type: "loop-stopped" });
@@ -18793,6 +18836,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   function stopLoop() {
     loopEnabled = false;
     loopGpuFences.length = 0;
+    const wake = wakeWorkerVisibility;
+    wakeWorkerVisibility = null;
+    wake?.();
   }
   function waitForLoopStopped() {
     if (!loopRunning) return Promise.resolve();
@@ -18895,6 +18941,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     const respond = (ok, dataOrErr) => postMessage({ id, ok, ...ok ? { data: dataOrErr } : { error: String(dataOrErr) } });
     try {
       if (type === "init") {
+        setWorkerPageVisibility(payload?.pageVisible !== false);
         const initReport = new CloudTimingReport("cloud-worker-init");
         let initStage = initReport.start("receive-offscreen-canvases", void 0, "setup");
         const { canvases, constants } = payload;
@@ -19192,6 +19239,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         respond(true, { ok: true, tuning: workerTuning, version: workerTuningVersion, autoThick: autoThickBoxTuning(previewCloudBox(lastRunPayload?.preview || {})) });
         return;
       }
+      if (type === "setPageVisibility") {
+        setWorkerPageVisibility(payload?.visible !== false);
+        respond(true, { visible: workerPageVisible, enabled: loopEnabled, running: loopRunning, frame: submittedFrameCount, wind: shapeOffsetWorld.slice() });
+        return;
+      }
       if (type === "startLoop") {
         loopEnabled = true;
         startLoop();
@@ -19201,15 +19253,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       if (type === "stopLoop") {
         stopLoop();
         await waitForLoopStopped();
+        if (queue?.onSubmittedWorkDone) await queue.onSubmittedWorkDone();
+        loopGpuFences.length = 0;
         respond(true, { ok: true });
         return;
       }
       if (type === "runFrame") {
-        if (payload?.navigationFrame) await waitForLoopGpuBackpressure(1);
+        if (payload?.navigationFrame) await waitForLoopGpuBackpressure(0);
         if (payload?.tuning) mergeTuningPatch(payload.tuning);
-        const timings = await runFrame(payload);
+        const timings = await runFrame(payload?.navigationFrame ? { ...payload, waitForGpu: true } : payload);
         if (payload?.navigationFrame) {
-          enqueueLoopGpuFence();
           const now = performance.now();
           if (!navigationStatsStart || now - navigationStatsLast > 500) {
             navigationStatsStart = now;

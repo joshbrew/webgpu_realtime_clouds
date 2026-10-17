@@ -21,6 +21,7 @@ import { CLOUD_FIELD_QUALITIES, supportsCloudFieldQuality } from "./cloudFieldQu
 import { intendedCloudShading } from './cloudLookPresets.js';
 
 const CLOUD_GPU_CACHE = new WeakMap();
+const PROCEDURAL_RAY_GROUP_WIDTH = 16;
 const INLINE_LAYER_OUTPUT = `fn beginLayerSample(pix: vec2<i32>) {}
 fn storeLayerSample(pix: vec2<i32>, color: vec4<f32>, farHistory: f32, historyActive: bool) {
   resolveCloudColor(pix, color, farHistory, historyActive);
@@ -643,7 +644,7 @@ export class CloudComputeBuilder {
           CLOUD_USE_FIELDS: (key & 64) ? 1 : 0,
           // Consecutive horizontal rays share more of the long horizon march.
           // Field and planet modules have their own fixed workgroup layouts.
-          ...(mode === 0 && !(key & 64) ? { CLOUD_WORKGROUP_WIDTH: 16 } : {}),
+          ...(mode === 0 && !(key & 64) ? { CLOUD_WORKGROUP_WIDTH: PROCEDURAL_RAY_GROUP_WIDTH } : {}),
         },
       },
     };
@@ -3301,7 +3302,7 @@ export class CloudComputeBuilder {
   }
 
   _rayDispatchShape(key, compactShape = null) {
-    const groupWidth = (key & 3) === 0 && !(key & 64) ? 16 : 8;
+    const groupWidth = (key & 3) === 0 && !(key & 64) ? PROCEDURAL_RAY_GROUP_WIDTH : 8;
     const w = compactShape?.w ?? (this._dvFrame.getUint32(8, true) || this._dvFrame.getUint32(0, true));
     const h = compactShape?.h ?? (this._dvFrame.getUint32(12, true) || this._dvFrame.getUint32(4, true));
     return [Math.max(1, Math.ceil(w / groupWidth)), Math.max(1, Math.ceil(h / 8))];

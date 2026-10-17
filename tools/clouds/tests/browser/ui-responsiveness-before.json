@@ -1,0 +1,115 @@
+{
+  "complete": true,
+  "results": [
+    {
+      "name": "paused idle",
+      "ms": 3001.699999988079,
+      "sent": {},
+      "received": {},
+      "rafMedianMs": 8.30000000000291,
+      "rafP95Ms": 8.5,
+      "rafMaxMs": 9,
+      "longTasks": [],
+      "frames": []
+    },
+    {
+      "name": "paused orbit",
+      "ms": 3557.7999999821186,
+      "sent": {
+        "runFrame": 10
+      },
+      "received": {
+        "timing": 9,
+        "runFrame": 10,
+        "frame": 8
+      },
+      "rafMedianMs": 8.30000000000291,
+      "rafP95Ms": 242.59999999999854,
+      "rafMaxMs": 443.29999999999563,
+      "longTasks": [],
+      "frames": [
+        {
+          "roundTripMs": 3.300000011920929,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 6
+        },
+        {
+          "roundTripMs": 2.5,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 7
+        },
+        {
+          "roundTripMs": 7.199999988079071,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 8
+        },
+        {
+          "roundTripMs": 255.2999999821186,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 9
+        },
+        {
+          "roundTripMs": 201.19999998807907,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 10
+        },
+        {
+          "roundTripMs": 251.40000000596046,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 11
+        },
+        {
+          "roundTripMs": 263.30000001192093,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 12
+        },
+        {
+          "roundTripMs": 268.90000000596046,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 13
+        },
+        {
+          "roundTripMs": 269.19999998807907,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 14
+        },
+        {
+          "roundTripMs": 251.7999999821186,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 15
+        }
+      ]
+    },
+    {
+      "name": "settled idle",
+      "ms": 3008.5,
+      "sent": {},
+      "received": {},
+      "rafMedianMs": 8.30000000000291,
+      "rafP95Ms": 8.69999999999709,
+      "rafMaxMs": 9.39999999999418,
+      "longTasks": [],
+      "frames": []
+    }
+  ]
+}

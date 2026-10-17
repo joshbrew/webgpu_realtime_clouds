@@ -1,0 +1,59 @@
+{
+  "complete": true,
+  "hiddenStart": {
+    "visible": false,
+    "enabled": true,
+    "running": true,
+    "frame": 25,
+    "wind": [
+      0.08696999999880793,
+      0,
+      0
+    ]
+  },
+  "hiddenEnd": {
+    "visible": false,
+    "enabled": true,
+    "running": true,
+    "frame": 25,
+    "wind": [
+      0.08696999999880793,
+      0,
+      0
+    ]
+  },
+  "resumed": {
+    "visible": true,
+    "enabled": true,
+    "running": true,
+    "frame": 60,
+    "wind": [
+      0.1624999999970198,
+      0,
+      0
+    ]
+  },
+  "paused": {
+    "visible": false,
+    "enabled": false,
+    "running": false,
+    "frame": 60,
+    "wind": [
+      0.1624999999970198,
+      0,
+      0
+    ]
+  },
+  "returned": {
+    "visible": true,
+    "enabled": false,
+    "running": false,
+    "frame": 60,
+    "wind": [
+      0.1624999999970198,
+      0,
+      0
+    ]
+  },
+  "pass": true
+}

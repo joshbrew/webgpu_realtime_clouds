@@ -1,0 +1,186 @@
+{
+  "complete": true,
+  "settings": {
+    "v-cloud-scale": "1",
+    "v-render-scale-divider": "4",
+    "v-temporal-cell-rate": "4",
+    "v-cx": "-0.7500000000000101",
+    "v-cy": "-1.2000000000000095",
+    "v-cz": "-0.9500000000000144",
+    "v-yaw": "35",
+    "v-pitch": "28"
+  },
+  "viewport": {
+    "cssWidth": 938,
+    "cssHeight": 718,
+    "dpr": 2.25
+  },
+  "results": [
+    {
+      "name": "paused idle",
+      "ms": 3001.5999999940395,
+      "sent": {},
+      "received": {},
+      "rafMedianMs": 16.699999999953434,
+      "rafP95Ms": 19.099999999976717,
+      "rafMaxMs": 113.10000000009313,
+      "longTasks": [],
+      "frames": []
+    },
+    {
+      "name": "paused orbit",
+      "ms": 3271.300000011921,
+      "sent": {
+        "runFrame": 14
+      },
+      "received": {
+        "timing": 5,
+        "runFrame": 14,
+        "frame": 3
+      },
+      "rafMedianMs": 16.699999999953434,
+      "rafP95Ms": 20.20000000006985,
+      "rafMaxMs": 166.90000000002328,
+      "longTasks": [],
+      "frames": [
+        {
+          "roundTripMs": 309.59999999403954,
+          "coarseFactor": 4,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 91,
+          "deferredPresentation": false,
+          "computeGpuWaitMs": 0
+        },
+        {
+          "roundTripMs": 102.90000000596046,
+          "coarseFactor": 4,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 92,
+          "deferredPresentation": true,
+          "computeGpuWaitMs": 79.59999999403954
+        },
+        {
+          "roundTripMs": 87.60000002384186,
+          "coarseFactor": 4,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 93,
+          "deferredPresentation": false,
+          "computeGpuWaitMs": 0
+        },
+        {
+          "roundTripMs": 101,
+          "coarseFactor": 4,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 94,
+          "deferredPresentation": false,
+          "computeGpuWaitMs": 0
+        },
+        {
+          "roundTripMs": 58.20000001788139,
+          "coarseFactor": 4,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 95,
+          "deferredPresentation": false,
+          "computeGpuWaitMs": 0
+        },
+        {
+          "roundTripMs": 93.5,
+          "coarseFactor": 4,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 96,
+          "deferredPresentation": false,
+          "computeGpuWaitMs": 0
+        },
+        {
+          "roundTripMs": 52.80000001192093,
+          "coarseFactor": 4,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 97,
+          "deferredPresentation": false,
+          "computeGpuWaitMs": 0
+        },
+        {
+          "roundTripMs": 75,
+          "coarseFactor": 4,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 98,
+          "deferredPresentation": false,
+          "computeGpuWaitMs": 0
+        },
+        {
+          "roundTripMs": 60.599999994039536,
+          "coarseFactor": 4,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 99,
+          "deferredPresentation": false,
+          "computeGpuWaitMs": 0
+        },
+        {
+          "roundTripMs": 51.30000001192093,
+          "coarseFactor": 4,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 100,
+          "deferredPresentation": false,
+          "computeGpuWaitMs": 0.09999999403953552
+        },
+        {
+          "roundTripMs": 58.19999998807907,
+          "coarseFactor": 4,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 101,
+          "deferredPresentation": false,
+          "computeGpuWaitMs": 0
+        },
+        {
+          "roundTripMs": 65.2000000178814,
+          "coarseFactor": 4,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 102,
+          "deferredPresentation": false,
+          "computeGpuWaitMs": 0
+        },
+        {
+          "roundTripMs": 628.1999999880791,
+          "coarseFactor": 4,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 103,
+          "deferredPresentation": false,
+          "computeGpuWaitMs": 0
+        },
+        {
+          "roundTripMs": 51.70000001788139,
+          "coarseFactor": 4,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 104,
+          "deferredPresentation": false,
+          "computeGpuWaitMs": 0
+        }
+      ]
+    },
+    {
+      "name": "settled idle",
+      "ms": 3001,
+      "sent": {},
+      "received": {},
+      "rafMedianMs": 16.699999999953434,
+      "rafP95Ms": 17.400000000023283,
+      "rafMaxMs": 100.20000000006985,
+      "longTasks": [],
+      "frames": []
+    }
+  ]
+}

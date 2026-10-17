@@ -1,0 +1,713 @@
+{
+  "complete": true,
+  "settings": {
+    "v-cloud-scale": "8",
+    "v-render-scale-divider": "1",
+    "v-temporal-cell-rate": "1",
+    "v-cx": "-6.4048",
+    "v-cy": "99.99999999999999",
+    "v-cz": "-11.788699999999999",
+    "v-yaw": "363.6786",
+    "v-pitch": "65"
+  },
+  "results": [
+    {
+      "name": "paused idle",
+      "ms": 3004.4000000059605,
+      "sent": {},
+      "received": {},
+      "rafMedianMs": 8.300000000046566,
+      "rafP95Ms": 8.900000000023283,
+      "rafMaxMs": 17.899999999965075,
+      "longTasks": [],
+      "frames": []
+    },
+    {
+      "name": "paused orbit",
+      "ms": 3258.600000023842,
+      "sent": {
+        "runFrame": 73
+      },
+      "received": {
+        "log": 73,
+        "timing": 7,
+        "runFrame": 73,
+        "frame": 6
+      },
+      "rafMedianMs": 8.299999999988358,
+      "rafP95Ms": 8.600000000034925,
+      "rafMaxMs": 16.70000000001164,
+      "longTasks": [],
+      "frames": [
+        {
+          "roundTripMs": 33.30000001192093,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 13,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 39.20000001788139,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 14,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 30.80000001192093,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 15,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 36.30000001192093,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 16,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 35.599999994039536,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 17,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 26.299999982118607,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 18,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 24.5,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 19,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0.09999999403953552
+        },
+        {
+          "roundTripMs": 37.099999994039536,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 20,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 28.099999994039536,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 21,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0.09999999403953552
+        },
+        {
+          "roundTripMs": 30.5,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 22,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 24.099999994039536,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 23,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 25.400000005960464,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 24,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 23.099999994039536,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 25,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 19.5,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 26,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 21.5,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 27,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 15.100000023841858,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 28,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 26,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 29,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 28.299999982118607,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 30,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 19.400000005960464,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 31,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 16.600000023841858,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 32,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 18,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 33,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 32.30000001192093,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 34,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 26.900000005960464,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 35,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 18.5,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 36,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 15.800000011920929,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 37,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 22.30000001192093,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 38,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 27.700000017881393,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 39,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 23.399999976158142,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 40,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 17.599999994039536,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 41,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 20.5,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 42,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 22.5,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 43,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 17.599999994039536,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 44,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 21.30000001192093,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 45,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 13.799999982118607,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 46,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 14.599999994039536,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 47,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 15.799999982118607,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 48,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 14.099999994039536,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 49,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 24.30000001192093,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 50,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 19.899999976158142,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 51,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 17.799999982118607,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 52,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 17.69999998807907,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 53,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 14.5,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 54,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 20.200000017881393,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 55,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 13.099999994039536,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 56,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 9.699999988079071,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 57,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 7.800000011920929,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 58,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 8.400000005960464,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 59,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 8.599999994039536,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 60,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0.09999999403953552
+        },
+        {
+          "roundTripMs": 7.800000011920929,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 61,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 7.199999988079071,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 62,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 8.5,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 63,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 11.400000005960464,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 64,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 9.699999988079071,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 65,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 12.400000005960464,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 66,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 9.800000011920929,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 67,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 11.5,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 68,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 9.599999994039536,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 69,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 7.800000011920929,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 70,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 16.400000005960464,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 71,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0.10000002384185791
+        },
+        {
+          "roundTripMs": 8.699999988079071,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 72,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0.09999999403953552
+        },
+        {
+          "roundTripMs": 11.699999988079071,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 73,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 8,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 74,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 9,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 75,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 7.799999982118607,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 76,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 11.300000011920929,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 77,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 8.600000023841858,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 78,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0.09999999403953552
+        },
+        {
+          "roundTripMs": 10.400000005960464,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 79,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 19.19999998807907,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 80,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 9.600000023841858,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 81,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 11.900000005960464,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 82,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 9.300000011920929,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 83,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 12.099999994039536,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 84,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        },
+        {
+          "roundTripMs": 15.600000023841858,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 85,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 0
+        }
+      ]
+    },
+    {
+      "name": "settled idle",
+      "ms": 3007.0999999940395,
+      "sent": {},
+      "received": {},
+      "rafMedianMs": 8.300000000046566,
+      "rafP95Ms": 8.900000000023283,
+      "rafMaxMs": 16.70000000001164,
+      "longTasks": [],
+      "frames": []
+    }
+  ]
+}

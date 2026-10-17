@@ -67,9 +67,16 @@ async function run(){
  const rowBytes=Math.ceil(W*8/256)*256;
  const read=device.createBuffer({size:rowBytes*H,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
  const snapshot=async variant=>{
-  const enc=device.createCommandEncoder();
+  let enc=device.createCommandEncoder();
   const clear=enc.beginRenderPass({colorAttachments:[{view:b.outTexture.createView({dimension:'2d'}),clearValue:[.125,.125,.125,.125],loadOp:'clear',storeOp:'store'}]});clear.end();
-  encode(variant,enc);enc.copyTextureToBuffer({texture:b.outTexture},{buffer:read,bytesPerRow:rowBytes},[W,H,1]);device.queue.submit([enc.finish()]);
+  if(variant.direct){
+   device.queue.submit([enc.finish()]);await b.dispatch();enc=device.createCommandEncoder();
+  }else if(variant.split||variant.builder){
+   device.queue.submit([enc.finish()]);enc=device.createCommandEncoder();
+   const dispatch=b.encodeDispatchPasses(enc,{coarseFactor:variant.coarseFactor||1,reconstructAtPresentation:!!variant.coarseFactor});
+   if(variant.split){device.queue.submit([enc.finish()]);dispatch.restoreAfterSubmit?.();await device.queue.onSubmittedWorkDone();enc=device.createCommandEncoder();}
+  }else encode(variant,enc);
+  enc.copyTextureToBuffer({texture:variant.coarseFactor?b._coarseTexture:b.outTexture},{buffer:read,bytesPerRow:rowBytes},[W,H,1]);device.queue.submit([enc.finish()]);
   await read.mapAsync(GPUMapMode.READ);const padded=new Uint16Array(read.getMappedRange()),values=new Uint16Array(W*H*4);
   for(let y=0;y<H;y++)values.set(padded.subarray(y*rowBytes/2,y*rowBytes/2+W*4),y*W*4);
   read.unmap();return values;
@@ -78,7 +85,7 @@ async function run(){
  for(const scene of [{name:'dense horizon',pitch:0,density:10},{name:'thin horizon',pitch:0,density:.35},{name:'upward',pitch:.55,density:10},{name:'downward',pitch:-.55,density:10},{name:'tower horizon',pitch:0,density:.35,form:2},{name:'oblique horizon',pitch:-.12,density:.35},{name:'medium horizon',pitch:0,density:1},{name:'thicker horizon',pitch:0,density:3}]){
   b.setTuning({formType:scene.form??0});b.setParams({globalDensity:scene.density});b.setViewFromCamera({fwd:[.1,scene.pitch,-1]});
   const reference=await snapshot(pipelines[0]);
-  for(const variant of pipelines.slice(1)){
+  for(const variant of [...pipelines.slice(1),...(scene.form?[]:[{name:'split production',split:true},{name:'direct after split',direct:true}])]){
    const values=await snapshot(variant);let changed=0,maxAlpha=0,maxRgb=0,squared=0;
    const half=v=>{const e=(v>>10)&31,m=v&1023;return e===0?m*2**-24:(1+m/1024)*2**(e-15);};
    for(let i=0;i<values.length;i++){
@@ -143,6 +150,14 @@ async function run(){
   if(!inside&&tile[i]!==0x3000)wrongOutside++;
  }
  parity.push({scene:'partial tile',wrongInside,wrongOutside,pass:wrongInside===0&&wrongOutside===0});
+ b.setFrame({tileWidth:W,tileHeight:H,originX:0,originY:0});
+ b.setViewFromCamera({terrainEnabled:true,camPos:[.3,8.25,8],fwd:[.1,-.4,-1]});
+ for(const coarseFactor of [0,2]){
+  if(coarseFactor)b.createOutputTexture(W*2,H*2);
+  const before=await snapshot({builder:true,coarseFactor}),after=await snapshot({split:true,coarseFactor});
+  let changed=0;for(let i=0;i<before.length;i++)if(before[i]!==after[i])changed++;
+  parity.push({scene:coarseFactor?'coarse terrain split':'terrain split',changedComponents:changed,pass:changed===0});
+ }
  document.querySelector('#result').textContent=JSON.stringify({complete:true,gpuTiming,compile:pipelines.map(p=>({layout:p.name,ms:p.compileMs})),width:W,height:H,rows,parity,errors,pass:parity.every(p=>p.pass)&&!errors.length},null,2);
  read.destroy();device.destroy();
 }

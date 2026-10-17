@@ -208,22 +208,22 @@
     "baseline": {
       "rmse": 0.002336817027933551,
       "bounded": true,
-      "submitToCompletionMs": 0.09375
+      "submitToCompletionMs": 0.15625
     },
     "resolved": {
       "rmse": 0.0010016621014769349,
       "bounded": true,
-      "submitToCompletionMs": 0.09062500018626451
+      "submitToCompletionMs": 0.6156250005587935
     },
     "cached": {
       "rmse": 0.002336817027933551,
       "bounded": true,
-      "submitToCompletionMs": 0.09375
+      "submitToCompletionMs": 0.06562499981373549
     },
     "full": {
       "rmse": 0.002336817027933551,
       "bounded": true,
-      "submitToCompletionMs": 0.018749999813735485
+      "submitToCompletionMs": 0.29374999925494194
     }
   },
   "morningEvolution": {
@@ -518,32 +518,32 @@
       "evolving": false,
       "width": 512,
       "height": 288,
-      "medianMs": 26.5,
-      "p90Ms": 28.799999997019768
+      "medianMs": 33,
+      "p90Ms": 33.79999998211861
     },
     {
       "formType": 0,
       "evolving": true,
       "width": 512,
       "height": 288,
-      "medianMs": 25.799999997019768,
-      "p90Ms": 26.599999994039536
+      "medianMs": 33.80000001192093,
+      "p90Ms": 34.400000005960464
     },
     {
       "formType": 9,
       "evolving": false,
       "width": 512,
       "height": 288,
-      "medianMs": 2.7999999970197678,
-      "p90Ms": 3.5
+      "medianMs": 8.400000005960464,
+      "p90Ms": 9.299999982118607
     },
     {
       "formType": 9,
       "evolving": true,
       "width": 512,
       "height": 288,
-      "medianMs": 2.7000000029802322,
-      "p90Ms": 3.4000000059604645
+      "medianMs": 7.9000000059604645,
+      "p90Ms": 11.099999994039536
     }
   ],
   "wideWarpTimings": [
@@ -551,15 +551,15 @@
       "turbulence": 0,
       "width": 512,
       "height": 288,
-      "medianMs": 3.199999988079071,
-      "p90Ms": 3.9000000059604645
+      "medianMs": 7.9000000059604645,
+      "p90Ms": 8.400000005960464
     },
     {
       "turbulence": 0.75,
       "width": 512,
       "height": 288,
-      "medianMs": 3.2000000029802322,
-      "p90Ms": 3.8999999910593033
+      "medianMs": 8.099999994039536,
+      "p90Ms": 11.5
     }
   ],
   "volumeNavigationTimings": [
@@ -567,15 +567,15 @@
       "pitch": 0,
       "width": 512,
       "height": 288,
-      "medianMs": 3,
-      "p90Ms": 4
+      "medianMs": 8.099999994039536,
+      "p90Ms": 10
     },
     {
       "pitch": 0.45,
       "width": 512,
       "height": 288,
-      "medianMs": 3,
-      "p90Ms": 3.7000000029802322
+      "medianMs": 8.200000017881393,
+      "p90Ms": 8.600000023841858
     }
   ]
 }

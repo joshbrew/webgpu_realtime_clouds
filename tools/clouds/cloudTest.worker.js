@@ -213,6 +213,21 @@ const renderBundleCache = new Map();
 const log = (...a) => postMessage({ type: "log", data: a });
 let lastFrameTimingPost = -Infinity;
 let navigationStatsStart = 0, navigationStatsLast = 0, navigationStatsFrames = 0;
+let pausedFrameGpuMs = 0;
+let workerPageVisible = true, wakeWorkerVisibility = null;
+
+function setWorkerPageVisibility(visible) {
+  workerPageVisible = visible !== false;
+  const wake = wakeWorkerVisibility;
+  wakeWorkerVisibility = null;
+  wake?.();
+}
+
+async function waitForWorkerVisibility() {
+  while (!workerPageVisible && loopEnabled) {
+    await new Promise(resolve => { wakeWorkerVisibility = resolve; });
+  }
+}
 function emitTimingProgress(report, phase, continuous = false) {
   if (String(phase).startsWith('frame:') && (loopRunning || continuous)) {
     if (phase !== 'frame:complete' || performance.now() - lastFrameTimingPost < 250) return;
@@ -2386,7 +2401,8 @@ async function runFrame({
     }
   }
 
-  const shouldWaitForGpu = !!waitForGpu;
+  const shouldWaitForGpu = !!waitForGpu || (!loopRunning && !bootstrapPreviewMode);
+  const deferPresentation = !loopRunning && !bootstrapPreviewMode && pausedFrameGpuMs > 100;
   if (!bootstrapPreviewMode && cloudPipelineWarmupState === "running") {
     try {
       postMessage({ type: "progress", data: { message: "Finishing cloud shader compilation..." } });
@@ -2429,16 +2445,18 @@ async function runFrame({
   const tP1 = performance.now();
   const tAll0 = performance.now();
   const tPreDrain0 = performance.now();
-  if (shouldWaitForGpu && typeof queue.onSubmittedWorkDone === "function") {
+  // Camera RPCs already complete the preceding frame before acknowledging it.
+  // Avoid another idle-queue round trip on every pointer update.
+  if (shouldWaitForGpu && !navigationFrame && typeof queue.onSubmittedWorkDone === "function") {
     frameReport.mark("pre-dispatch-queue-drain-start");
-    emitTimingProgress(frameReport, "frame:pre-dispatch-queue-drain");
+    emitTimingProgress(frameReport, "frame:pre-dispatch-queue-drain", navigationFrame);
     await queue.onSubmittedWorkDone();
   }
   const tPreDrain1 = performance.now();
 
   const cf = Math.max(1, effectiveCoarseFactor | 0);
   const tEncoder0 = performance.now();
-  const enc = device.createCommandEncoder();
+  let enc = device.createCommandEncoder();
   const tEncoder1 = performance.now();
   const tC0 = performance.now();
   const reconstructAtPresentation = cf >= 2;
@@ -2449,6 +2467,16 @@ async function runFrame({
       : null;
   if (!encodedDispatch) {
     throw new Error("CloudComputeBuilder.encodeDispatchPasses is required for fused frame submission.");
+  }
+  const tCEncodeEnd = performance.now();
+  // Keep the last completed canvas image available to the compositor while a
+  // slow paused frame computes. Acquire its next display image only afterward.
+  // Fast frames and animation retain their existing fused submission.
+  if (deferPresentation) {
+    queue.submit([enc.finish()]);
+    encodedDispatch.restoreAfterSubmit?.();
+    await queue.onSubmittedWorkDone();
+    enc = device.createCommandEncoder();
   }
   const tC1 = performance.now();
 
@@ -2556,7 +2584,7 @@ async function runFrame({
   const tFinish1 = performance.now();
   queue.submit([commandBuffer]);
   const tQueueSubmit1 = performance.now();
-  encodedDispatch.restoreAfterSubmit?.();
+  if (!deferPresentation) encodedDispatch.restoreAfterSubmit?.();
 
   if (useTemporalHistory && historyAllocated) {
     historyPrevView = historyOutView;
@@ -2580,7 +2608,7 @@ async function runFrame({
   const tWait0 = performance.now();
   if (shouldWaitForGpu && typeof queue.onSubmittedWorkDone === "function") {
     frameReport.mark("post-submit-queue-wait-start");
-    emitTimingProgress(frameReport, "frame:post-submit-queue-wait");
+    emitTimingProgress(frameReport, "frame:post-submit-queue-wait", navigationFrame);
     await queue.onSubmittedWorkDone();
   }
   const tWait1 = performance.now();
@@ -2589,7 +2617,8 @@ async function runFrame({
   submittedFrameCount = (submittedFrameCount + 1) >>> 0;
 
   const timings = {
-    computeMs: tC1 - tC0,
+    computeMs: tCEncodeEnd - tC0,
+    computeGpuWaitMs: tC1 - tCEncodeEnd,
     renderMs: tR1 - tR0,
     submitMs: tSubmit1 - tSubmit0,
     gpuWaitMs: tWait1 - tWait0,
@@ -2597,6 +2626,7 @@ async function runFrame({
     commandEncoderMs: tEncoder1 - tEncoder0,
     commandFinishMs: tFinish1 - tFinish0,
     queueSubmitMs: tQueueSubmit1 - tFinish1,
+    deferredPresentation: deferPresentation,
     totalMs: tAll1 - tAll0,
     pipelineMs: tP1 - tP0,
     pipelineWarmupWaitMs: tWarmupWait1 - tWarmupWait0,
@@ -2619,6 +2649,7 @@ async function runFrame({
     computeStages: encodedDispatch.stageTimings || [],
     frame: submittedFrameCount,
   };
+  if (!loopRunning && !bootstrapPreviewMode) pausedFrameGpuMs = timings.computeGpuWaitMs + timings.gpuWaitMs + timings.queueSubmitMs;
 
   frameReport.record("pipeline-warmup-wait", timings.pipelineWarmupWaitMs, warmupTimings, "pipeline");
   frameReport.record("compute-pipeline-ready", timings.pipelineMs, undefined, "pipeline");
@@ -2627,6 +2658,7 @@ async function runFrame({
   frameReport.record("history-texture-allocation", historyAllocationMs, undefined, "buffering");
   frameReport.record("command-encoder-create", timings.commandEncoderMs, undefined, "dispatch");
   frameReport.record("cloud-dispatch-encode", timings.computeMs, { coarseFactor: cf }, "dispatch");
+  if (deferPresentation) frameReport.record("cloud-compute-completion", timings.computeGpuWaitMs, undefined, "gpu-wait");
   for (const stage of timings.computeStages) {
     frameReport.record(stage.stage, stage.encodeMs, stage, "dispatch");
   }
@@ -2643,7 +2675,7 @@ async function runFrame({
   });
   emitTimingProgress(timings.timingReport, "frame:complete", navigationFrame);
 
-  if (shouldWaitForGpu || logFrame || submittedFrameCount % FRAME_LOG_EVERY === 0) {
+  if ((!navigationFrame && shouldWaitForGpu) || logFrame || submittedFrameCount % FRAME_LOG_EVERY === 0) {
     log(
       shouldWaitForGpu ? "[BENCH waited]" : "[BENCH submitted]",
       "compute(ms):",
@@ -2732,6 +2764,17 @@ function startLoop() {
     }
 
     while (loopEnabled) {
+      if (!workerPageVisible) {
+        await waitForLoopGpuBackpressure(0);
+        await waitForWorkerVisibility();
+        // Hidden previews freeze their clock instead of jumping their noise
+        // offsets forward when the user returns to the page.
+        prevTime = performance.now();
+        lastPresentedTime = prevTime;
+        submitWindowStart = prevTime;
+        submitWindowFrames = 0;
+        continue;
+      }
       if (pendingResizePayload) {
         try {
           await waitForLoopGpuBackpressure(1);
@@ -2851,6 +2894,8 @@ function startLoop() {
       }
     }
 
+    await waitForLoopGpuBackpressure(0);
+    try { await queue?.onSubmittedWorkDone?.(); } catch {}
     loopRunning = false;
     log("animation loop stopped");
     postMessage({ type: "loop-stopped" });
@@ -2867,6 +2912,9 @@ function startLoop() {
 function stopLoop() {
   loopEnabled = false;
   loopGpuFences.length = 0;
+  const wake = wakeWorkerVisibility;
+  wakeWorkerVisibility = null;
+  wake?.();
 }
 
 function waitForLoopStopped() {
@@ -2987,6 +3035,7 @@ async function _handleMessage(ev) {
 
   try {
     if (type === "init") {
+      setWorkerPageVisibility(payload?.pageVisible !== false);
       const initReport = new CloudTimingReport("cloud-worker-init");
       let initStage = initReport.start("receive-offscreen-canvases", undefined, "setup");
       const { canvases, constants } = payload;
@@ -3327,6 +3376,12 @@ async function _handleMessage(ev) {
       return;
     }
 
+    if (type === "setPageVisibility") {
+      setWorkerPageVisibility(payload?.visible !== false);
+      respond(true, {visible:workerPageVisible,enabled:loopEnabled,running:loopRunning,frame:submittedFrameCount,wind:shapeOffsetWorld.slice()});
+      return;
+    }
+
     if (type === "startLoop") {
       loopEnabled = true;
       startLoop();
@@ -3337,19 +3392,20 @@ async function _handleMessage(ev) {
     if (type === "stopLoop") {
       stopLoop();
       await waitForLoopStopped();
+      if (queue?.onSubmittedWorkDone) await queue.onSubmittedWorkDone();
+      loopGpuFences.length = 0;
       respond(true, { ok: true });
       return;
     }
 
     if (type === "runFrame") {
-      // Paused orbit/flight does not use the animation loop, but must obey the
-      // same GPU backpressure. Bound work to two frames so camera input cannot
-      // build a long queue of obsolete views. Fresh history still prevents trails.
-      if (payload?.navigationFrame) await waitForLoopGpuBackpressure(1);
+      // Complete the current camera frame before acknowledging it. The UI can
+      // then coalesce all intervening input into the latest pose instead of
+      // keeping a second obsolete view queued on a saturated GPU.
+      if (payload?.navigationFrame) await waitForLoopGpuBackpressure(0);
       if (payload?.tuning) mergeTuningPatch(payload.tuning);
-      const timings = await runFrame(payload);
+      const timings = await runFrame(payload?.navigationFrame ? {...payload,waitForGpu:true} : payload);
       if (payload?.navigationFrame) {
-        enqueueLoopGpuFence();
         const now = performance.now();
         if (!navigationStatsStart || now - navigationStatsLast > 500) {
           navigationStatsStart = now;

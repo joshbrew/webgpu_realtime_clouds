@@ -1,0 +1,110 @@
+{
+  "complete": true,
+  "settings": {
+    "v-cloud-scale": "8",
+    "v-render-scale-divider": "1",
+    "v-temporal-cell-rate": "1",
+    "v-cx": "-6.4048",
+    "v-cy": "13.5327",
+    "v-cz": "-11.7887",
+    "v-yaw": "363.6786",
+    "v-pitch": "-0.1378"
+  },
+  "results": [
+    {
+      "name": "paused idle",
+      "ms": 3011.7999999821186,
+      "sent": {},
+      "received": {},
+      "rafMedianMs": 8.30000000000291,
+      "rafP95Ms": 8.599999999998545,
+      "rafMaxMs": 9.099999999998545,
+      "longTasks": [],
+      "frames": []
+    },
+    {
+      "name": "paused orbit",
+      "ms": 3340.7000000178814,
+      "sent": {
+        "runFrame": 6
+      },
+      "received": {
+        "log": 6,
+        "timing": 6,
+        "runFrame": 6,
+        "frame": 5
+      },
+      "rafMedianMs": 8.30000000000291,
+      "rafP95Ms": 8.80000000000291,
+      "rafMaxMs": 41.80000000000291,
+      "longTasks": [],
+      "frames": [
+        {
+          "roundTripMs": 534.3999999761581,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 6,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 513.3999999761581
+        },
+        {
+          "roundTripMs": 306.30000001192093,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 7,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 287
+        },
+        {
+          "roundTripMs": 307.40000000596046,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 8,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 292.19999998807907
+        },
+        {
+          "roundTripMs": 320.69999998807907,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 9,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 304.40000000596046
+        },
+        {
+          "roundTripMs": 322.90000000596046,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 10,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 301.2000000178814
+        },
+        {
+          "roundTripMs": 306.80000001192093,
+          "coarseFactor": 1,
+          "temporalCellRate": 1,
+          "resetHistory": false,
+          "frame": 11,
+          "gpuBatches": 0,
+          "gpuBatchWaitMs": 295.30000001192093
+        }
+      ]
+    },
+    {
+      "name": "settled idle",
+      "ms": 3005.9000000059605,
+      "sent": {},
+      "received": {},
+      "rafMedianMs": 8.30000000000291,
+      "rafP95Ms": 8.5,
+      "rafMaxMs": 16.19999999999709,
+      "longTasks": [],
+      "frames": []
+    }
+  ]
+}
