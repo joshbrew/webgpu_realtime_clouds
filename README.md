@@ -25,11 +25,13 @@ The tuning playground uses `NoiseComputeBuilder` from [`webgpu_noise_compute_tex
 <img  width="800" alt="cloud-wide-fine-traversal" src="https://github.com/user-attachments/assets/969c6765-d9a4-479f-9d4e-159a7b8563c6" />
 <img  width="800" alt="Screenshot 2026-10-04 121156" src="https://github.com/user-attachments/assets/ee527653-a534-4d2a-a4bc-fb98e4d52d96" />
 <img width="800" alt="Screenshot 2026-10-18 012757" src="https://github.com/user-attachments/assets/d0d8c96e-4392-408c-9e79-f0dc9500dc4b" />
+<img width="800" alt="Screenshot_2026-10-18_012617" src="https://github.com/user-attachments/assets/df0feabb-e966-4ceb-abc5-741a0dd95e4a" />
 
-<img width="800"  alt="Screenshot 2026-10-18 013440" src="https://github.com/user-attachments/assets/ee7d45c0-0bab-4828-8b6f-4db525ec788e" />
-<img width="800"  alt="image" src="https://github.com/user-attachments/assets/ab7724bd-aecb-41b7-afa6-b69dcd40b73a" />
 
-<img  width="800"  alt="Screenshot 2026-10-04 135801" src="https://github.com/user-attachments/assets/355a93cc-2d9f-47be-a93c-333ef27437c6" />
+<img width="800" alt="Screenshot 2026-10-18 013440" src="https://github.com/user-attachments/assets/ee7d45c0-0bab-4828-8b6f-4db525ec788e" />
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/ab7724bd-aecb-41b7-afa6-b69dcd40b73a" />
+
+<img  width="800" alt="Screenshot 2026-10-04 135801" src="https://github.com/user-attachments/assets/355a93cc-2d9f-47be-a93c-333ef27437c6" />
 <img  width="800" alt="Screenshot 2026-10-04 121303" src="https://github.com/user-attachments/assets/74983f29-ed81-40af-a2d7-d53ba1cd4244" />
 <img  width="800" alt="Screenshot 2026-10-18 010235" src="https://github.com/user-attachments/assets/e526a4bc-9d4f-4f7c-b4d1-f111728bd592" />
 
