@@ -1,0 +1,156 @@
+{
+  "complete": true,
+  "checks": [
+    {
+      "name": "single slice optical depth",
+      "axis": 1,
+      "direction": -1,
+      "alpha": 0.89453125,
+      "expected": 0.8946007754381357,
+      "pass": true
+    },
+    {
+      "name": "single slice optical depth",
+      "axis": 1,
+      "direction": 1,
+      "alpha": 0.89453125,
+      "expected": 0.8946007754381357,
+      "pass": true
+    },
+    {
+      "name": "single slice optical depth",
+      "axis": 2,
+      "direction": -1,
+      "alpha": 0.52734375,
+      "expected": 0.5276334472589853,
+      "pass": true
+    },
+    {
+      "name": "single slice optical depth",
+      "axis": 2,
+      "direction": 1,
+      "alpha": 0.52734375,
+      "expected": 0.5276334472589853,
+      "pass": true
+    },
+    {
+      "name": "single slice optical depth",
+      "axis": 3,
+      "direction": -1,
+      "alpha": 0.89453125,
+      "expected": 0.8946007754381357,
+      "pass": true
+    },
+    {
+      "name": "single slice optical depth",
+      "axis": 3,
+      "direction": 1,
+      "alpha": 0.89453125,
+      "expected": 0.8946007754381357,
+      "pass": true
+    },
+    {
+      "name": "spaced subset optical depth",
+      "layers": 3,
+      "alpha": 0.89453125,
+      "expected": 0.8946007754381357,
+      "pass": true
+    },
+    {
+      "name": "scrolls deterministically without rebaking",
+      "pass": true
+    },
+    {
+      "name": "repeats at the held cell width",
+      "repeatError": 0,
+      "pass": true
+    },
+    {
+      "name": "terrain occludes frozen planes",
+      "inFront": 0.478759765625,
+      "behind": 0,
+      "pass": true
+    },
+    {
+      "name": "full 3D volume scrolls without changing its shape or rebaking",
+      "pass": true
+    },
+    {
+      "name": "full 3D volume repeats at the captured cell width",
+      "volumeRepeatError": 0.0001220703125,
+      "pass": true
+    },
+    {
+      "name": "frozen turbulence repeats with the held volume",
+      "turbulentRepeatError": 0.0001220703125,
+      "pass": true
+    },
+    {
+      "name": "same field textures and dimensions",
+      "pass": true
+    },
+    {
+      "name": "returning live rebuilds current fields",
+      "pass": true
+    },
+    {
+      "name": "cached live slices do not require capture",
+      "alpha": 0.52734375,
+      "pass": true
+    },
+    {
+      "name": "cached live slices retain evolving field updates",
+      "pass": true
+    },
+    {
+      "name": "procedural march samples selected live slices and skip intervals",
+      "single": 0.002971649169921875,
+      "subset": 0.021453857421875,
+      "pass": true
+    },
+    {
+      "name": "procedural live plane renders from either side",
+      "axis": 1,
+      "direction": -1,
+      "alpha": 0.004039764404296875,
+      "pass": true
+    },
+    {
+      "name": "procedural live plane renders from either side",
+      "axis": 1,
+      "direction": 1,
+      "alpha": 0.004039764404296875,
+      "pass": true
+    },
+    {
+      "name": "procedural live plane renders from either side",
+      "axis": 2,
+      "direction": -1,
+      "alpha": 0.002971649169921875,
+      "pass": true
+    },
+    {
+      "name": "procedural live plane renders from either side",
+      "axis": 2,
+      "direction": 1,
+      "alpha": 0.002971649169921875,
+      "pass": true
+    },
+    {
+      "name": "procedural live plane renders from either side",
+      "axis": 3,
+      "direction": -1,
+      "alpha": 0.004039764404296875,
+      "pass": true
+    },
+    {
+      "name": "procedural live plane renders from either side",
+      "axis": 3,
+      "direction": 1,
+      "alpha": 0.004039764404296875,
+      "pass": true
+    }
+  ],
+  "errors": [],
+  "pass": true
+}

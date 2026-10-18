@@ -133,3 +133,19 @@ test('slow paused frames finish compute before acquiring the next canvas image',
  }
 });
 
+test('frozen playback scrolls the held pattern while weather and independent noise clocks stay fixed',()=>{
+ const start=worker.indexOf('        const dt = Math.max('),end=worker.indexOf('        if (workerReproj && workerReproj.enabled)',start);
+ const step=new Function('enabled',`
+  const advances=[],cb={_frozenPattern:{enabled},advanceFrozenPattern:(dt,velocity)=>advances.push({dt,velocity})};
+  const t0=1000;let prevTime=0,weatherCycleSeconds=3,volumeRotationAngle=4;
+  const weatherCycle={enabled:true},lastVolumeShape='box';
+  const shapeOffsetWorld=[0,0,0],detailOffsetWorld=[0,0,0],weatherOffsetWorld=[0,0,0];
+  const shapeVel=[.1,0,.2],detailVel=[.3,0,.4],weatherVel=[.5,0,.6];
+  ${worker.slice(start,end)}
+  return {advances,weatherCycleSeconds,volumeRotationAngle,shapeOffsetWorld,detailOffsetWorld,weatherOffsetWorld};
+ `);
+ const frozen=step(true);assert.equal(frozen.advances.length,1);assert.equal(frozen.weatherCycleSeconds,3);assert.equal(frozen.volumeRotationAngle,4);
+ for(const key of ['shapeOffsetWorld','detailOffsetWorld','weatherOffsetWorld'])assert.deepEqual(frozen[key],[0,0,0]);
+ const live=step(false);assert.equal(live.advances.length,0);assert.equal(live.weatherCycleSeconds,3.25);assert.deepEqual(live.shapeOffsetWorld,[.1,0,.2]);
+});
+

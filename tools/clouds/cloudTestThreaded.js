@@ -10,8 +10,11 @@ import { ANVIL_FORM, ANVIL_PRESET_VALUES } from './weather/cloudAnvilLook.js';
 import { CLOUD_FIELD_QUALITIES, normalizeCloudFieldQuality, supportsCloudFieldQuality } from './cloudFieldQuality.js';
 import { REFERENCE_LOOK_PRESETS, PAINTERLY_LOOK_IDS, INK_LOOK_IDS } from './cloudLookPresets.js';
 import { installCloudNavigation } from './cloudNavigation.js';
+import { mountFrozenPatternControls } from './cloudFrozenPatternUi.js';
+import { frozenPatternPreset } from './cloudFrozenPattern.js';
 
 let worker;
+let frozenPatternControls=null;
 let cloudFieldLimits = null;
 
 // Constants (mirror worker). Mobile keeps the same shader path but lowers
@@ -118,7 +121,7 @@ const DEFAULT_FOG_PROFILE = Object.freeze({
 });
 
 const preview = {
-  cam: { x: -0.75, y: -1.2, z: -0.95, yawDeg: 35, pitchDeg: 28, fovYDeg: 60 },
+  cam: { x: -0.75, y: -1.2, z: -0.95, yawDeg: 35, pitchDeg: 8, fovYDeg: 60 },
   exposure: 1.18,
   sky: [0.60, 0.75, 0.98],
   layer: 0,
@@ -131,7 +134,7 @@ const preview = {
   temporalCellRate: STARTUP_PROFILE.temporalCellRate,
   layerPreset: "rain_shelf",
   volumeShape: "box",
-  gradeStyle: 3,
+  gradeStyle: 46,
   cloudShading: "auto",
   cloudTurbulence: .75,
   sunTint: [1.0, 1.0, 1.0],
@@ -1299,6 +1302,7 @@ function createCloudQuickDock() {
       <label class="cloud-quick-field"><span id="quick-cloud-scale-label">Cloud size ×1.0</span><input id="quick-cloud-scale" type="range" min="1" max="8" step="0.1" value="1" aria-label="Cloud size" title="Enlarge clouds relative to the mountains, anchored at the cloud base so they grow upward. Reuses the same cloud data and ray budget."></label>
       <label class="cloud-quick-field"><span id="quick-cloud-height-label">Cloud height 0.0</span><input id="quick-cloud-height" type="range" min="-6" max="80" step="0.1" value="0" aria-label="Cloud height" title="Raise or lower the whole cloud layer independently of size. Keeps the camera, terrain and cloud thickness unchanged."></label>
       <label class="cloud-quick-field"><span>Sky span (X/Z)</span><input id="quick-sky-span" type="number" min="4" max="512" step="6" value="36" title="Full horizontal box width in world units. Sets X and Z together without changing height, puff size or wind. Advanced Cloud Box controls allow separate X/Z extents. Wide skies repeat a bounded cloud tile to preserve detail. Volume detail controls the tile resolution."></label>
+      <label class="cloud-quick-field"><span id="quick-sun-height-label">Sun height 21°</span><input id="quick-sun-height" aria-label="Sun height" type="range" min="-15" max="90" step="0.5" value="21" title="Raise or lower the sun. Updates the existing lighting and atmospheric effects."></label>
       <button type="button" id="quick-render-button">Render</button>
       <button type="button" id="quick-rebake-button">Rebake</button>
       <button type="button" id="quick-randomize-button" title="Regenerate the cloud pattern with new noise seeds, keeping the selected cloud shape, palette, camera and sky span.">New variation</button>
@@ -1361,6 +1365,8 @@ function populateCloudQuickDock() {
     ? 'Cached 3D shape and lighting give smooth, stable clouds. Volume detail and turbulence affect this type. Shading finish changes appearance.'
     : 'Procedural shelves and flowing sheets retain intricate detail. Volume detail and turbulence do not apply. Divider 1–2 suits close-ups; 4 prioritizes speed.';
   for(const id of ['v-field-quality','quick-field-quality','v-cloud-turbulence','quick-cloud-turbulence']) if($(id)) $(id).disabled=!fluffy;
+  frozenPatternControls?.refresh();
+  if(preview.frozenPattern?.enabled)for(const id of ['v-field-quality','quick-field-quality','v-cloud-turbulence','quick-cloud-turbulence'])if($(id))$(id).disabled=true;
   if($('quick-render-path-hint')) $('quick-render-path-hint').textContent=
     CLOUD_LAYER_PRESETS[preview.layerPreset]?.description || (fluffy
       ? 'Rounded clouds and wisps, with either soft or painted lighting.'
@@ -1371,6 +1377,9 @@ function populateCloudQuickDock() {
     setFieldValue("quick-sky-span", Math.max(halfX, halfZ) * 2);
   }
   setFieldValue("quick-terrain",preview.terrainEnabled?"basin":"off");
+  const sunHeight=Number($('c-el')?.value ?? preview.sun.elDeg);
+  setFieldValue('quick-sun-height',sunHeight);
+  if($('quick-sun-height-label'))$('quick-sun-height-label').textContent=`Sun height ${sunHeight.toFixed(1)}°`;
   const cloudScale=Math.max(1,Math.min(8,Number(preview.cloudScale)||1));
   setFieldValue('quick-cloud-scale',cloudScale);
   if($('quick-cloud-scale-label')) $('quick-cloud-scale-label').textContent=`Cloud size ×${cloudScale.toFixed(1)}`;
@@ -1482,15 +1491,19 @@ function wireCloudQuickDock() {
   };
   $("quick-sky-span")?.addEventListener("input", updateSkySpan);
   $("quick-sky-span")?.addEventListener("change", updateSkySpan);
+  $('quick-sun-height')?.addEventListener('input',()=>{
+    const height=Number($('quick-sun-height').value);
+    setFieldValue('c-el',height);
+    $('quick-sun-height-label').textContent=`Sun height ${height.toFixed(1)}°`;
+    dispatchInput('c-el');
+  });
   $('quick-terrain')?.addEventListener('change',()=>{
     const enabled=$('quick-terrain').value==='basin';
     const altitudeDelta=((enabled?1:0)-(preview.terrainEnabled?1:0))*6;
     setFieldValue('v-cy',Number($('v-cy').value)+altitudeDelta);
     setFieldValue('v-box-cy',Number($('v-box-cy').value)+altitudeDelta);
     preview.terrainEnabled=enabled;
-    if(preview.terrainEnabled && Number($('quick-sky-span').value)<180){
-      setFieldValue('quick-sky-span',180);updateSkySpan();
-    }
+    // Surroundings must not resize a finite eye, storm, or authored cloud tile.
     $('render')?.click();
   });
   $("quick-rebake-button")?.addEventListener("click", () => $("rebake-all")?.click());
@@ -2940,38 +2953,133 @@ CLOUD_LAYER_PRESETS.cached_ink_folds = {
   },
 };
 
-// Curated scenes retain the existing method-specific controls and palettes.
-// Only these explicit demos choose a coordinated grade and wide framing.
+// Enrich Rain Shelf after deriving the legacy ink anatomies, so its new
+// texture recipe does not silently change those previously accepted shapes.
+CLOUD_LAYER_PRESETS.rain_shelf.description = "A substantial rolling rain bank with scalloped shoulders, smaller billows and fine wind-eroded wisps. Color remains independently selectable.";
+CLOUD_LAYER_PRESETS.rain_shelf.framing=[-.75,-1.2,-.95,35,8];
+Object.assign(CLOUD_LAYER_PRESETS.rain_shelf.values,{
+  'p-coverage':1.06,'p-density':13.0,'t-fluffFactor':3.95,'t-definition':.80,
+  't-sparsity':.26,'t-raySmoothDens':.16,'t-topJitter':.24,
+  't-minOutputAlpha':.035,'t-alphaBoostAmount':.10,'t-outputAlphaFeather':.42,
+  'we-zoom':2.8,'we-bias':.52,'we-gain':.55,'we-billow-zoom':5.8,'we-billow-freq':1.65,'we-billow-oct':5,
+  'sh-zoom':4.7,'sh-freq':1.08,'sh-oct':3,
+  'de-zoom':7.2,'de-freq':1.50,'de-oct':5,
+});
+
+const CLOUD_SCENE_DESCRIPTIONS={
+  caldera_crown:'Ivory thunderheads rise into blue sky, with low side light separating their broad shoulders.',
+  sunlit_cloud_streets:'Long parallel cloud bands with rolling billows and continuous blue lanes between them.',
+  rolling_storm_sea:'A low view beneath rolling silver storm bellies, with warm light catching the leading edges.',
+  breaking_wave_front:'Broad triangular wave faces rise into forward-breaking crests, lit in coral and warm ivory.',
+  high_feather_veil:'Fine high feathers crossing an open blue sky, viewed from below.',
+  cathedral_towers:'A high view across separated towers, with bright shoulders and deep blue air between them.',
+  islands_in_mist:'Low, broad cloud islands emerging from luminous mist, with warm shafts through the gaps.',
+  folded_monsoon:'Broad apricot-lit folds with cool slate recesses and room to see their silhouettes.',
+  ribbon_confluence:'Sweeping warm ribbons and smaller scallops against a clear blue sky.',
+  torn_silver_canopy:'A broken silver canopy with open blue windows and delicate trailing wisps.',
+  layered_thunder_wall:'A substantial storm front with layered shoulders, silver light and dark slate interiors.',
+  rose_painted_shelves:'Coral and ivory shelves with cool blue shadows and broad openings in the canopy.',
+};
+// Each showcase owns its composition and sun angle as well as its material.
 const CLOUD_SCENE_DEMOS = [
-  ['caldera_crown','cumulonimbus_anvil','Caldera Crown',13,{type:3,halfY:6,puffScale:5.5,ao:.6,heightVariation:.85},
-    {'p-coverage':.78,'p-density':9,'p-anvil':1.1,'sh-axis-x':.7,'sh-axis-z':.8}],
-  ['sunlit_cloud_streets','fair_cumulus','Sunlit Cloud Streets',45,{type:1,halfY:2.8,puffScale:2.4,ao:.45,heightVariation:.5},
-    {'p-coverage':.72,'we-axis-x':.28,'we-axis-z':1.4,'sh-axis-x':.38,'sh-axis-z':1.4,'de-axis-x':.45}],
-  ['rolling_storm_sea','asperitas','Rolling Storm Sea',3,{type:7,halfY:4.2,puffScale:5.2,ao:.75,heightVariation:.7,camera:[0,7.5,8,180,2]},
-    {'p-coverage':.95,'p-density':12,'sh-scale':.11,'de-scale':1.1,'sh-axis-x':.7,'t-minOutputAlpha':.008}],
-  ['breaking_wave_front','kelvin_helmholtz','Breaking Wave Front',7,{type:6,halfY:3.8,puffScale:4.2,ao:.65,heightVariation:.6},
-    {'p-coverage':.9,'p-density':10,'sh-axis-x':.45,'sh-axis-z':1.3,'de-axis-x':.6,'t-minOutputAlpha':.006}],
-  ['high_feather_veil','cirrus','High Feather Veil',20,{type:5,halfY:3.6,puffScale:3.8,ao:.3,heightVariation:.5},
-    {'p-coverage':.78,'p-density':7,'sh-axis-x':.22,'sh-axis-z':1.8,'de-axis-x':.3,'de-vel-z':.12,'t-minOutputAlpha':.004}],
-  ['cathedral_towers','towering_cu','Cathedral Towers',22,{type:2,halfY:9,puffScale:4.6,ao:.7,heightVariation:1},
-    {'p-coverage':.68,'p-density':11,'p-anvil':.3,'sh-axis-y':.65,'de-axis-y':.85,'t-minOutputAlpha':.008}],
-  ['islands_in_mist','broken_cumulus','Islands in Mist',17,{type:1,halfY:4.6,puffScale:6.5,ao:.55,heightVariation:.9},
-    {'p-coverage':.67,'p-density':8,'we-zoom':2.3,'sh-scale':.1,'sh-axis-x':.8,'t-minOutputAlpha':.004}],
-  ['folded_monsoon','cached_ink_folds','Folded Monsoon',43,{type:9,halfY:4.2,puffScale:5.2,ao:.7,heightVariation:.7},
-    {'p-coverage':.96,'p-density':11,'sh-axis-x':.35,'sh-axis-z':1.2,'sh-scale':.11,'de-scale':1.5,'t-minOutputAlpha':.004}],
-  ['ribbon_confluence','ink_wave_shelf','Ribbon Confluence',36,{type:0,halfY:.75,puffScale:3.8,ao:0,heightVariation:.4},
-    {'t-shelfFlow':1.8,'p-coverage':.94,'sh-axis-x':.24,'sh-axis-z':1.4,'de-axis-x':.32,'t-paintedLayers':.65}],
-  ['torn_silver_canopy','ink_wave_filaments','Torn Silver Canopy',36,{type:0,halfY:.55,puffScale:3.6,ao:0,heightVariation:.4},
-    {'t-shelfFlow':2.1,'p-coverage':.87,'de-scale':1.65,'sh-axis-x':.3,'sh-axis-z':1.5,'de-vel-z':.11}],
-  ['layered_thunder_wall','billowing_ink_bank','Layered Thunder Wall',44,{type:0,halfY:1.5,puffScale:4.5,ao:0,heightVariation:.5},
-    {'p-coverage':.98,'p-density':13,'t-shelfFlow':1.3,'sh-axis-y':.72,'t-paintedLayers':.9,'t-topJitter':.22}],
-  ['rose_painted_shelves','painted_folded_bank','Rose Painted Shelves',41,{type:0,halfY:.9,puffScale:3.8,ao:0,heightVariation:.4},
-    {'p-coverage':.96,'p-density':10,'t-shelfFlow':1.65,'sh-axis-x':.45,'sh-axis-z':1.1,'t-paintedLayers':.8}],
+  ['caldera_crown','cumulonimbus_anvil','Caldera Crown',46,{type:3,halfY:6,puffScale:5.2,ao:.55,heightVariation:.72,camera:[10,3.5,28,198,7]},
+    {'p-coverage':.72,'p-density':9,'p-anvil':.85,'sh-axis-x':.8,'sh-axis-z':.9,'c-az':75,'c-el':24}],
+  ['sunlit_cloud_streets','fair_cumulus','Parallel Cloud Bands',46,{type:10,halfY:1.8,puffScale:3.6,ao:.42,heightVariation:.25,camera:[14,11,26,210,-20]},
+    {'p-coverage':.82,'p-density':8,'sh-axis-x':.7,'sh-axis-z':.25,'de-axis-z':.35,'c-az':75,'c-el':22,'v-fog-density':.12,'v-fog-horizon':.6}],
+  ['rolling_storm_sea','asperitas','Rolling Storm Sea',47,{type:7,halfY:4.2,puffScale:5.2,ao:.62,heightVariation:.65,camera:[8,-1.4,22,195,12]},
+    {'p-coverage':.90,'p-density':9.5,'sh-scale':.11,'de-scale':1.1,'sh-axis-x':.8,'t-minOutputAlpha':.008,'c-az':95,'c-el':18}],
+  ['breaking_wave_front','kelvin_helmholtz','Breaking Wave Front',49,{type:6,halfY:3.8,span:36,puffScale:4.2,ao:.5,heightVariation:.55,camera:[-10,2.2,28,160,2]},
+    {'p-coverage':.84,'p-density':8.5,'sh-axis-x':.6,'sh-axis-z':1.2,'de-axis-x':.7,'t-minOutputAlpha':.006,'c-az':120,'c-el':22}],
+  ['high_feather_veil','cirrus','High Feather Veil',46,{type:5,halfY:3.6,puffScale:3.8,ao:.25,heightVariation:.45,camera:[0,-3,20,180,28]},
+    {'p-coverage':.72,'p-density':7.2,'sh-axis-x':.24,'sh-axis-z':1.4,'de-axis-x':.35,'de-vel-z':.12,'t-minOutputAlpha':.004,'c-az':60,'c-el':24}],
+  ['cathedral_towers','towering_cu','Cathedral Towers',46,{type:2,halfY:6.8,puffScale:4.6,ao:.55,heightVariation:.75,camera:[11,17,34,198,-16]},
+    {'p-coverage':.65,'p-density':9,'p-anvil':.2,'sh-axis-y':.95,'de-axis-y':1.4,'t-minOutputAlpha':.008,'c-az':70,'c-el':28}],
+  ['islands_in_mist','broken_cumulus','Islands in Mist',49,{type:1,halfY:1.4,puffScale:5.8,ao:.35,heightVariation:.25,camera:[6,2.8,24,195,-2]},
+    {'p-coverage':.57,'p-density':6.5,'p-anvil':0,'we-zoom':2.6,'sh-scale':.12,'sh-axis-x':.85,'t-minOutputAlpha':.004,
+     'c-az':195,'c-el':12,'v-fog-density':.42,'v-fog-horizon':1.1,'v-fog-sun':.45,'v-god-rays-enabled':true,'v-god-ray-strength':.9,'v-god-ray-length':1.4}],
+  ['folded_monsoon','cached_ink_folds','Folded Monsoon',48,{type:9,halfY:3.2,puffScale:4.8,ao:.55,heightVariation:.65,camera:[9,-1,24,200,15]},
+    {'p-coverage':.86,'p-density':8.5,'sh-axis-x':.5,'sh-axis-z':1.1,'sh-scale':.14,'de-scale':1.2,'t-minOutputAlpha':.004,'c-az':65,'c-el':23},'sculpted'],
+  ['ribbon_confluence','ink_wave_shelf','Ribbon Confluence',48,{type:0,halfY:.75,puffScale:3.8,ao:0,heightVariation:.4,camera:[2,4.8,12,180,-30]},
+    {'t-shelfFlow':.95,'p-coverage':.84,'p-density':9.5,'sh-axis-x':.4,'sh-axis-z':1.3,'de-axis-x':.45,'t-paintedLayers':.55,'c-az':55,'c-el':24},'soft'],
+  ['torn_silver_canopy','ink_wave_filaments','Torn Silver Canopy',46,{type:0,halfY:.55,puffScale:3.6,ao:0,heightVariation:.4,camera:[4,3.4,12,195,-27]},
+    {'t-shelfFlow':1.15,'p-coverage':.78,'de-scale':1.5,'sh-axis-x':.4,'sh-axis-z':1.2,'de-vel-z':.11,'c-az':65,'c-el':30},'soft'],
+  ['layered_thunder_wall','billowing_ink_bank','Layered Thunder Wall',47,{type:0,halfY:1.2,puffScale:4.5,ao:0,heightVariation:.5,camera:[7,5.5,18,200,-16]},
+    {'p-coverage':.92,'p-density':11,'t-shelfFlow':.8,'sh-axis-y':.85,'t-paintedLayers':.6,'t-topJitter':.22,'c-az':75,'c-el':18},'soft'],
+  ['rose_painted_shelves','painted_folded_bank','Rose Painted Shelves',49,{type:0,halfY:.8,puffScale:3.8,ao:0,heightVariation:.4,camera:[-7,4.5,16,160,-32]},
+    {'p-coverage':.86,'p-density':9.3,'t-shelfFlow':1.0,'sh-axis-x':.55,'sh-axis-z':1.1,'t-paintedLayers':.5,'c-az':65,'c-el':19},'soft'],
 ];
-for(const [key,base,name,grade,form,values] of CLOUD_SCENE_DEMOS){
-  CLOUD_LAYER_PRESETS[key]={description:`${name}: ${CLOUD_LAYER_PRESETS[base].description} Wide sky scene; mountain basin is optional.`,
-    demoGrade:grade,form:{...form,span:180,camera:form.camera || (form.type===0?[0,-.8,8,180,22]:[0,1.4,8,180,18])},
+for(const [key,base,name,grade,form,values,shading] of CLOUD_SCENE_DEMOS){
+  CLOUD_LAYER_PRESETS[key]={description:CLOUD_SCENE_DESCRIPTIONS[key],
+    demoGrade:grade,demoShading:shading,form:{span:180,...form},
     values:{...CLOUD_LAYER_PRESETS[base].values,...values,'t-phaseJitter':.12}};
+}
+
+// Finite storms keep their whole anatomy in one cached volume, even when the
+// box is enlarged. Material clocks slowly rotate their billows and rain bands.
+for(const [key,name,type,halfY,span,camera] of [
+  ['supercell_rain_curtain','Supercell · Rotating Rain Curtain',11,7,48,[24,4,34,215,10]],
+  ['hurricane_eye','Hurricane Eye · Rising Spiral Wall',12,10,52,[0,4,0,180,42]],
+]) {
+  CLOUD_LAYER_PRESETS[key]={description:type===11
+    ? 'A rotating storm with a broad spiral outflow canopy, rough layered shoulders, a lowered wall cloud and a translucent rain curtain.'
+    : 'Inside a hollow hurricane eye: a solid widening wall with tight rising spiral riffles and a broad swirling upper cloud deck.',
+    demoGrade:47,demoShading:'soft',form:{type,halfY,span,puffScale:4.6,ao:.55,heightVariation:.3,camera},
+    values:{...CLOUD_LAYER_PRESETS.asperitas.values,'p-coverage':1,'p-density':type===11?7:6,
+      'v-box-uv':.4,
+      't-minOutputAlpha':.003,'t-alphaBoostAmount':.02,'t-outputAlphaFeather':.2,
+      'sh-scale':.10,'sh-axis-x':1,'sh-axis-y':1,'sh-axis-z':1,'de-scale':1.1,
+      'sh-vel-x':.04,'sh-vel-y':0,'sh-vel-z':0,'de-vel-x':0,'de-vel-y':0,'de-vel-z':.004,
+      'c-az':type===11?125:170,'c-el':type===11?16:48,
+      'v-fog-density':type===11?.24:.18,'v-fog-horizon':.8,'v-fog-sun':.35,
+      'v-god-rays-enabled':true,'v-god-ray-strength':.9,'v-god-ray-length':1.5},
+  };
+}
+CLOUD_LAYER_PRESETS.sloshing_cloud_sea={
+  description:'A continuous sea of cloud with rough, frayed crests, crossing swells and calmer patches. Animate clouds to set the sea in motion.',
+  demoGrade:46,demoShading:'soft',
+  form:{type:13,halfY:3.5,span:180,puffScale:6,ao:.45,heightVariation:.2,camera:[9,8,24,200,-9]},
+  values:{...CLOUD_LAYER_PRESETS.asperitas.values,'p-coverage':1,'p-density':7,'t-minOutputAlpha':.004,
+    't-alphaBoostAmount':.02,'t-outputAlphaFeather':.25,'sh-scale':.10,'de-scale':1.1,
+    'sh-vel-x':.13,'sh-vel-y':0,'sh-vel-z':.045,'de-vel-x':-.0075,'de-vel-y':0,'de-vel-z':.045,
+    'c-az':85,'c-el':19,'v-fog-density':.20,'v-fog-horizon':.75,'v-fog-sun':.18,'v-god-ray-strength':.3},
+};
+
+// Complete scene presets make the slice/capture styles discoverable from the
+// main menu. Each owns its renderer, source anatomy, framing and pattern.
+const CLOUD_PATTERN_LAYER_DEMOS = [
+  ['cached_slice_plane','morning_cloudlets','live_plane','Single Horizontal Plane'],
+  ['cached_slice_decks','morning_cloudlets','live_decks','Spaced Horizontal Decks'],
+  ['cached_slice_curtains_x','cached_ink_folds','live_curtains_x','Vertical Curtains · X'],
+  ['cached_slice_curtains_z','cached_ink_folds','live_curtains_z','Vertical Curtains · Z'],
+  ['cached_slice_sparse','morning_cloudlets','live_sparse','Sparse Horizontal Layers'],
+  ['cached_slice_range','cached_ink_folds','live_subset','Continuous Horizontal Range'],
+  ['cached_slice_range_x','cached_ink_folds','live_subset_x','Continuous Vertical Range · X'],
+  ['cached_slice_range_z','cached_ink_folds','live_subset_z','Continuous Vertical Range · Z'],
+  ['frozen_pattern_volume','fair_cumulus','volume','Frozen Repeating Sky · Full 3D'],
+  ['frozen_pattern_plane','morning_cloudlets','plane','Frozen Horizontal Plane'],
+  ['frozen_pattern_decks','morning_cloudlets','decks','Frozen Horizontal Decks'],
+  ['frozen_pattern_curtains_x','cached_ink_folds','curtains_x','Frozen Vertical Curtains · X'],
+  ['frozen_pattern_curtains_z','cached_ink_folds','curtains_z','Frozen Vertical Curtains · Z'],
+  ['frozen_pattern_sparse','morning_cloudlets','sparse','Frozen Sparse Layers'],
+  ['frozen_pattern_range','cached_ink_folds','subset','Frozen Horizontal Range'],
+  ['frozen_pattern_range_x','cached_ink_folds','subset_x','Frozen Vertical Range · X'],
+  ['frozen_pattern_range_z','cached_ink_folds','subset_z','Frozen Vertical Range · Z'],
+  ['procedural_slice_plane','ribbon_confluence','live_plane','Single Horizontal Plane'],
+  ['procedural_slice_decks','ribbon_confluence','live_decks','Spaced Horizontal Decks'],
+  ['procedural_slice_curtains_x','ribbon_confluence','live_curtains_x','Vertical Curtains · X'],
+  ['procedural_slice_curtains_z','ribbon_confluence','live_curtains_z','Vertical Curtains · Z'],
+  ['procedural_slice_sparse','ribbon_confluence','live_sparse','Sparse Horizontal Layers'],
+  ['procedural_slice_range','ribbon_confluence','live_subset','Continuous Horizontal Range'],
+  ['procedural_slice_range_x','ribbon_confluence','live_subset_x','Continuous Vertical Range · X'],
+  ['procedural_slice_range_z','ribbon_confluence','live_subset_z','Continuous Vertical Range · Z'],
+];
+for(const [key,base,patternPreset,name] of CLOUD_PATTERN_LAYER_DEMOS){
+  const source=CLOUD_LAYER_PRESETS[base],vertical=patternPreset.endsWith('_x') || patternPreset.endsWith('_z');
+  const camera=vertical?(patternPreset.endsWith('_x')?[-16,source.form.halfY-.3,12,90,4]:[4,source.form.halfY-.3,20,180,4])
+    :patternPreset==='volume'?[4,.8,24,188,7]:[0,-1.8,12,180,22];
+  CLOUD_LAYER_PRESETS[key]={patternPreset,patternGrade:source.form.type>0?46:48,
+    description:`${name}. ${patternPreset.startsWith('live_')?'Live density and lighting keep evolving.':'The captured shape and lighting scroll and repeat.'} Adjust the layout in Cloud patterns.`,
+    form:{...source.form,span:180,camera},values:{...source.values,'t-minOutputAlpha':.003}};
 }
 
 function injectPreviewLookControls() {
@@ -2990,6 +3098,37 @@ function injectPreviewLookControls() {
         <span>Cloud Layer</span>
         <select id="v-layer-preset" title="Applies a coordinated cloud-structure preset across weather, shape/detail noise, transforms, density, and vertical/anvil tuning. Presets rebake the procedural textures.">
           <option value="custom">Custom / Manual</option>
+          <optgroup label="Cached 3D volumes · Live 2D / 2.5D slices">
+          <option value="cached_slice_plane">Single Horizontal Plane</option>
+          <option value="cached_slice_decks">Spaced Horizontal Decks</option>
+          <option value="cached_slice_curtains_x">Vertical Curtains · X</option>
+          <option value="cached_slice_curtains_z">Vertical Curtains · Z</option>
+          <option value="cached_slice_sparse">Sparse Horizontal Layers</option>
+          <option value="cached_slice_range">Continuous Horizontal Range</option>
+          <option value="cached_slice_range_x">Continuous Vertical Range · X</option>
+          <option value="cached_slice_range_z">Continuous Vertical Range · Z</option>
+          </optgroup>
+          <optgroup label="Cached 3D volumes · Frozen scrolling patterns">
+          <option value="frozen_pattern_volume">Frozen Repeating Sky · Full 3D</option>
+          <option value="frozen_pattern_plane">Frozen Horizontal Plane</option>
+          <option value="frozen_pattern_decks">Frozen Horizontal Decks</option>
+          <option value="frozen_pattern_curtains_x">Frozen Vertical Curtains · X</option>
+          <option value="frozen_pattern_curtains_z">Frozen Vertical Curtains · Z</option>
+          <option value="frozen_pattern_sparse">Frozen Sparse Layers</option>
+          <option value="frozen_pattern_range">Frozen Horizontal Range</option>
+          <option value="frozen_pattern_range_x">Frozen Vertical Range · X</option>
+          <option value="frozen_pattern_range_z">Frozen Vertical Range · Z</option>
+          </optgroup>
+          <optgroup label="Procedural ray layers · Live 2D / 2.5D slices">
+          <option value="procedural_slice_plane">Single Horizontal Plane</option>
+          <option value="procedural_slice_decks">Spaced Horizontal Decks</option>
+          <option value="procedural_slice_curtains_x">Vertical Curtains · X</option>
+          <option value="procedural_slice_curtains_z">Vertical Curtains · Z</option>
+          <option value="procedural_slice_sparse">Sparse Horizontal Layers</option>
+          <option value="procedural_slice_range">Continuous Horizontal Range</option>
+          <option value="procedural_slice_range_x">Continuous Vertical Range · X</option>
+          <option value="procedural_slice_range_z">Continuous Vertical Range · Z</option>
+          </optgroup>
           <optgroup label="Cached 3D volumes · natural shapes">
           <option value="fair_cumulus">Fair Cumulus · 3D volume</option>
           <option value="broken_cumulus">Broken Cumulus · 3D volume</option>
@@ -3002,13 +3141,18 @@ function injectPreviewLookControls() {
           </optgroup>
           <optgroup label="Cached 3D volumes · sky scenes">
           <option value="caldera_crown">Caldera Crown</option>
-          <option value="sunlit_cloud_streets">Sunlit Cloud Streets</option>
+          <option value="sunlit_cloud_streets">Parallel Cloud Bands</option>
           <option value="rolling_storm_sea">Rolling Storm Sea</option>
           <option value="breaking_wave_front">Breaking Wave Front</option>
           <option value="high_feather_veil">High Feather Veil</option>
           <option value="cathedral_towers">Cathedral Towers</option>
           <option value="islands_in_mist">Islands in Mist</option>
           <option value="folded_monsoon">Folded Monsoon</option>
+          <option value="sloshing_cloud_sea">Sloshing Cloud Sea</option>
+          </optgroup>
+          <optgroup label="Cached 3D volumes · finite rotating storms">
+          <option value="supercell_rain_curtain">Supercell · Rotating Rain Curtain</option>
+          <option value="hurricane_eye">Hurricane Eye · Rising Spiral Wall</option>
           </optgroup>
           <optgroup label="Cached 3D volumes · painted folds">
           <option value="cached_ink_folds">Cached Ink Folds</option>
@@ -3043,6 +3187,9 @@ function injectPreviewLookControls() {
       <label style="display:flex; flex-direction:column; gap:6px;">
         <span>Color Grade</span>
         <select id="v-grade" title="Color and lighting only. Selecting a grade also enables the selected style override for evolving weather.">
+          <optgroup label="Showcase · Sunlit / Painted">
+            ${[46,47,48,49].map(key=>`<option value="${key}">${REFERENCE_LOOK_PRESETS[key].label}</option>`).join('')}
+          </optgroup>
           <option value="0">Default Gray</option>
           <option value="1">Sunset Punch</option>
           <option value="2">Dusky Purple</option>
@@ -3066,7 +3213,7 @@ function injectPreviewLookControls() {
             ${[19,20,21,23,26,27,28].map(key=>`<option value="${key}">${REFERENCE_LOOK_PRESETS[key].label}</option>`).join('')}
           </optgroup>
           <optgroup label="Watercolor / Gouache lighting">
-            ${PAINTERLY_LOOK_IDS.filter(key=>!INK_LOOK_IDS.includes(key)).map(key=>`<option value="${key}">${REFERENCE_LOOK_PRESETS[key].label}</option>`).join('')}
+            ${PAINTERLY_LOOK_IDS.filter(key=>!INK_LOOK_IDS.includes(key)&&key<46).map(key=>`<option value="${key}">${REFERENCE_LOOK_PRESETS[key].label}</option>`).join('')}
           </optgroup>
           <optgroup label="Ink Wash lighting · Flowing / Wispy">
             ${INK_LOOK_IDS.map(key=>`<option value="${key}">${REFERENCE_LOOK_PRESETS[key].label}</option>`).join('')}
@@ -3090,7 +3237,7 @@ function injectPreviewLookControls() {
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Horizon</span><input id="v-fog-horizon" type="number" step="0.01" min="0" max="2" title="How strongly fog gathers around the horizon and distant cloud silhouettes."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Sun</span><input id="v-fog-sun" type="number" step="0.01" min="0" max="2" title="Amount of sun-washed color injected into the atmospheric fog by the active color grade."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Min Output Alpha</span><input id="t-minOutputAlpha" type="number" step="0.005" min="0" max="0.45" title="Compute-side alpha cutoff. Pixels below this alpha are written transparent before temporal history so low-opacity speckle cannot accumulate."></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Form</span><select id="t-formType"><option value="0">Layer / Rain Shelf · Layered</option><option value="1">Rounded Cumulus</option><option value="2">Towering Cumulus</option><option value="3">Thunderhead / Anvil</option><option value="4">Mixed Weather</option><option value="5">Feather Cirrus · 3D volume</option><option value="6">Kelvin–Helmholtz Waves</option><option value="7">Asperitas</option><option value="8">Morning banks &amp; ruffles</option><option value="9">Cached ink folds</option></select></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Form</span><select id="t-formType"><option value="0">Layer / Rain Shelf · Layered</option><option value="1">Rounded Cumulus</option><option value="2">Towering Cumulus</option><option value="3">Thunderhead / Anvil</option><option value="4">Mixed Weather</option><option value="5">Feather Cirrus · 3D volume</option><option value="6">Kelvin–Helmholtz Waves</option><option value="7">Asperitas</option><option value="8">Morning banks &amp; ruffles</option><option value="9">Cached ink folds</option><option value="10">Parallel cloud bands</option><option value="11">Supercell / rain curtain</option><option value="12">Hurricane eyewall</option><option value="13">Sloshing cloud sea</option></select></label>
       <label><span>Curved shelf folds</span><input id="t-shelfFlow" type="number" value="0" min="0" max="2" step="0.1" title="Curves the procedural material into flowing folds. Layer clouds only; 0 preserves the original shape."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud scale</span><input id="v-cloud-scale" type="number" value="1" step="0.1" min="1" max="8" title="World size multiplier. Expands from the lowest cloud support upward; terrain, camera, textures and ray budget stay fixed."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Puff Size</span><input id="t-puffScale" type="number" value="3.6" step="0.1" min="0.75" max="12" title="World-space size of rounded cloud cells. Layer mode keeps its original noise structure."></label>
@@ -3589,12 +3736,14 @@ function applyCloudLayerPresetValues(key) {
   const preset = CLOUD_LAYER_PRESETS[key];
   if (!preset) return false;
   if(preset.demoGrade!==undefined){applyGradePreset(preset.demoGrade,true);}
+  if(preset.patternGrade!==undefined){applyGradePreset(preset.patternGrade,true);}
   setControlValue('t-shelfFlow', 0);
   preview.layerPreset = key;
   setControlValue("v-layer-preset", key);
   // Each anatomy starts from an unstretched horizontal domain. Flowing Shelf
   // then opts into its elongated waves; switching away must restore the axes.
   for (const prefix of ['we','sh','de']) for (const axis of ['x','z']) setControlValue(`${prefix}-axis-${axis}`, 1);
+  setControlValue('we-bias',.3);
   for (const [id, val] of Object.entries(preset.values || {})) {
     setControlValue(id, val);
   }
@@ -3607,7 +3756,7 @@ function applyCloudLayerPresetValues(key) {
     setControlValue('v-render-scale-divider',4);
     setControlValue('v-temporal-cell-rate',4);
   }
-  preview.cloudShading = form.type > 0 ? 'soft' : 'sculpted';
+  preview.cloudShading = preset.demoShading || (form.type > 0 ? 'soft' : 'sculpted');
   setControlValue('v-cloud-shading', preview.cloudShading);
   preview.volumeShape = form.volumeShape || "box";
   // Fast independent rotations have no screen-space motion vectors. Stale
@@ -3639,6 +3788,7 @@ function applyCloudLayerPresetValues(key) {
     formCameraControls.forEach((id, i) => setControlValue(id, savedLayerCamera[i]));
     savedLayerCamera = null;
   }
+  if(preset.framing)formCameraControls.forEach((id,i)=>setControlValue(id,preset.framing[i]+(i===1&&preview.terrainEnabled?6:0)));
   setControlValue("t-formType", form.type);
   setControlValue("t-puffScale", form.puffScale);
   setControlValue("t-aoStrength", form.ao);
@@ -3646,6 +3796,11 @@ function applyCloudLayerPresetValues(key) {
   if(form.span){setControlValue('v-box-hx',form.span*.5);setControlValue('v-box-hz',form.span*.5);}
   setControlValue("v-box-hy", form.halfY);
   setControlValue("v-box-cy", (preview.volumeShape === "torus" || preview.volumeShape === "gallery" ? 0 : form.type || form.camera ? form.halfY - 0.3 : 0)+(preview.terrainEnabled?6:0));
+  preview.frozenPattern=frozenPatternPreset(preset.patternPreset || 'live',{capture:(preview.frozenPattern?.capture||0)+1});
+  // Adopt the new source before refreshing controls, so the generic scene-
+  // change safeguard does not clear a deliberately selected frozen preset.
+  frozenPatternControls?.adoptScene();
+  if(preset.patternPreset && $('frozen-pattern-panel'))$('frozen-pattern-panel').open=true;
   return true;
 }
 
@@ -6314,6 +6469,23 @@ async function init() {
   removeLegacySliceArtifacts(document);
   populateCloudQuickDock();
   wireCloudQuickDock();
+  frozenPatternControls=mountFrozenPatternControls({
+    parent:$('cloud-quick-dock'),getPattern:()=>preview.frozenPattern,
+      getSupported:()=>true,
+      getCanFreeze:()=>readTuning().formType>0,
+      getDimensions:()=>readTuning().formType>0?CLOUD_FIELD_QUALITIES[preview.fieldQuality||'balanced'].dimensions:[128,128,128],
+    getSceneKey:()=>`${preview.layerPreset}|${readTuning().formType}|${preview.fieldQuality}`,
+    onChange:(pattern,{render=true}={})=>{
+      preview.frozenPattern=pattern;
+      if(!render)return;
+      if(!queueLiveAnimationUpdate(0)){
+        const payload={preview:safeClone(preview),cloudParams:readCloudParams(),tuning:readTuning(),skipFinalDebug:true};
+        useFreshFullFrameReproj(payload);ensureCoarseInPayload(payload);
+        runFrameLatest(payload).catch(error=>console.warn('frozen pattern update failed',error));
+      }
+      updateCloudQuickDockState();
+    },
+  });
   updateCloudQuickDockState();
   installCloudNavigation({
     canvas: mainCanvas,

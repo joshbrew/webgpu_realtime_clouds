@@ -1946,8 +1946,8 @@ function makeViewSignature(preview, w, h) {
   const sun = preview?.sun || {};
   // Evolving weather/light is expected motion, not a camera cut. Keeping its
   // colors in this invalidation key reset sparse history on every cycle frame.
-  if(preview?.weatherCycle) return ['weather-cycle',w,h,cam.x,cam.y,cam.z,cam.yawDeg,cam.pitchDeg,cam.fovYDeg,previewRenderScaleDivider(preview),preview.temporalCellRate,preview.fieldQuality || 'balanced',preview.cloudTurbulence ?? .75,JSON.stringify(preview?.aircraft || {}),!!preview?.terrainEnabled,roundSig(preview?.cloudScale ?? 1)].join('|');
-  return [
+  if(preview?.weatherCycle) return ['weather-cycle',JSON.stringify(preview?.frozenPattern || {}),w,h,cam.x,cam.y,cam.z,cam.yawDeg,cam.pitchDeg,cam.fovYDeg,previewRenderScaleDivider(preview),preview.temporalCellRate,preview.fieldQuality || 'balanced',preview.cloudTurbulence ?? .75,JSON.stringify(preview?.aircraft || {}),!!preview?.terrainEnabled,roundSig(preview?.cloudScale ?? 1)].join('|');
+  return [JSON.stringify(preview?.frozenPattern || {}),
     JSON.stringify(preview?.aircraft || {}),!!preview?.terrainEnabled,roundSig(preview?.cloudScale ?? 1),
     roundSig(cam.x),
     roundSig(cam.y),
@@ -2089,11 +2089,11 @@ async function runFrame({
   // Derive a frame from the manual payload; never store evolving values back
   // into it. Stopping the cycle therefore restores the authored scene.
   if (weatherCycle.enabled && weatherCycleGPU?.groups.length) {
-    weatherCycleState=sampleWeatherCycle(weatherCycleSeconds,weatherCycle);
+    if(!preview?.frozenPattern?.enabled || !weatherCycleState)weatherCycleState=sampleWeatherCycle(weatherCycleSeconds,weatherCycle);
     cloudParams=cycleCloudParams(cloudParams,weatherCycleState,weatherCycle.timeOfDay,preview||{});
     preview=cyclePreview(preview||{},weatherCycleState,weatherCycle.timeOfDay);
     const stage=frameReport.start('weather-map-blend',undefined,'gpu-submit');
-    const blended=weatherCycleGPU.blend(weatherCycleState,weatherCycleSeconds);
+    const blended=!preview?.frozenPattern?.enabled && weatherCycleGPU.blend(weatherCycleState,weatherCycleSeconds);
     if(blended) { weatherCycleBlendCount++; cb?.invalidateCloudFields(); }
     frameReport.end(stage,{cached:!blended,maps:6});
   }
@@ -2318,6 +2318,7 @@ async function runFrame({
   cb.setWeatherProfile(weatherCycle.enabled ? weatherCycleState?.fieldProfile : undefined);
   cb.setFieldQuality(preview?.fieldQuality || 'balanced');
   cb.setCloudTurbulence(preview?.cloudTurbulence ?? .75);
+  cb.setFrozenPattern({...preview?.frozenPattern,enabled:!!preview?.frozenPattern?.enabled && workerTuning.formType>0});
   if (cloudSig !== lastCloudSceneSignature) {
     cb.setBox(cloudBox);
     cb.setParams(cloudParams || {});
@@ -2792,6 +2793,9 @@ function startLoop() {
       try {
         const dt = Math.max(0, (t0 - prevTime) / 1000);
         prevTime = t0;
+        if(cb?._frozenPattern?.enabled){
+          cb.advanceFrozenPattern(dt,shapeVel);
+        }else{
         if(weatherCycle.enabled) weatherCycleSeconds+=Math.min(dt,.25);
         volumeRotationAngle += dt * (lastVolumeShape==='gallery' ? 1.0 : 0.22);
 
@@ -2806,6 +2810,7 @@ function startLoop() {
         weatherOffsetWorld[0] += weatherVel[0] * dt;
         weatherOffsetWorld[1] += weatherVel[1] * dt;
         weatherOffsetWorld[2] += weatherVel[2] * dt;
+        }
 
         if (workerReproj && workerReproj.enabled) {
           workerReproj = normalizeReproj(workerReproj);

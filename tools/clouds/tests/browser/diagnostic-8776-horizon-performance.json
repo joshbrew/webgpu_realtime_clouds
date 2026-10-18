@@ -4,11 +4,11 @@
   "compile": [
     {
       "layout": "8x8",
-      "ms": 12108
+      "ms": 3234.399999976158
     },
     {
       "layout": "16x8",
-      "ms": 6.800000011920929
+      "ms": 2.4000000059604645
     }
   ],
   "width": 773,
@@ -17,98 +17,98 @@
     {
       "scene": "dense horizon",
       "layout": "8x8",
-      "medianMs": 3.801088,
-      "p90Ms": 6.815744
+      "medianMs": 1.376256,
+      "p90Ms": 1.507328
     },
     {
       "scene": "dense horizon",
       "layout": "16x8",
-      "medianMs": 3.997696,
-      "p90Ms": 7.405568
+      "medianMs": 1.376256,
+      "p90Ms": 2.424832
     },
     {
       "scene": "thin horizon",
       "layout": "8x8",
-      "medianMs": 69.402624,
-      "p90Ms": 76.80819199999999
+      "medianMs": 48.955391999999996,
+      "p90Ms": 52.035584
     },
     {
       "scene": "thin horizon",
       "layout": "16x8",
-      "medianMs": 64.356352,
-      "p90Ms": 73.793536
+      "medianMs": 44.498943999999995,
+      "p90Ms": 48.758784
     },
     {
       "scene": "upward",
       "layout": "8x8",
-      "medianMs": 1.572864,
-      "p90Ms": 2.1626879999999997
+      "medianMs": 1.507328,
+      "p90Ms": 2.031616
     },
     {
       "scene": "upward",
       "layout": "16x8",
-      "medianMs": 1.6383999999999999,
-      "p90Ms": 2.1626879999999997
+      "medianMs": 1.507328,
+      "p90Ms": 2.097152
     },
     {
       "scene": "downward",
       "layout": "8x8",
-      "medianMs": 1.703936,
-      "p90Ms": 3.866624
+      "medianMs": 1.507328,
+      "p90Ms": 1.703936
     },
     {
       "scene": "downward",
       "layout": "16x8",
-      "medianMs": 1.703936,
+      "medianMs": 1.507328,
       "p90Ms": 1.9660799999999998
     },
     {
       "scene": "tower horizon",
       "layout": "8x8",
-      "medianMs": 90.243072,
-      "p90Ms": 97.97632
+      "medianMs": 69.599232,
+      "p90Ms": 73.990144
     },
     {
       "scene": "tower horizon",
       "layout": "16x8",
-      "medianMs": 89.849856,
-      "p90Ms": 94.830592
+      "medianMs": 64.159744,
+      "p90Ms": 69.271552
     },
     {
       "scene": "oblique horizon",
       "layout": "8x8",
-      "medianMs": 61.472767999999995,
-      "p90Ms": 66.781184
+      "medianMs": 48.234496,
+      "p90Ms": 50.659327999999995
     },
     {
       "scene": "oblique horizon",
       "layout": "16x8",
-      "medianMs": 57.802752,
-      "p90Ms": 62.849024
+      "medianMs": 43.646975999999995,
+      "p90Ms": 46.071808
     },
     {
       "scene": "medium horizon",
       "layout": "8x8",
-      "medianMs": 22.740992,
-      "p90Ms": 26.345471999999997
+      "medianMs": 14.876672,
+      "p90Ms": 15.597567999999999
     },
     {
       "scene": "medium horizon",
       "layout": "16x8",
-      "medianMs": 20.381695999999998,
-      "p90Ms": 23.724031999999998
+      "medianMs": 13.762559999999999,
+      "p90Ms": 14.483455999999999
     },
     {
       "scene": "thicker horizon",
       "layout": "8x8",
-      "medianMs": 4.9152,
-      "p90Ms": 6.029312
+      "medianMs": 3.9321599999999997,
+      "p90Ms": 4.9152
     },
     {
       "scene": "thicker horizon",
       "layout": "16x8",
-      "medianMs": 4.653055999999999,
-      "p90Ms": 5.177344
+      "medianMs": 3.866624,
+      "p90Ms": 4.784128
     }
   ],
   "parity": [

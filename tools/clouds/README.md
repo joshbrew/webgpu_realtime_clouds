@@ -3876,3 +3876,91 @@ Hidden pages suspend their worker animation loop after existing GPU work drains.
 All 147 Node checks pass. Split-submission GPU output matches accepted pixels exactly across seven procedural views, terrain, coarse terrain rendering, odd frame sizes and partial tiles; direct rendering still works afterward. GPU validation reports no errors. The full flat-opacity suite retains only its two pre-existing cached sparse-motion failures with unchanged values. Existing cached-volume and painterly shader math is unchanged.
 
 Remaining limitation: a later default Rain Shelf probe still recorded occasional idle animation-frame gaps with no worker messages, no rendered frames and no main-thread long tasks. A repeated idle probe measured 17–19 ms p95 with roughly 100–113 ms outliers. These observations do not establish the cause or prove all frozen-frame lag is fixed. The heavy-view improvement above is a controlled camera-presentation result; the unresolved idle scheduling outliers and expensive full-resolution horizon rendering remain separate issues.
+
+### Bounded cached-volume turbulence
+
+The turbulence control previously applied a hard-clipped displacement of up to 40% of the repeated tile width. The displacement had no slope limit, so the sampling domain could fold through itself, pulling thin Kelvin–Helmholtz crests into oversized ribbons. Its edge erosion could also remove nearly the entire density of a thin crest, since that whole feature classified as a shoulder.
+
+The same broad and fine noise reads now use amplitudes limited by their filtered texel rates and the vertical boundary fade. For normalized noise, the maximum displacement-gradient row budget is 0.60 at strength 1.5. Thin cirrus, fluctus and morning ruffles receive 35% of the former erosion strength; at maximum turbulence their point density retains at least 55.375% before integration. Thick-body erosion is unchanged. Density and lighting still share the same deformed coordinates, and existing conservative skip bounds cover the smaller displacement. No new texture, cache bake, ray sample or render pass is added. Off retains exact output.
+
+The /turbulence-safety GPU probe checks 32,768 material positions for each of 20 old/new, narrow/wide and strength combinations against deliberately steep normalized noise. The old wide Natural setting folded at 11,347 points; the bounded version has no foldovers at any tested strength and preserves the thin-density floor. Finite differences use a resolved interval to avoid mistaking hardware interpolation-fraction quantization for a derivative. The /turbulence-performance probe alternates old/new production kernels on one device with identical cached fields. At 512x288 Low field quality, the latest Kelvin–Helmholtz Natural / Wind-torn medians were 0.85 / 0.85 ms before and 0.79 / 0.79 ms after; these short controlled kernel timings are not a full-demo FPS guarantee. One cumulus Natural measurement was one timer quantum slower; the remaining active cases were similar or faster. All three Off comparisons are bit-identical and field resources are reused.
+
+All 147 Node checks pass. The full GPU regression suite reports no validation errors and retains only the same two strict cached sparse-motion failures with unchanged values. Matched actual-demo views use the reported Kelvin–Helmholtz camera, 8x size and Wind-torn turbulence. The wave preset still intentionally contains open hooks and broken crests; this change limits deformation and excessive erosion rather than replacing its anatomy. Diagnostic baseline source is clouds_turbulence-baseline.wgsl; CLOUD_TURBULENCE_BASELINE=1 selects it in the review worker.
+
+### Cloud patterns: live slices and frozen repeating volumes
+
+Open **Cloud patterns** in the quick controls. Slice layout and freezing are independent: live slices work with cached 3D volume presets and procedural ray layers. Presets cover a single horizontal plane, spaced horizontal decks, vertical X/Z curtains, sparse layers and a continuous slice range, with live and frozen versions of each. The frozen repeating volume preset keeps the whole 3D shape.
+
+First/last slice select exact grid indices; equal indices select one plane. Every N slices sets the skip interval, and Layer thickness controls optical thickness. Cached slices use the selected field resolution; procedural slices use 128 evenly spaced planes on each axis. These intersect the selected world planes directly and retain the existing density, detail and lighting methods. Unselected space is skipped rather than masked after a full march. Tangent-only filtering on cached planes and projected footprint filtering on procedural planes reduce horizon aliasing. Nearly edge-on planes fade smoothly. Terrain depth still occludes both modes.
+
+**Freeze shape and lighting** holds the existing cached density and light textures, plus their material clocks. Animate clouds scrolls the held tile using the shape wind; Scroll speed scales that motion. Repeat size changes its horizontal period, and Sky span controls the extent of the repeating sky. The full 3D volume scrolls and repeats as well as the slice layouts. Turbulence follows the repeated tile rather than giving each copy a different shape. Capture current clouds again rebuilds with the current authored settings while preserving the scroll offset. Live clouds restores normal evolution. Capturing requires a cached volume preset; procedural layers can use every live slice layout.
+
+This reuses the existing field textures and mip chain. The field uniform grows by 48 bytes; no additional 3D texture is allocated. Separate shader variants compile slice/capture logic out of normal clouds. Frozen fields skip density, lighting and mip rebuilding, while live cached slices continue updating normally. Cached slice traversal is bounded to 512 plane intersections per ray. This is an optional visual style, not a replacement for the accepted full-volume rendering.
+
+The flat-layer style and horizon footprint treatment were informed by the two thin cloud layers in [Noniv/web-ocean's sky shader](https://github.com/Noniv/web-ocean/blob/main/js/wgsl/sky.js). This implementation uses this project's own density fields, procedural march and lighting.
+
+The /frozen-pattern GPU check covers single planes from both sides on all axes, interval selection, optical depth, terrain occlusion, deterministic scrolling, repeat ownership, unchanged field allocations, live field evolution and procedural slice rendering. Node tests also verify independent live/frozen shader variants and prewarming. The full GPU regression suite retains its two previously recorded cached sparse-motion failures; those remain separate from this feature.
+
+
+Final pattern validation: all 153 Node checks and all 25 dedicated GPU checks pass, with no GPU validation errors. Normal procedural output remains bit-identical to the accepted horizon baseline across the comparison views and temporal rates. Turbulence Off remains bit-identical in the paired cached-volume probe. The two pre-existing cached sparse-motion failures retain their exact previously recorded alpha/red ranges.
+
+Frozen slice patterns scroll within their plane: wind normal to a held slice does not substitute another cross-section or change its tangent deformation. The full frozen volume retains ordinary three-dimensional translation within the cloud layer. Preset slice thicknesses are deliberately stronger than one grid cell, so the existing opacity cutoff does not erase most of a sparse layout; the slider still supports thin sheets.
+
+
+The main **Layer preset** selectors now include three explicit pattern categories: Cached 3D volumes · Live 2D / 2.5D slices; Cached 3D volumes · Frozen scrolling patterns; and Procedural ray layers · Live 2D / 2.5D slices. Their 25 complete scene presets install the source anatomy, camera, palette and slice/capture settings together. Cloud patterns opens for further adjustments. Frozen selections force a fresh capture of the new source, and ordinary layer presets restore the full live volume. All 155 Node checks pass, including catalog coverage and preset transaction checks.
+
+### Vertical ranges and showcase scenes
+
+Continuous vertical ranges on X and Z join the continuous horizontal range in all three main pattern categories. They select an uninterrupted subset of adjacent grid slices; First slice, Last slice, Every N slices and Layer thickness remain editable. Frozen ranges retain scrolling and repeating behavior. Live cached and procedural ranges retain their existing animation and sampling methods.
+
+The twelve sky scenes now have individual camera compositions and sun angles, with Sunlit Ivory, Storm Silver, Apricot Gouache and Coral Porcelain showcase palettes. New slice presets also start with these brighter looks. Ink Wash palettes remain available as independent color choices. Scenes retain the current screen resolution and field-quality budgets.
+
+Rain Shelf has broader weather billows, more shape/detail octaves, fuller coverage, less sparse erosion and a lower opening camera angle. Its thin layer bounds, texture dimensions, maximum march steps and sun-sample budget remain unchanged. Extra noise octaves affect texture baking rather than adding per-ray noise probes; fuller coverage can still change actual frame cost. The selected color grade remains independent of this anatomy preset.
+
+Validation: all 155 Node checks pass. Browser review covered Rain Shelf, Ribbon Confluence, Cathedral Towers, Sunlit Cloud Streets, cached live X ranges, frozen Z ranges and procedural live X ranges, with no logged browser errors. This preset-only pass does not alter the cloud shaders or resolve the two previously documented cached sparse-motion diagnostic failures.
+
+### Breaking waves, parallel bands and finite storms
+
+Breaking Wave Front and the experimental Kelvin–Helmholtz form now have a broad triangular rising body underneath a curled crest. Breaking Wave Front opens from the side of a finite bank so the profile is visible. Parallel Cloud Bands (previously Sunlit Cloud Streets) uses a dedicated continuous roll scaffold rather than independently scattered cumulus cells. Islands in Mist uses low, broad cloud islands with stronger fog and a sun-facing view through the gaps.
+
+Cached volumes now use the authored atmosphere strength: their old 0.24 fog multiplier and 0.14 cloud-fog cap suppressed the controls. Soft lighting also retains the god-ray shadow contrast. Cached ray quadrature uses reduced jitter to limit grain in still mist. Ray sample counts and texture allocations are unchanged. These remain the existing analytic atmosphere and screen-space shafts; cloud aerial distance is an optical-thickness estimate, not a new volumetric atmosphere simulation.
+
+**Cached 3D volumes · finite rotating storms** contains Supercell · Rotating Rain Curtain and Hurricane Eye · Rising Spiral Wall. The supercell has layered shoulders, a lowered wall cloud and a translucent, streaked precipitation sector. The hurricane has a hollow core, an eyewall widening upward and helical ridges. Both retain a complete finite volume when enlarged. Animate clouds advances slow rotation and billow evolution through the existing material clocks; Pause and frozen capture hold those clocks. No new volume textures, ray samples or camera-facing cards are added. The rain curtain is volumetric density, not a particle rainfall simulation.
+
+The /storm-shape-checks GPU fixture evaluates the production scaffolds independently of noise and palettes: rising wave mass, uninterrupted bands/open lanes, hollow hurricane core, dense wall, finite bounds, translucent precipitation, rotation and deterministic clocks. /god-ray-checks additionally renders the real cached soft-lighting composite at fog strengths 0, 0.4 and 2 to guard against hidden fog suppression. The existing Node suite also checks that enlarged storms stay finite and paused fields remain cached.
+
+### Cloud sea, surroundings and sun controls
+
+Sloshing Cloud Sea is a filled cached volume with three crossing periodic swells, gentle crest breakup and independent material-clock phases. It repeats over the existing bounded cache and evolves with Animate clouds; it is not a thin surface mesh or a fluid simulation. Freeze shape and lighting can still hold and scroll the sea as a repeating volume. No extra 3D textures or per-ray shape probes are added.
+
+Switching Surroundings now preserves the authored cloud dimensions. The old basin handler silently increased every span below 180, stretching finite hurricane eyes and supercells until their preset was reapplied. It now only changes the terrain flag and lifts the camera/cloud layer together by six world units. Sun height is available directly below Sky span in the quick controls, drives the existing sun-elevation parameter and synchronizes with preset changes.
+
+Terrain depth still blocks god rays, but its sharp silhouette no longer feeds the cloud-opening emission signal. The terrain-only GPU fixture now produces zero bright shaft emission while retaining a nonzero occlusion shadow. This removes the bright mountain fans in heavy fog without extra sampling or an additional pass; the shafts retain their existing screen-space limitations.
+
+Validation: all 157 Node checks, all 10 storm/sea GPU shape checks, and the god-ray/atmosphere fixture pass without GPU validation errors. Browser checks confirmed that the hurricane retains span 52 when switching mountains on/off, Sun height updates the advanced elevation, and the sea animates and pauses. The earlier two cached sparse-motion diagnostic failures remain separately documented above.
+
+### Rougher shaped clouds and regional sea variation
+
+Shaped volumes now use stronger filtered billows and edge breakup from their existing noise samples. Surface-local erosion keeps the sea filled underneath and the hurricane core open; geometry demos also get irregular boundaries without additional texture reads.
+
+Sloshing Cloud Sea now has broad calm and energetic regions, bent crossing swells, varying billow strength and a slow regional height change. The coordinate warp and all organizing waves are periodic over the cache tile, preserving repeat boundaries during motion. The cache dimensions and ray sample budgets are unchanged; the density bake does more arithmetic.
+
+Validation: all 157 Node checks and all 15 storm/sea GPU shape checks pass. The GPU fixture checks both repeat axes at different material clocks, solid sea / open eye preservation, finite output and distinct regional surface relief. Browser review of the varied sea reported no errors. The earlier two cached sparse-motion diagnostic failures remain separately documented above.
+
+### Spiral storm canopies and finer sea crests
+
+Supercell and Hurricane Eye now include broad upper outflow decks with rotating spiral ridges, varying thickness and feathered radial edges. The lower storm bodies leave room for these wider canopies; the hurricane core stays open through the upper layer. Stronger filtered billows and scalloping roughen the storms, with positive displacement restricted to the existing cloud boundary so noise cannot seed detached exterior puffs.
+
+Sloshing Cloud Sea shifts more relief from its smooth carrier waves into irregular billows, finer crossing ripples, scalloped ridges and stronger surface erosion. All new analytic ripples use periodic integer harmonics, retaining the existing seamless repeating volume and material-clock animation. Noise filtering follows the volume footprint. Cache allocations and per-ray sample budgets are unchanged; density baking does additional arithmetic.
+
+Validation: all 157 Node checks and all 17 storm/sea GPU checks pass without GPU errors. New checks cover both upper canopies extending beyond the lower body, rotating canopy contours and empty finite boundaries. Existing tests cover the hollow eye, filled sea, deterministic clocks and repeats along both axes while moving. Browser review covered the supercell, hurricane and sea; the existing two cached sparse-motion diagnostic failures remain documented above.
+
+### Continuous hurricane eyewall, stable shafts and slower surface motion
+
+Hurricane Eye now keeps a full, continuous widening wall. Its deep radial terraces and density folds are replaced by shallow, closely spaced helical riffles. Hurricane-only shape/detail mapping is tighter, its random surface displacement is smaller, and ray-side wispy erosion is reduced to 22% strength. The broad upper canopy and empty eye remain. Supercell and cloud-sea anatomy are unaffected by this eyewall adjustment.
+
+God rays now filter cloud and terrain coverage over each radial segment, use fixed sun-relative intervals so blocker silhouettes are not repeatedly projected at changing distances, and integrate a partial final interval smoothly. Extinction and brightness weighting account for interval length. Smooth output compression replaces clipped bright/dark plateaus. The maximum 8/12/16 ray steps and four cloud-alpha reads per step remain; terrain filtering uses four depth taps per segment rather than one, and opaque attenuation no longer changes normalization through an early exit. These are still screen-space shafts and cannot recover off-screen occluders.
+
+Supercell, Hurricane Eye and Sloshing Cloud Sea use roughly one-quarter of their former fine-detail drift speeds. Baked shape billows advect at 35% of the broad shape clock. Broad storm spin and sea swell phase now follow the shape clock independently of detail drift, preserving approximately their previous preset speeds. Pause and frozen captures still hold all material clocks.
+
+Validation: all 157 Node checks, all 19 storm/sea GPU checks and the god-ray/atmosphere GPU fixture pass. Eyewall probes retain full density around the circumference with noise enabled; radial profiles resolve nine shallow ridge turns rather than deep folds. Ray checks cover quality-level brightness consistency, unclipped strength response, empty clear-sky output and terrain blockage without emission. Browser reviews of the hurricane and misty basin reported no errors. The earlier two cached sparse-motion diagnostic failures remain documented above.

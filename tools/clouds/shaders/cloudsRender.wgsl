@@ -993,6 +993,19 @@ fn terrainGodRayBlocker(uv:vec2<f32>,receiverDistance:f32)->f32 {
   return select(0.0,previewTerrainVisibility(distance),distance<1000000.0 && distance<receiverDistance-max(0.02,distance*0.001));
 }
 
+fn filteredGodRayMask(uv:vec2<f32>,layer:i32,lod:f32,along:vec2<f32>,across:vec2<f32>,receiverDistance:f32)->vec2<f32> {
+  // Integrate each radial segment, rather than stamping a sharp cloud or
+  // mountain silhouette once per step. Four alpha reads replace the previous
+  // three-wide-plus-mip mask; terrain coverage is filtered separately.
+  var mask=vec2<f32>(0.0);
+  for(var j=0u;j<2u;j++){for(var k=0u;k<2u;k++){
+    let at=uv+along*select(-0.57735,0.57735,j==1u)+across*select(-0.57735,0.57735,k==1u);
+    let cloud=clamp(textureSampleLevel(tex,samp,clamp(at,vec2<f32>(0.001),vec2<f32>(0.999)),layer,lod).a,0.0,1.0);
+    mask+=vec2<f32>(cloud,terrainGodRayBlocker(at,receiverDistance))*0.25;
+  }}
+  return mask;
+}
+
 fn godRayShaft(
   uv: vec2<f32>,
   uvSun: vec2<f32>,
@@ -1059,7 +1072,6 @@ fn godRayShaft(
   let pixelCell = floor(uv * dims);
   let coarseCell = floor(uv * dims * 0.18);
   let baseRand = mix(hash12(coarseCell + sunHint * 19.1), hash12(pixelCell + sunHint * 7.7), 0.35);
-  let stepBase = reach / max(f32(samples), 1.0);
   let windowPre = radialGate * angularGate * screenGate * fogDensity * strength;
   if (windowPre <= 0.00001) {
     return vec2<f32>(0.0, 0.0);
@@ -1079,16 +1091,22 @@ fn godRayShaft(
     layer,
     2.5
   ).a, 0.0, 1.0);
-  prevOcc=max(prevOcc,terrainGodRayBlocker(sunHint,receiverDistance));
 
   for (var i: u32 = 0u; i < 16u; i = i + 1u) {
     if (i >= samples) {
       break;
     }
 
-    let u = (f32(i) + baseRand) / f32(samples);
-    let t = pow(u, 0.88);
-    let along = reach * t;
+    // Share radial segments across receivers. Stretching every sample pattern
+    // to each pixel's distance repeatedly projected the same blocker outline.
+    // Only the last segment's integrated length varies with the receiver.
+    let segmentBegin=span*pow(f32(i)/f32(samples),1.35);
+    let segmentEnd=span*pow(f32(i+1u)/f32(samples),1.35);
+    if(segmentBegin>=reach){break;}
+    let segmentLength=segmentEnd-segmentBegin;
+    let stepLen=min(reach,segmentEnd)-segmentBegin;
+    let along=mix(segmentBegin,segmentEnd,mix(0.5,baseRand,0.12));
+    let t=along/span;
 
     let beamWidth = max(
       mix(0.0030, 0.016, sqrt(t)) *
@@ -1100,7 +1118,7 @@ fn godRayShaft(
     let jitter =
       (hash12(pixelCell + vec2<f32>(f32(i) * 7.13, f32(i) * 3.17)) * 2.0 - 1.0) *
       beamWidth *
-      0.10;
+      0.025;
 
     let suv = clamp(
       sunHint + dir * along + perp * jitter,
@@ -1108,18 +1126,21 @@ fn godRayShaft(
       vec2<f32>(0.999, 0.999)
     );
 
-    let lod = mix(2.25, 0.65, t);
-    let occRaw = sampleAlphaWide(suv, layer, lod, beamWidth, dir, perp);
-    let occWide = textureSampleLevel(tex, samp, suv, layer, min(lod + 1.25, 4.0)).a;
-    let occ = max(mix(occRaw, clamp(occWide, 0.0, 1.0), 0.10),terrainGodRayBlocker(suv,receiverDistance));
-    let edge = abs(occ - prevOcc) * 0.72;
+    let sourceDims=vec2<f32>(textureDimensions(tex,0));
+    let segmentLOD=log2(max(length(dir*sourceDims)*segmentLength*0.30,1.0));
+    let lod=max(mix(2.25,0.65,t),segmentLOD);
+    let mask=filteredGodRayMask(suv,layer,lod,dir*segmentLength*0.5,perp*beamWidth,receiverDistance);
+    let cloudOcc=mask.x;
+    let occ=max(cloudOcc,mask.y);
+    // Terrain removes light. Its abrupt depth silhouette is not a luminous
+    // cloud opening: feeding it into edgeLift made mountains emit bright fans.
+    let edge = abs(cloudOcc - prevOcc) * 0.72;
 
-    let stepLen = max(stepBase * mix(0.88, 1.12, t), 1e-4);
     let extinction =
       occ *
       mix(1.45, 2.30, lowSun) *
       mix(0.90, 1.20, smoothstep(0.015, 0.14, edge)) *
-      (stepLen / max(stepBase, 1e-4));
+      (stepLen * 12.0);
 
     let stepTr = 1.0 / (1.0 + extinction * (1.0 + 0.28 * extinction));
 
@@ -1128,31 +1149,30 @@ fn godRayShaft(
       mix(0.62, 0.84, smoothstep(0.015, 0.14, edge)) *
       mix(1.0, 0.86, pow(t, 1.4));
 
-    brightAccum += transmittance * scatterW;
-    blockerAccum += (1.0 - stepTr) * mix(0.60, 1.0, t);
-    edgeAccum += edge;
-    weightAccum += 1.0;
+    let weight=stepLen/max(reach,0.0001);
+    brightAccum += transmittance * scatterW * weight;
+    blockerAccum += transmittance * (1.0 - stepTr) * mix(0.60, 1.0, t);
+    edgeAccum += edge * weight;
+    weightAccum += weight;
 
     transmittance *= stepTr;
-    prevOcc = occ;
+    prevOcc = cloudOcc;
 
-    if (transmittance < 0.01) {
-      break;
-    }
+    // Keep normalization independent of where an opaque blocker is first hit.
+    // A variable early-exit count produced abrupt ray bands across the sky.
   }
 
   let brightBase = brightAccum / max(weightAccum * 0.68, 0.0001);
-  let blocker = blockerAccum / max(weightAccum * 0.18, 0.0001);
+  let blocker = blockerAccum / 0.80;
   let edgeLift = smoothstep(0.004, 0.060, edgeAccum / max(weightAccum, 1.0));
 
   // Clear gaps transport light; uniform clear sky carries no artificial shaft glow.
   let shaft = brightBase * edgeLift * pow(max(transmittance, 0.0), 0.16) * mix(0.35,2.60,smoothstep(0.45,2.0,strength));
-  let shadow = clamp(blocker * mix(0.68, 1.08, edgeLift), 0.0, 1.0);
-
-  return vec2<f32>(
-    clamp(shaft * windowPre * localFade, 0.0, 1.0),
-    clamp(shadow * windowPre, 0.0, 1.0)
-  );
+  let shadow = blocker * mix(0.68, 1.08, edgeLift);
+  // Compress smoothly instead of clipping whole sky regions to identical
+  // bright/dark values as strength increases. Clipping made mask bands visible.
+  let result=max(vec2<f32>(shaft*windowPre*localFade,shadow*windowPre),vec2<f32>(0.0));
+  return result/(vec2<f32>(1.0)+result);
 }
 
 @fragment
@@ -1350,9 +1370,9 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   sunColor *= mix(vec3<f32>(1.0, 1.0, 1.0), userSunTint, 0.72);
   sunWash *= mix(vec3<f32>(1.0, 1.0, 1.0), userSunTint, 0.26);
 
-  // Outside-view rounded volumes need atmospheric separation, not the dense
-  // immersed haze of the original thin layer. The layer path is unchanged.
-  let fogDensity = clamp(R.reservedControls.y, 0.0, 2.0) * select(1.0, 0.24, R.fieldLighting > 0.5);
+  // The authored atmosphere applies equally to cached and procedural clouds.
+  // Cached lighting is illumination inside cloud matter, not aerial extinction.
+  let fogDensity = clamp(R.reservedControls.y, 0.0, 2.0);
   let fogHorizon = clamp(R.reservedControls.z, 0.0, 2.0);
   let fogSun = clamp(R.reservedControls.w, 0.0, 2.0);
   let sunConeHaze = previewSunConeHaze(towardSunSky, fogDensity, fogSun, lowSun);
@@ -1462,9 +1482,9 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
     let skyDistance = previewBackgroundDistance(rayDir,fogHorizon,min(terrainDistance,aircraft.distance),terrainVisibility,hullRay);
     let skyFog = previewAerialFogAmount(skyDistance, rayDir, fogDensity, fogHorizon, fogSun, lowSun, towardSunSky, fogJitter);
     let fogColor = previewAerialFogColor(horizonSky, zenithSky, sunWash, shadowCool, rayDir, towardSunSky, fogHorizon, fogSun, lowSun);
-    let clearSky = mix(sky, fogColor, skyFog);
+    let clearSky = mix(sky, fogColor, skyFog) * (1.0-godRayShadow*(0.16+0.34*lowSun));
     let cloudDistance = previewCloudAerialDistance(rayDir, cloudA, fogHorizon);
-    let cloudFog = min(0.14, previewAerialFogAmount(cloudDistance, rayDir, fogDensity, fogHorizon, fogSun, lowSun, towardSunSky, fogJitter));
+    let cloudFog = min(0.82, previewAerialFogAmount(cloudDistance, rayDir, fogDensity, fogHorizon, fogSun, lowSun, towardSunSky, fogJitter));
     let contrast = mix(1.0, 1.35, clamp(R.shadowStrength / 5.0, 0.0, 1.0));
     // Daylight contrast must not crush low moonlit radiance into black. Keep
     // the existing preview pivot outside the opt-in cycle, and adapt smoothly.

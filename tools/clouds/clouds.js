@@ -18,6 +18,7 @@ import gasAppearanceWGSL from "./shaders/planetGasAppearance.wgsl";
 import gasFlowWGSL from "./shaders/planetGasFlow.wgsl";
 import previewWGSL from "./shaders/cloudsRender.wgsl";
 import { CLOUD_FIELD_QUALITIES, supportsCloudFieldQuality } from "./cloudFieldQuality.js";
+import { normalizeFrozenPattern } from './cloudFrozenPattern.js';
 import { intendedCloudShading } from './cloudLookPresets.js';
 
 const CLOUD_GPU_CACHE = new WeakMap();
@@ -623,7 +624,8 @@ export class CloudComputeBuilder {
     const divider = Math.max(1, coarseFactor | 0);
     const scratchBytes = Math.max(1, Math.ceil((this.width || 1) / divider)) * Math.max(1, Math.ceil((this.height || 1) / divider)) * Math.max(1, this.layers || 1) * 32;
     const stagedResolve = mode === 0 && scratchBytes <= (this.device.limits?.maxStorageBufferBindingSize ?? 134217728);
-    return mode | (customPos ? 4 : 0) | (writeRGB ? 8 : 0) | (detailedLighting ? 16 : 0) | (stagedResolve ? 32 : 0) | (useFields ? 64 : 0) | (planetStyle ? 128 : 0);
+    const frozen=useFields && this._frozenPattern?.enabled;
+    return mode | (customPos ? 4 : 0) | (writeRGB ? 8 : 0) | (detailedLighting ? 16 : 0) | (stagedResolve ? 32 : 0) | (useFields ? 64 : 0) | (planetStyle ? 128 : 0) | (frozen ? 256 : 0) | (mode===0 && this._frozenPattern?.axis>0 ? 512 : 0);
   }
 
   _computePipelineDescriptorForKey(key = this._currentComputeVariantKey()) {
@@ -642,6 +644,8 @@ export class CloudComputeBuilder {
           CLOUD_DETAILED_LIGHTING: (key & 16) ? 1 : 0,
           CLOUD_STAGED_RESOLVE: (key & 32) ? 1 : 0,
           CLOUD_USE_FIELDS: (key & 64) ? 1 : 0,
+          CLOUD_FROZEN_SLICES:(key & 512)?1:0,
+          ...((key & 64) ? {CLOUD_FROZEN_PATTERN:(key & 256)?1:0} : {}),
           // Consecutive horizontal rays share more of the long horizon march.
           // Field and planet modules have their own fixed workgroup layouts.
           ...(mode === 0 && !(key & 64) ? { CLOUD_WORKGROUP_WIDTH: PROCEDURAL_RAY_GROUP_WIDTH } : {}),
@@ -784,7 +788,8 @@ export class CloudComputeBuilder {
     const mode = aurora || spherical ? 1 : 0;
     const fields = mode === 0 && formType > 0;
     const planetStyle = mode !== 0 && !aurora && planetStyleMode && formType > 0.5;
-    const key = mode | (useCustomPos ? 4 : 0) | (writeRGB ? 8 : 0) | (!fields && !planetStyle && (sunStride | 0) <= 1 ? 16 : 0) | (mode === 0 ? 32 : 0) | (fields ? 64 : 0) | (planetStyle ? 128 : 0);
+    const frozen = fields && this._frozenPattern?.enabled;
+    const key = mode | (useCustomPos ? 4 : 0) | (writeRGB ? 8 : 0) | (!fields && !planetStyle && (sunStride | 0) <= 1 ? 16 : 0) | (mode === 0 ? 32 : 0) | (fields ? 64 : 0) | (planetStyle ? 128 : 0) | (frozen ? 256 : 0) | (mode===0 && this._frozenPattern?.axis > 0 ? 512 : 0);
     const [pipeline] = await Promise.all([
       this._ensureComputePipelineForKeyAsync(key),
       (key & 32) ? this._ensureFlatStagePipelineAsync("resolveCloudFlat") : null,
@@ -919,6 +924,38 @@ export class CloudComputeBuilder {
     this._fieldLightSignature = null;
   }
 
+  setFrozenPattern(value = {}) {
+    const next=normalizeFrozenPattern(value),old=this._frozenPattern || normalizeFrozenPattern();
+    if (!next.enabled || (next.enabled && (!old.enabled || next.capture!==old.capture))) {
+      this._frozenFieldCapture=null;
+      if(!next.enabled || !old.enabled)this._frozenPatternOffset=[0,0,0];
+      if(old.enabled) this.invalidateCloudFields();
+      // Entering freezes the already completed field, including its lighting.
+      if(next.enabled && !old.enabled && this._fieldDensitySignature && this._fieldLightSignature && this._fieldParamsAB) {
+        this._frozenFieldCapture=this._fieldParamsAB.slice(0,80);
+      }
+    }
+    this._frozenPattern=next;
+    // Procedural slices use the two existing padding lanes, preserving the
+    // shared uniform layout and avoiding a new binding on the live renderer.
+    const first=Math.round(next.first*127),last=Math.round(next.last*127);
+    this._dvTuning.setUint32(264,next.axis | (first<<2) | (last<<9) | (next.spacing<<16),true);
+    this._dvTuning.setFloat32(268,next.thickness,true);
+    this._writeIfChanged('tuning',this.tuningBuffer,this._abTuning);
+  }
+
+  advanceFrozenPattern(dt,velocity=[0,0,0]) {
+    if(!this._frozenPattern?.enabled)return;
+    this._frozenPatternOffset ||= [0,0,0];
+    const elapsed=Math.max(0,Math.min(.25,Number(dt)||0))*this._frozenPattern.speed;
+    for(let i=0;i<3;i++)this._frozenPatternOffset[i]+=(Number(velocity[i])||0)*elapsed;
+  }
+
+  _writeFrozenPatternParams() {
+    const f=new Float32Array(this._fieldParamsAB),p=this._frozenPattern || normalizeFrozenPattern();
+    f.set([p.axis,p.first,p.last,p.spacing,...(this._frozenPatternOffset||[0,0,0]),p.enabled?1:0,p.repeat,p.thickness,0,0],20);
+  }
+
   setFieldQuality(quality = 'balanced') {
     if (!Object.hasOwn(CLOUD_FIELD_QUALITIES, quality)) throw new RangeError(`Unknown cloud field quality: ${quality}`);
     if (!supportsCloudFieldQuality(quality, this.device.limits)) throw new RangeError(`Cloud field quality ${quality} is unavailable with this GPU device's limits`);
@@ -951,6 +988,7 @@ export class CloudComputeBuilder {
   }
 
   _ensureFlatFieldResources() {
+    if(this._frozenPattern?.enabled && this._frozenFieldCapture && this._fieldResources)return;
     const active = this._currentComputeVariantKey() & 64;
     const dimensions = active ? CLOUD_FIELD_QUALITIES[this._state.fieldQuality || 'balanced'].dimensions : (this._fieldResources?.dimensions || [1, 1, 1]);
     if (this._fieldResources?.dimensions.join() === dimensions.join()) return;
@@ -991,8 +1029,8 @@ export class CloudComputeBuilder {
       {binding:0,resource:texture.createView({baseMipLevel:i,mipLevelCount:1})},
       {binding:1,resource:texture.createView({baseMipLevel:i+1,mipLevelCount:1})},
     ]})));
-    this._fieldParamsBuffer ||= this.device.createBuffer({ label: "cloud-field-bounds", size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    this._fieldParamsAB ||= new ArrayBuffer(80);
+    this._fieldParamsBuffer ||= this.device.createBuffer({ label: "cloud-field-bounds", size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this._fieldParamsAB ||= new ArrayBuffer(128);
     const setup = this._getFlatStageSetup();
     this._fieldDensityBg = this.device.createBindGroup({ layout: setup.densityBgl, entries: [
       { binding: 4, resource: { buffer: this._fieldParamsBuffer } }, { binding: 5, resource: density.createView({baseMipLevel:0,mipLevelCount:1}) },
@@ -1008,12 +1046,20 @@ export class CloudComputeBuilder {
 
   _encodeFlatFields(pass, timings) {
     this._ensureFlatFieldResources();
+    if(this._frozenPattern?.enabled && this._frozenFieldCapture){
+      new Uint8Array(this._fieldParamsAB,0,80).set(new Uint8Array(this._frozenFieldCapture));
+      this._writeFrozenPatternParams();
+      this._writeIfChanged('fieldParams',this._fieldParamsBuffer,this._fieldParamsAB);
+      timings.push({stage:'frozen-cloud-fields',encodeMs:0,dispatched:false,cached:true});
+      return;
+    }
     const started = performance.now();
     const { dimensions } = this._fieldResources;
     const dv = new DataView(this._fieldParamsAB);
     const mask = this._state.volumeMask;
     const arbitrary = mask?.shape === "torus" || mask?.shape === "gallery";
-    const tiled = !arbitrary && Math.max(this._state.box.half[0],this._state.box.half[2])>36;
+    const finiteStorm=this._state.tuning.formType>10.5 && this._state.tuning.formType<12.5;
+    const tiled = !arbitrary && !finiteStorm && Math.max(this._state.box.half[0],this._state.box.half[2])>36;
     const cell=Math.max(this._state.tuning.puffScale,0.75);
     const tileSpan=Math.ceil(36/cell/2)*2*cell;
     for (let i = 0; i < 3; i++) {
@@ -1034,6 +1080,7 @@ export class CloudComputeBuilder {
       dv.setFloat32(64+i*4, arbitrary ? 0 : profile?.[key] || 0, true);
     }
     dv.setFloat32(76, this._state.cloudTurbulence || 0, true);
+    this._writeFrozenPatternParams();
     this._writeIfChanged("fieldParams", this._fieldParamsBuffer, this._fieldParamsAB);
     // AO and painted layers are lighting, not geometry. Changing them or the camera
     // must not rebake either field.
@@ -1066,6 +1113,7 @@ export class CloudComputeBuilder {
     }
     this._fieldDensitySignature = densitySignature;
     this._fieldLightSignature = lightSignature;
+    if(this._frozenPattern?.enabled)this._frozenFieldCapture=this._fieldParamsAB.slice(0,80);
     timings.push({ stage: "field-cache-check", encodeMs: performance.now() - started });
   }
 
@@ -2477,7 +2525,7 @@ export class CloudComputeBuilder {
     putF(232, s.sparsity ?? 0.42);
     putF(236, s.definition ?? 0.62);
 
-    putF(240, Math.max(0, Math.min(9, s.formType ?? 0)));
+    putF(240, Math.max(0, Math.min(13, s.formType ?? 0)));
     putF(244, Math.max(0.75, s.puffScale ?? 3.6));
     putF(248, Math.max(0, Math.min(1, s.aoStrength ?? 0)));
     putF(252, Math.max(0, Math.min(0.9, s.towerHeightVariation ?? 0.35)));

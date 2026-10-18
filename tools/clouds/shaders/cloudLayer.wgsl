@@ -13,6 +13,28 @@ fn nearMaterialCellInterval(ro:vec3<f32>,rd:vec3<f32>,t:f32,origin:vec3<f32>,pit
 // consumers retain the original 8x8 dispatch unless they opt in.
 override CLOUD_WORKGROUP_WIDTH: u32 = 8u;
 
+// Analytic intersections with a selected subset of the procedural domain.
+// Density, detail and sun probes below still use the existing live renderer.
+fn proceduralSliceHit(ro:vec3<f32>,rd:vec3<f32>,cursor:f32)->vec2<f32>{
+  let packed=bitcast<u32>(TUNE._flowPad1);
+  let axis=(packed & 3u)-1u;
+  let first=f32((packed>>2u)&127u);let last=f32((packed>>9u)&127u);
+  let stride=max(f32((packed>>16u)&255u),1.0);
+  let cell=B.half[axis]*2.0/128.0;
+  let direction=rd[axis];
+  if(abs(direction)<0.00001){return vec2<f32>(1000000.0,0.0);}
+  let coordinate=(ro[axis]+direction*cursor-B.center[axis]+B.half[axis])/cell-0.5;
+  var index=first+select(floor((coordinate-first)/stride-0.0001),ceil((coordinate-first)/stride+0.0001),direction>0.0)*stride;
+  let lastOwned=first+floor((last-first)/stride)*stride;
+  if(direction>0.0){index=max(index,first);}else{index=min(index,lastOwned);}
+  if(index<first || index>lastOwned){return vec2<f32>(1000000.0,0.0);}
+  let plane=B.center[axis]-B.half[axis]+(index+0.5)*cell;
+  let t=(plane-ro[axis])/direction;
+  let thickness=cell*max(TUNE._flowPad2,0.1);
+  let opticalLength=thickness/max(abs(direction),0.10)*smoothstep(0.015,0.08,abs(direction))*smoothstep(0.0,thickness*1.5,t);
+  return vec2<f32>(t,opticalLength);
+}
+
 fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
   // workgroup cache
   if (local_id.x == 0u && local_id.y == 0u) {
@@ -385,16 +407,16 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     let surfaceStep = clamp(targetOpticalDepth / max(refinementDensity * extinctionPerDensity, EPS), TUNE.minStep, baseStepLen);
     let localStepLen = select(baseStepLen, surfaceStep, refineCloudInterval && !sphericalCloudMode());
     let adaptiveStepLen = select(localStepLen, auroraStepLen, auroraLayerMode());
-    let stableNearSample=!sphericalCloudMode() && t<stableNearEnd;
+    let stableNearSample=CLOUD_FROZEN_SLICES!=0u || (!sphericalCloudMode() && t<stableNearEnd);
     var stepLen=adaptiveStepLen;
     var nearFacing=1.0;
     var materialPitch=nearCellPitch;
-    if(stableNearSample){
+    if(CLOUD_FROZEN_SLICES==0u && stableNearSample){
       let crossing=nearMaterialCellInterval(rayRo,rayRd,t,B.center,nearCellPitch);
       stepLen=min(crossing.x,stableNearEnd-t);
       nearFacing=crossing.y;
     }
-    else if(!sphericalCloudMode()){
+    else if(CLOUD_FROZEN_SLICES==0u && !sphericalCloudMode()){
       let targetPitch=max(adaptiveStepLen*dot(abs(rayRd),vec3<f32>(1.0)),TUNE.minStep);
       let pitch=nearCellPitch*exp2(ceil(log2(max(targetPitch/nearCellPitch,0.0625))));
       materialPitch=pitch;
@@ -405,7 +427,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     stepLen=min(stepLen,t1-t);
     var integrationStepLen=stepLen;
     var integrationStart=t;
-    if(!sphericalCloudMode()){
+    if(CLOUD_FROZEN_SLICES==0u && !sphericalCloudMode()){
       // Fade only grazing quadrature boundaries, never the cloud density.
       // The unintegrated distance is carried forward and flushed at the next
       // face-on crossing or the ray exit, preserving coverage at every depth.
@@ -420,11 +442,20 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
       pendingNearLength=total-integrationStepLen;
     }
 
-    if(!sphericalCloudMode() && integrationStepLen<max(materialPitch*0.25,0.000001) && t+stepLen<t1-0.000001){
+    if(CLOUD_FROZEN_SLICES==0u && !sphericalCloudMode() && integrationStepLen<max(materialPitch*0.25,0.000001) && t+stepLen<t1-0.000001){
       // Tiny grazing contributions are accumulated, never discarded. One
       // resolved interval replaces multiple expensive density/light probes.
       pendingNearLength+=integrationStepLen;
       t=min(t+stepLen,t1);iter+=1;continue;
+    }
+    var selectedSliceT=t;
+    if(CLOUD_FROZEN_SLICES!=0u){
+      let selected=proceduralSliceHit(rayRo,rayRd,t+0.000001);
+      if(selected.x>t1){break;}
+      selectedSliceT=selected.x;
+      stepLen=max(selected.x-t+0.000002,0.000002);
+      integrationStepLen=selected.y;
+      pendingNearLength=0.0;
     }
     let flatSliceP = rayRo + rayRd * clamp(t + stepLen * 0.50, t0, t1);
     var sliceHash = smoothCellHash2D(flatSliceP.xz + flatSliceP.y * vec2<f32>(0.37, 0.61), 24.0);
@@ -449,6 +480,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     let jitterAmp = select(0.0,mix_f(0.18, 0.46, rayShallowF) * sliceJitter,sphericalCloudMode());
     let jitterPhase = clamp(jitterCenter + (sliceHash - 0.5) * jitterAmp, 0.04, 0.96);
     var sampleT = select(clamp(integrationStart+integrationStepLen*0.5,t0,t1),clamp(t + jitterWindow * jitterPhase, t0, sampleWindowEnd),sphericalCloudMode());
+    if(CLOUD_FROZEN_SLICES!=0u){sampleT=selectedSliceT;}
     // Continuous interval quadrature, also when flying inside an aurora. The
     // old 44-shell snap re-solved a quadratic at every step and popped between
     // discrete radial sheets. Midpoint-biased jitter needs no shell re-solve.
@@ -470,7 +502,11 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     // On a planet it incorrectly forced a coarse mip even inside the shell.
     let minimumPixelWorld = select(wg_finestWorld * 0.50, sphericalFinestTexelWorld() * 0.50,
       sphericalCloudMode() && !auroraLayerMode());
-    let samplePixelWorld = max(sampleRayDistance * rayPixelWorldScale, minimumPixelWorld);
+    var samplePixelWorld = max(sampleRayDistance * rayPixelWorldScale, minimumPixelWorld);
+    if(CLOUD_FROZEN_SLICES!=0u){
+      let sliceAxis=(bitcast<u32>(TUNE._flowPad1)&3u)-1u;
+      samplePixelWorld/=max(abs(rayRd[sliceAxis]),0.08);
+    }
 
     let thickLodExtra = thickPerfF * saturate(TUNE.thickDetailSkip) * smoothstep(0.28, 0.96, sampleRayDistance);
     let weatherLOD = clamp(weatherLOD_base + TUNE.farLodPush * farF * 0.65, 0.0, wg_maxMipW);
@@ -646,7 +682,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     let macroEmptyThreshold = max(TUNE.sunDensityGate * mix_f(0.46, 0.94, thickPerfF), 0.00006);
     let macroMissF = smoothstep(macroEmptyThreshold * 2.5, macroEmptyThreshold * 0.45, max(densMacro, prevMacroDens));
     let macroMissAllowed = macroMissF * smoothstep(nearFineDist * 1.25, nearFineDist * 3.0, sampleRayDistance) * max(thickPerfF, screenFarF * 0.55) * (1.0 - nearHorizontalRayF * 0.90);
-    if (macroMissAllowed > 0.72 && densMacro < macroEmptyThreshold) {
+    if (CLOUD_FROZEN_SLICES==0u && macroMissAllowed > 0.72 && densMacro < macroEmptyThreshold) {
       refineCloudInterval = false;
       refinementDensity = 0.0;
       let missBoost = mix_f(1.35, min(max(TUNE.emptySkipMult, 1.0), 4.10), macroMissAllowed);

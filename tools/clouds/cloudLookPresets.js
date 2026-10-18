@@ -183,10 +183,34 @@ export const REFERENCE_LOOK_PRESETS = Object.freeze({
     styleShadowEdge:.18,styleColorLift:1.08,styleSaturation:1.02,
     styleRimStrength:.18,styleSunBleed:.035,styleMidLift:1.05,
     fogDensity:.055,fogHorizon:.36,fogSun:.09,godRayStrength:.025}),
+  46: look('Sunlit Ivory', [
+    [.16,.36,.64],[1.12,1.05,.90],[1.42,1.34,1.18],[.31,.40,.55],
+    [1.22,1.17,1.06],[.43,.51,.64],[1.52,1.35,.98],
+  ],{transmissiveLightTint:[1.23,1.12,.95],exposure:1.12,sunBloom:.08,
+    styleShadowStrength:1.28,styleShadowEdge:.18,styleColorLift:1.08,styleMidLift:1.06,
+    styleRimStrength:.24,styleSunBleed:.045,fogDensity:.04,fogSun:.08,godRayStrength:.08}),
+  47: look('Storm Silver', [
+    [.17,.24,.34],[1.20,1.12,.94],[1.30,1.32,1.30],[.23,.30,.40],
+    [1.10,1.14,1.16],[.29,.36,.46],[1.50,1.37,1.05],
+  ],{transmissiveLightTint:[1.16,1.17,1.18],exposure:1.12,sunBloom:.07,
+    styleShadowStrength:1.65,styleShadowEdge:.24,styleSaturation:.88,styleMidLift:1.02,
+    styleRimStrength:.30,styleSunBleed:.05,fogDensity:.055,fogSun:.08,godRayStrength:.14}),
+  48: look('Apricot Gouache', [
+    [.18,.33,.54],[1.12,1.06,.96],[1.34,1.27,1.13],[.37,.43,.56],
+    [1.23,1.17,1.07],[.48,.52,.65],[1.55,1.33,1.02],
+  ],{transmissiveLightTint:[1.20,1.12,1.01],exposure:1.10,sunBloom:.08,
+    styleShadowStrength:1.20,styleShadowEdge:.18,styleColorLift:1.08,styleMidLift:1.08,
+    styleSaturation:1.02,styleRimStrength:.30,styleSunBleed:.04,fogDensity:.035,fogSun:.06,godRayStrength:.07}),
+  49: look('Coral Porcelain', [
+    [.28,.39,.57],[1.20,1.04,.88],[1.42,1.02,.95],[.31,.32,.46],
+    [1.29,.99,.97],[.43,.39,.53],[1.65,1.30,.99],
+  ],{transmissiveLightTint:[1.29,1.04,1.06],exposure:1.15,sunBloom:.08,
+    styleShadowStrength:1.35,styleShadowEdge:.24,styleColorLift:1.1,styleMidLift:1.10,
+    styleSaturation:1.02,styleRimStrength:.35,styleSunBleed:.07,fogDensity:.035,fogSun:.06,godRayStrength:.06}),
 });
 
 export const INK_LOOK_IDS = Object.freeze([36,37,38,39,40,42,43,44]);
-export const PAINTERLY_LOOK_IDS = Object.freeze([29,33,34,35,30,31,32,41,...INK_LOOK_IDS]);
+export const PAINTERLY_LOOK_IDS = Object.freeze([29,33,34,35,30,31,32,41,48,49,...INK_LOOK_IDS]);
 export const SCULPTED_LOOK_IDS = Object.freeze([19,20,21,23,26,27,28,...PAINTERLY_LOOK_IDS]);
 export function intendedCloudShading(style) {
   return SCULPTED_LOOK_IDS.includes(Number(style)) ? 'sculpted' : Object.hasOwn(REFERENCE_LOOK_PRESETS,style) ? 'soft' : 'auto';

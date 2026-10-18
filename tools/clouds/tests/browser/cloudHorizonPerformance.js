@@ -48,7 +48,7 @@ async function run(){
   if(shaderErrors.length){document.querySelector('#result').textContent=JSON.stringify({complete:true,shaderErrors},null,2);device.destroy();return;}
   const started=performance.now();
   const constants={...descriptor.compute.constants}; if(cache)constants.CLOUD_WORKGROUP_WIDTH=x;
-  if(!cache)delete constants.CLOUD_WORKGROUP_WIDTH;
+  if(!cache){delete constants.CLOUD_WORKGROUP_WIDTH;delete constants.CLOUD_FROZEN_SLICES;}
   const pipeline=await device.createComputePipelineAsync({...descriptor,compute:{...descriptor.compute,module,entryPoint:entry,constants}});
   pipelines.push({name:`${x}x${y}`,x,y,pipeline,compileMs:performance.now()-started});
  }

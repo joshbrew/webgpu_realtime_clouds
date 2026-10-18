@@ -18,6 +18,8 @@ override CLOUD_WRITE_RGB: u32 = 1u;
 override CLOUD_DETAILED_LIGHTING: u32 = 1u;
 override CLOUD_STAGED_RESOLVE: u32 = 0u;
 override CLOUD_USE_FIELDS: u32 = 0u;
+override CLOUD_FROZEN_PATTERN: u32 = 0u;
+override CLOUD_FROZEN_SLICES: u32 = 0u;
 
 // ---------------------- TUNING UNIFORM
 struct CloudTuning {

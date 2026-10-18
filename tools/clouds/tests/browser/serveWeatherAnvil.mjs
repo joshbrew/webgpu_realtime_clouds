@@ -17,6 +17,9 @@ const {build}=esbuild;
 const temp=await mkdtemp(join(tmpdir(),'cloud-anvil-check-'));
 const source=x=>fileURLToPath(new URL(x,import.meta.url));
 const loader={'.wgsl':'text','.glsl':'text','.html':'text'};
+await build({entryPoints:[source('./cloudTurbulenceSafety.js')],outfile:join(temp,'turbulence-safety.js'),bundle:true,format:'esm',platform:'browser',loader});
+await build({entryPoints:[source('./cloudTurbulencePerformance.js')],outfile:join(temp,'turbulence-performance.js'),bundle:true,format:'esm',platform:'browser',loader});
+await build({entryPoints:[source('./cloudFrozenPatternChecks.js')],outfile:join(temp,'frozen-pattern.js'),bundle:true,format:'esm',platform:'browser',loader});
 await build({entryPoints:[source('./cloudHorizonPerformance.js')],outfile:join(temp,'horizon-performance.js'),bundle:true,format:'esm',platform:'browser',loader});
 // Optional negative control for the identity regression. Only the diagnostic
 // bundle is changed; the production shader and /demo remain untouched.
@@ -61,6 +64,8 @@ const intervalPlugins=process.env.CLOUD_INTERVAL_BASELINE==='1'?[{name:'camera-i
 
 }}]:[];
 await build({entryPoints:[source('./cloudGodRayChecks.js')],outfile:join(temp,'god-ray-checks.js'),bundle:true,format:'esm',platform:'browser',loader});
+await build({entryPoints:[source('./cloudStormShapeChecks.js')],outfile:join(temp,'storm-shape-checks.js'),bundle:true,format:'esm',platform:'browser',loader});
+await build({entryPoints:[source('./cloudStormMotionChecks.js')],outfile:join(temp,'storm-motion-checks.js'),bundle:true,format:'esm',platform:'browser',loader});
 await build({entryPoints:[source('./cloudCellSeams.js')],outfile:join(temp,'cell-seams.js'),bundle:true,format:'esm',platform:'browser',loader});
 await build({entryPoints:[source('./flatOpacity.js')],outfile:join(temp,'flat-opacity.js'),bundle:true,format:'esm',platform:'browser',loader,plugins:[...planesPlugins,...marchPlugins,...reliefPlugins,...boundsPlugins,...cardPlugins,...stabilityPlugins,...intervalPlugins]});
 await build({entryPoints:[source('./rayFogBand.js')],outfile:join(temp,'ray-fog-band.js'),bundle:true,format:'esm',platform:'browser',loader});
@@ -78,6 +83,7 @@ const flatDiagnosticPlugins=(process.env.CLOUD_FLAT_UNLIT==='1'||process.env.CLO
   .replace('stableNearSample || (!sphericalCloudMode() && (prevDens <= 0.00008 || refreshMaterialLighting))',process.env.CLOUD_FLAT_LIGHT_EVERY_STEP==='1'?'!sphericalCloudMode()':'stableNearSample || (!sphericalCloudMode() && (prevDens <= 0.00008 || refreshMaterialLighting))')}));
 }}]:[];
 const uiPacingPlugins=[{name:'ui-pacing-controls',setup(b){
+ if(process.env.CLOUD_TURBULENCE_BASELINE==='1')b.onLoad({filter:/[\\/]shaders[\\/]clouds\.wgsl$/},async()=>({loader:'text',contents:await readFile(source('./clouds_turbulence-baseline.wgsl'),'utf8')}));
  if(['0','1'].includes(process.env.CLOUD_DEFER_PRESENT))b.onLoad({filter:/cloudTest\.worker\.js$/},async({path})=>{
   let contents=await readFile(path,'utf8');
   contents=contents.replace('const deferPresentation = !loopRunning && !bootstrapPreviewMode && pausedFrameGpuMs > 100;',
@@ -114,14 +120,24 @@ createServer(async(req,res)=>{
   if(path==='/test-result'&&req.method==='POST'){
    let body='';for await(const chunk of req){body+=chunk;if(body.length>1000000)throw new Error('Diagnostic report too large');}
    const {test,report}=JSON.parse(body);
-   if(!['flat-opacity','cell-seams','god-ray-checks','fog-continuity','ray-fog-band','horizon-performance','ui-responsiveness','ui-visibility'].includes(test)){res.writeHead(400).end();return;}
+   if(!['frozen-pattern','turbulence-performance','turbulence-safety','flat-opacity','cell-seams','god-ray-checks','fog-continuity','ray-fog-band','horizon-performance','ui-responsiveness','ui-visibility'].includes(test)){res.writeHead(400).end();return;}
    await writeFile(source('./diagnostic-'+Number(process.env.CLOUD_REVIEW_PORT||8766)+'-'+test+'.json'),JSON.stringify(report,null,2));res.writeHead(204).end();return;
   }
+  if(path==='/frozen-pattern'){res.writeHead(200,{'content-type':'text/html'}).end(html('/frozen-pattern.js'));return;}
+  if(path==='/frozen-pattern.js'){res.writeHead(200,{'content-type':'text/javascript','cache-control':'no-store'}).end(await readFile(join(temp,'frozen-pattern.js'),'utf8'));return;}
+  if(path==='/turbulence-performance'){res.writeHead(200,{'content-type':'text/html'}).end(html('/turbulence-performance.js'));return;}
+  if(path==='/turbulence-performance.js'){res.writeHead(200,{'content-type':'text/javascript','cache-control':'no-store'}).end(await readFile(join(temp,'turbulence-performance.js'),'utf8'));return;}
+  if(path==='/turbulence-safety'){res.writeHead(200,{'content-type':'text/html'}).end(html('/turbulence-safety.js'));return;}
+  if(path==='/turbulence-safety.js'){res.writeHead(200,{'content-type':'text/javascript','cache-control':'no-store'}).end(await readFile(join(temp,'turbulence-safety.js'),'utf8'));return;}
   if(path==='/horizon-performance'){res.writeHead(200,{'content-type':'text/html'}).end(html('/horizon-performance.js'));return;}
   if(path==='/ui-responsiveness'){res.writeHead(200,{'content-type':'text/html'}).end(html('/demo.js').replace('<pre id="result">Checking…</pre>','<script src="/ui-responsiveness.js"></script>'));return;}
   if(path==='/ui-responsiveness.js'){res.writeHead(200,{'content-type':'text/javascript','cache-control':'no-store'}).end(await readFile(source('./cloudUiResponsiveness.js'),'utf8'));return;}
   if(path==='/horizon-performance.js'){res.writeHead(200,{'content-type':'text/javascript','cache-control':'no-store'}).end(await readFile(join(temp,'horizon-performance.js'),'utf8'));return;}
   if(path==='/god-ray-checks'){res.writeHead(200,{'content-type':'text/html'}).end(html('/god-ray-checks.js'));return;}
+  if(path==='/storm-shape-checks'){res.writeHead(200,{'content-type':'text/html'}).end(html('/storm-shape-checks.js'));return;}
+  if(path==='/storm-motion-checks'){res.writeHead(200,{'content-type':'text/html'}).end(html('/storm-motion-checks.js'));return;}
+  if(path==='/storm-motion-checks.js'){res.writeHead(200,{'content-type':'text/javascript','cache-control':'no-store'}).end(await readFile(join(temp,'storm-motion-checks.js'),'utf8'));return;}
+  if(path==='/storm-shape-checks.js'){res.writeHead(200,{'content-type':'text/javascript','cache-control':'no-store'}).end(await readFile(join(temp,'storm-shape-checks.js'),'utf8'));return;}
   if(path==='/cell-seams'){res.writeHead(200,{'content-type':'text/html'}).end(html('/cell-seams.js'));return;}
   if(path==='/ray-fog-band'||path==='/fog-continuity'||path==='/navigation-cost'||path==='/check'||path==='/demo'||path==='/planet-gas'||path==='/planet-flow-benchmark'||path==='/planet-controls-smoke'||path==='/planet-regeneration'||path==='/flat-opacity'){
    let page=path==='/demo'?html('/demo.js').replace('<pre id="result">Checking…</pre>',''):html(path==='/ray-fog-band'?'/ray-fog-band.js':path==='/fog-continuity'?'/fog-continuity.js':path==='/navigation-cost'?'/navigation-cost.js':path==='/flat-opacity'?'/flat-opacity.js':path==='/planet-regeneration'?'/planet-regeneration.js':path==='/planet-controls-smoke'?'/planet-controls-smoke.js':path==='/planet-flow-benchmark'?'/planet-flow-benchmark.js':path==='/planet-gas'?'/planet-gas.js':'/check.js');

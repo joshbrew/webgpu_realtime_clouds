@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import {frozenPatternPreset} from '../cloudFrozenPattern.js';
 import {ANVIL_FORM,ANVIL_PRESET_VALUES} from '../weather/cloudAnvilLook.js';
 
 // Run the real preset transaction without loading the page or creating a GPU.
@@ -110,7 +111,7 @@ test('the donut example restores volume bounds and clears its mask when leaving'
   const controls = new Map(ids.map((id,i)=>[id,{value:values[i]}]));
   const preview = {};
   const valueSource = source.slice(source.indexOf('let savedLayerCamera ='), source.indexOf('async function applyCloudLayerPreset('));
-  const apply = new Function('$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(
+  const apply = new Function('frozenPatternPreset','frozenPatternControls','$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(frozenPatternPreset,null,
     id=>controls.get(id),(id,value)=>controls.set(id,{value:String(value)}),presets,preview);
   apply('rotating_donut');
   assert.equal(preview.volumeShape, 'torus');
@@ -118,8 +119,23 @@ test('the donut example restores volume bounds and clears its mask when leaving'
   assert.equal(controls.get('v-box-cy').value, '0');
   apply('rain_shelf');
   assert.equal(preview.volumeShape, 'box');
-  assert.deepEqual(ids.map(id=>controls.get(id).value),values);
+  assert.deepEqual(ids.map(id=>controls.get(id).value),[...presets.rain_shelf.framing.map(String),...values.slice(5)]);
   assert.equal(controls.get('v-box-hy').value, '0.3');
+});
+
+test('main pattern selection installs its layout after its source and captures fresh fields',()=>{
+  const controls=new Map(),preview={frozenPattern:{enabled:true,capture:7}},adopted=[];
+  const valueSource=source.slice(source.indexOf('let savedLayerCamera ='),source.indexOf('async function applyCloudLayerPreset('));
+  const apply=new Function('frozenPatternPreset','frozenPatternControls','$','setControlValue','CLOUD_LAYER_PRESETS','preview','applyGradePreset',`${valueSource};return applyCloudLayerPresetValues;`)(
+    frozenPatternPreset,{adoptScene(){adopted.push({key:preview.layerPreset,type:controls.get('t-formType').value,pattern:{...preview.frozenPattern}});}},
+    id=>controls.get(id),(id,value)=>controls.set(id,{value:String(value)}),presets,preview,()=>{});
+  apply('frozen_pattern_decks');
+  assert.equal(preview.frozenPattern.enabled,true);assert.equal(preview.frozenPattern.axis,2);assert.equal(preview.frozenPattern.capture,8);
+  assert.equal(adopted.at(-1).type,'8');assert.equal(adopted.at(-1).pattern.enabled,true);
+  apply('procedural_slice_curtains_x');
+  assert.equal(preview.frozenPattern.enabled,false);assert.equal(preview.frozenPattern.axis,1);assert.equal(controls.get('t-formType').value,'0');
+  apply('rain_shelf');
+  assert.equal(preview.frozenPattern.axis,0);assert.equal(preview.frozenPattern.enabled,false);
 });
 
 test('rounded preset framing and AO cannot leak back into Rain Shelf', () => {
@@ -128,7 +144,7 @@ test('rounded preset framing and AO cannot leak back into Rain Shelf', () => {
   const controls = new Map(cameraIds.map((id, i) => [id, { value: original[i] }]));
   const setControl = (id, value) => controls.set(id, { value: String(value) });
   const valueSource = source.slice(source.indexOf('let savedLayerCamera ='), source.indexOf('async function applyCloudLayerPreset('));
-  const apply = new Function('$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(
+  const apply = new Function('frozenPatternPreset','frozenPatternControls','$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(frozenPatternPreset,null,
     id => controls.get(id), setControl,
     { tower: {form:{type:2, halfY:3.6, puffScale:5, ao:.6, heightVariation:.28}}, anvil: {form:{type:3, halfY:5.8, puffScale:7, ao:.65, heightVariation:.18}}, rain: {} }, {},
   );
@@ -146,7 +162,7 @@ test('Flowing Shelf stretching restores cleanly without changing grade or ray bu
   const controls = new Map([['v-render-scale-divider',{value:'4'}],['v-temporal-cell-rate',{value:'4'}]]);
   const preview = { gradeStyle:29 };
   const valueSource = source.slice(source.indexOf('let savedLayerCamera ='), source.indexOf('async function applyCloudLayerPreset('));
-  const apply = new Function('$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(
+  const apply = new Function('frozenPatternPreset','frozenPatternControls','$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(frozenPatternPreset,null,
     id=>controls.get(id),(id,value)=>controls.set(id,{value:String(value)}),presets,preview);
   apply('flowing_shelf');
   assert.equal(controls.get('sh-axis-x').value,'0.28');
@@ -164,7 +180,7 @@ test('Flowing Shelf stretching restores cleanly without changing grade or ray bu
   assert.equal(controls.get('v-temporal-cell-rate').value,'4');
   apply('rain_shelf');
   for(const prefix of ['we','sh','de'])for(const axis of ['x','z'])assert.equal(controls.get(`${prefix}-axis-${axis}`).value,'1');
-  assert.equal(controls.get('t-minOutputAlpha').value,'0.12');
+  assert.equal(controls.get('t-minOutputAlpha').value,'0.035');
   assert.equal(preview.gradeStyle,29);
 });
 
@@ -176,7 +192,7 @@ test('vertical ink layers preserve sculpted rendering and restore the original s
   controls.set('v-temporal-cell-rate',{value:'4'});
   const preview = { gradeStyle:38 };
   const valueSource = source.slice(source.indexOf('let savedLayerCamera ='), source.indexOf('async function applyCloudLayerPreset('));
-  const apply = new Function('$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(
+  const apply = new Function('frozenPatternPreset','frozenPatternControls','$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(frozenPatternPreset,null,
     id=>controls.get(id),(id,value)=>controls.set(id,{value:String(value)}),presets,preview);
   for (const key of ['rising_ink_shelf','billowing_ink_bank','wind_torn_curtains','dense_wind_folded_bank']) {
     apply(key);
@@ -191,7 +207,7 @@ test('vertical ink layers preserve sculpted rendering and restore the original s
     assert.equal(preview.gradeStyle,38);
   }
   apply('rain_shelf');
-  assert.deepEqual(cameraIds.map(id=>controls.get(id).value),original);
+  assert.deepEqual(cameraIds.map(id=>controls.get(id).value),presets.rain_shelf.framing.map(String));
   assert.equal(controls.get('t-shelfFlow').value,'0');
   assert.equal(controls.get('v-box-cy').value,'0');
   assert.equal(controls.get('v-box-hy').value,'0.3');

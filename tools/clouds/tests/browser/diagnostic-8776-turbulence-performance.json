@@ -1,0 +1,246 @@
+{
+  "complete": true,
+  "gpuTiming": true,
+  "width": 512,
+  "height": 288,
+  "rows": [
+    {
+      "form": 1,
+      "amount": 0,
+      "variant": "previous",
+      "medianMs": 1.441792,
+      "p90Ms": 5.5705599999999995
+    },
+    {
+      "form": 1,
+      "amount": 0,
+      "variant": "bounded",
+      "medianMs": 2.424832,
+      "p90Ms": 5.505024
+    },
+    {
+      "form": 1,
+      "amount": 0.75,
+      "variant": "previous",
+      "medianMs": 0.9830399999999999,
+      "p90Ms": 5.177344
+    },
+    {
+      "form": 1,
+      "amount": 0.75,
+      "variant": "bounded",
+      "medianMs": 1.507328,
+      "p90Ms": 5.8982399999999995
+    },
+    {
+      "form": 1,
+      "amount": 1.25,
+      "variant": "previous",
+      "medianMs": 1.114112,
+      "p90Ms": 2.228224
+    },
+    {
+      "form": 1,
+      "amount": 1.25,
+      "variant": "bounded",
+      "medianMs": 1.048576,
+      "p90Ms": 1.572864
+    },
+    {
+      "form": 6,
+      "amount": 0,
+      "variant": "previous",
+      "medianMs": 0.786432,
+      "p90Ms": 0.786432
+    },
+    {
+      "form": 6,
+      "amount": 0,
+      "variant": "bounded",
+      "medianMs": 0.786432,
+      "p90Ms": 0.851968
+    },
+    {
+      "form": 6,
+      "amount": 0.75,
+      "variant": "previous",
+      "medianMs": 1.048576,
+      "p90Ms": 1.572864
+    },
+    {
+      "form": 6,
+      "amount": 0.75,
+      "variant": "bounded",
+      "medianMs": 0.9830399999999999,
+      "p90Ms": 1.048576
+    },
+    {
+      "form": 6,
+      "amount": 1.25,
+      "variant": "previous",
+      "medianMs": 0.9830399999999999,
+      "p90Ms": 1.114112
+    },
+    {
+      "form": 6,
+      "amount": 1.25,
+      "variant": "bounded",
+      "medianMs": 0.9830399999999999,
+      "p90Ms": 1.507328
+    },
+    {
+      "form": 9,
+      "amount": 0,
+      "variant": "previous",
+      "medianMs": 1.048576,
+      "p90Ms": 1.6383999999999999
+    },
+    {
+      "form": 9,
+      "amount": 0,
+      "variant": "bounded",
+      "medianMs": 1.048576,
+      "p90Ms": 1.441792
+    },
+    {
+      "form": 9,
+      "amount": 0.75,
+      "variant": "previous",
+      "medianMs": 1.572864,
+      "p90Ms": 1.6383999999999999
+    },
+    {
+      "form": 9,
+      "amount": 0.75,
+      "variant": "bounded",
+      "medianMs": 1.2451839999999998,
+      "p90Ms": 1.2451839999999998
+    },
+    {
+      "form": 9,
+      "amount": 1.25,
+      "variant": "previous",
+      "medianMs": 1.507328,
+      "p90Ms": 1.9660799999999998
+    },
+    {
+      "form": 9,
+      "amount": 1.25,
+      "variant": "bounded",
+      "medianMs": 1.2451839999999998,
+      "p90Ms": 1.2451839999999998
+    }
+  ],
+  "checks": [
+    {
+      "form": 1,
+      "amount": 0,
+      "identical": true,
+      "pass": true
+    },
+    {
+      "form": 1,
+      "amount": 0,
+      "name": "resources reused",
+      "pass": true
+    },
+    {
+      "form": 1,
+      "amount": 0.75,
+      "identical": false,
+      "pass": true
+    },
+    {
+      "form": 1,
+      "amount": 0.75,
+      "name": "resources reused",
+      "pass": true
+    },
+    {
+      "form": 1,
+      "amount": 1.25,
+      "identical": false,
+      "pass": true
+    },
+    {
+      "form": 1,
+      "amount": 1.25,
+      "name": "resources reused",
+      "pass": true
+    },
+    {
+      "form": 6,
+      "amount": 0,
+      "identical": true,
+      "pass": true
+    },
+    {
+      "form": 6,
+      "amount": 0,
+      "name": "resources reused",
+      "pass": true
+    },
+    {
+      "form": 6,
+      "amount": 0.75,
+      "identical": false,
+      "pass": true
+    },
+    {
+      "form": 6,
+      "amount": 0.75,
+      "name": "resources reused",
+      "pass": true
+    },
+    {
+      "form": 6,
+      "amount": 1.25,
+      "identical": false,
+      "pass": true
+    },
+    {
+      "form": 6,
+      "amount": 1.25,
+      "name": "resources reused",
+      "pass": true
+    },
+    {
+      "form": 9,
+      "amount": 0,
+      "identical": true,
+      "pass": true
+    },
+    {
+      "form": 9,
+      "amount": 0,
+      "name": "resources reused",
+      "pass": true
+    },
+    {
+      "form": 9,
+      "amount": 0.75,
+      "identical": false,
+      "pass": true
+    },
+    {
+      "form": 9,
+      "amount": 0.75,
+      "name": "resources reused",
+      "pass": true
+    },
+    {
+      "form": 9,
+      "amount": 1.25,
+      "identical": false,
+      "pass": true
+    },
+    {
+      "form": 9,
+      "amount": 1.25,
+      "name": "resources reused",
+      "pass": true
+    }
+  ],
+  "errors": [],
+  "pass": true
+}
