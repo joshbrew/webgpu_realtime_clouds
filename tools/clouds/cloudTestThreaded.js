@@ -4206,7 +4206,7 @@ function isEntry4D(ep) {
 function isExcludedEntry(ep) {
   if (typeof ep !== "string") return true;
   if (!ep) return true;
-  if (ep === "clearTexture") return true;
+  if (ep === "clearTexture" || ep.startsWith("computeStudioSphere")) return true;
   if (ep === "computeGauss5x5") return true;
   if (ep === "computeNormal") return true;
   if (ep === "computeNormal8") return true;

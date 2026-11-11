@@ -1,5 +1,11 @@
 # WebGPU Volumetric Clouds
 
+## Planet Studio terrain
+
+Open the **Planet clouds** demo (or add `?demo=planet` to the local URL). Under the planet controls, **Terrain source** selects Planet Studio presets or the editable noise stack. Planet Studio uses the seeded spherical relief and erosion from [Planet Approach](https://github.com/joshbrew/MarchingCubes33_DynamicLODs), including **Pluto** ice canyons and **Ceres Crater Fields**. The existing cloud and atmosphere controls work with either source.
+
+Call `generatePlanetMeshGpu(builder, { seed, segments, radius, studioTerrain: 'ceres-crater-fields', normalMode: 'gpu' })` from `tools/planet/planetGpuMesh.ts` to use the same recipe in a mesh. For raw heights, `bakeStudioPlanetNoise(device, options)` in `tools/noise/studio-map.js` returns the spherical atlas and, with erosion enabled, landform and surface-material data. Use `studioOptions` on the mesh API to override settings such as `variation`, `landscape`, `rangeWeight` or `craterDetail`.
+
 Realtime WebGPU volumetric clouds with GPU-baked procedural noise, compute-shader raymarching, temporal reprojection, large cloud boxes, and a browser tuning playground.
 
 The core renderer is `CloudComputeBuilder` in `clouds.js`. It consumes a weather map, a shape volume, a detail volume, and optional blue noise, then writes volumetric cloud color and alpha into a WebGPU texture. You can composite that texture in your own renderer or use the included preview compositor.
@@ -54,27 +60,14 @@ The tuning playground uses `NoiseComputeBuilder` from [`webgpu_noise_compute_tex
 
 ## Install and run
 
-Run the build/dev commands from the shared `noiseCompute` project root (two
-directories above this folder). The renderer and demos use its bundler to load
-WGSL as text and produce the separate worker bundle.
+Run these commands from the repository root.
 
 ```bash
 npm install
+npm start
 ```
 
-If `tinybuild` is not installed globally:
-
-```bash
-npm i -g tinybuild
-```
-
-Run the local demo:
-
-```bash
-tinybuild
-```
-
-Then open the page served by your local dev setup.
+Open the address printed by the server. `npm run build` refreshes the browser and worker bundles in `dist/`.
 
 You can also serve prebuilt files with any static server:
 
