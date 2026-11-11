@@ -50,3 +50,19 @@ export function planetCloudStyleOptions(style, radius = 50) {
       shapeBias:0,detailBias:0,weatherScale:1,weatherBias:.22},
   };
 }
+
+// Resolve each style from the saved custom configuration, never the previous
+// preset. Apply the editor's explicit values before baking either renderer.
+export function resolvePlanetCloudStyleOptions(base, style, radius, overrides = {}) {
+  const merge = (a, b) => {
+    const out = {};
+    for (const [key, value] of Object.entries(a || {})) {
+      out[key] = Array.isArray(value) ? value.slice() : value && typeof value === 'object' ? merge(value, {}) : value;
+    }
+    for (const [key, value] of Object.entries(b || {})) {
+      out[key] = Array.isArray(value) ? value.slice() : value && typeof value === 'object' ? merge(out[key], value) : value;
+    }
+    return out;
+  };
+  return merge(merge(base, planetCloudStyleOptions(style, radius)), { ...overrides, cloudStyle: style });
+}

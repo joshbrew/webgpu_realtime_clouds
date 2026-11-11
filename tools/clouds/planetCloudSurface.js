@@ -1,7 +1,7 @@
 import { MC33_ALL_TABLES } from './mc33Tables.js';
 import { CloudTimingReport } from './cloudTiming.js';
 import { PlanetCloudNoise } from './planetCloudNoise.js';
-import { planetCloudStyleOptions } from './planetCloudStyles.js';
+import { planetCloudStyleOptions, resolvePlanetCloudStyleOptions } from './planetCloudStyles.js';
 import { advancePlanetCloudTime, planetCloudWarp, regeneratePlanetCloudWeather } from './planetCloudMotion.js';
 import planetCloudSurfaceMC33WGSL from './shaders/planetCloudSurfaceMC33.wgsl';
 import planetCloudSurfaceRenderWGSL from './shaders/planetCloudSurfaceRender.wgsl';
@@ -1111,14 +1111,15 @@ export function updatePlanetCloudSurfaceOptions(layer, options = {}) {
   return layer.options;
 }
 
-export async function setPlanetCloudSurfaceStyle(layer, style) {
+export async function setPlanetCloudSurfaceStyle(layer, style, overrides = {}) {
   const previousOptions=layer.options, previousTextures=layer.textures, previousKeys=layer.resourceKeys;
-  const overrides=planetCloudStyleOptions(style,layer.radius);
+  planetCloudStyleOptions(style,layer.radius);
+  layer._styleBaseOptions ||= resolvePlanetCloudStyleOptions(layer.options,'legacy',layer.radius);
   layer.styleChanging=true;
   try {
     layer.styleRevision=(layer.styleRevision || 0)+1;
-    layer.options={...layer.options,...overrides,cloudStyle:style,cloudRenderMode:'mc33-shell',
-      resourceNonce:`mc33-style-${layer.styleRevision}`};
+    layer.options=resolvePlanetCloudStyleOptions(layer._styleBaseOptions,style,layer.radius,{...overrides,cloudRenderMode:'mc33-shell',
+      resourceNonce:`mc33-style-${layer.styleRevision}`});
     await bakeSurfaceTextures(layer,{waitForGpu:true});
     if(layer.disposed)return null;
     createBindGroups(layer);

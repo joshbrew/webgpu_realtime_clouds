@@ -3403,6 +3403,15 @@ async function _handleMessage(ev) {
       return;
     }
 
+    if (type === "captureFrame") {
+      // Studio "Save image": a PNG of the most recent frame at canvas size.
+      if (!canvasMain || !device) throw new Error("The renderer is not ready yet.");
+      if (queue?.onSubmittedWorkDone) await queue.onSubmittedWorkDone();
+      const blob = await canvasMain.convertToBlob({ type: "image/png" });
+      respond(true, { blob, width: canvasMain.width, height: canvasMain.height });
+      return;
+    }
+
     if (type === "runFrame") {
       // Complete the current camera frame before acknowledging it. The UI can
       // then coalesce all intervening input into the latest pose instead of

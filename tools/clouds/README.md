@@ -3964,3 +3964,25 @@ God rays now filter cloud and terrain coverage over each radial segment, use fix
 Supercell, Hurricane Eye and Sloshing Cloud Sea use roughly one-quarter of their former fine-detail drift speeds. Baked shape billows advect at 35% of the broad shape clock. Broad storm spin and sea swell phase now follow the shape clock independently of detail drift, preserving approximately their previous preset speeds. Pause and frozen captures still hold all material clocks.
 
 Validation: all 157 Node checks, all 19 storm/sea GPU checks and the god-ray/atmosphere GPU fixture pass. Eyewall probes retain full density around the circumference with noise enabled; radial profiles resolve nine shallow ridge turns rather than deep folds. Ray checks cover quality-level brightness consistency, unclipped strength response, empty clear-sky output and terrain blockage without emission. Browser reviews of the hurricane and misty basin reported no errors. The earlier two cached sparse-motion diagnostic failures remain documented above.
+
+### Storm detail rotation at Balanced quality
+
+Supercell and Hurricane Eye now both start at UV scale 0.4. Their fine material no longer rotates at the full storm spin rate: supercell texture rotation uses 10% and hurricane texture rotation 5%, while the analytic storm anatomy retains its spin clock. Fine shape advection is 2.5% of the shape offset and detail advection is 15% of its offset. A conservative filter footprint accounts for the sheared material mapping, reducing unresolved bands without increasing cache dimensions or adding samples. Cloud-sea motion and anatomy retain their accepted settings.
+
+The new /storm-motion-checks diagnostic bakes the actual production density shader at Balanced 128×64×128, UV scale 0.4, one 30 Hz frame apart. It holds the analytic pose and compares against a negative control with the previous fine-material clocks, using the same synthetic periodic mipmapped noise and filtering for both. Mean fine-density change drops to 18.27% of the control for the supercell and 12.21% for the hurricane (about 82% / 88% less). This measures fine-density stability, not universal screen-space flicker or FPS. Diagnostic readback uses a separate capture texture; production caches gain no readback resources.
+
+### Cloud Lab Studio UI
+
+Integrated the supplied Cloud Lab Studio template into the flat and planet demos while retaining the current cloud shaders, presets and motion. Both demos now use a floating control rail, a Studio preset/export card, collapsible advanced sections, and shared styling. The flat Studio keeps sun height, cloud size, lighting and image quality in easy reach; planet manual edits retain their Apply workflow.
+
+Save image exports the canvas without controls. Copy/Paste look and Download/Open .json store and restore editable settings; flat looks also include custom frozen/slice layouts. Image exports were visually checked for both renderers and a flat JSON look was restored through the UI.
+
+The header offers Fullscreen and Clean view. Clean view hides the rail and camera overlays while preserving camera interaction. Press H to toggle the UI; Escape or a double-click restores it. A brief exit hint disappears automatically. Leaving fullscreen restores the UI. Narrow screens use the same rail as a bottom sheet.
+
+### Studio pattern and renderer controls
+
+Cloud patterns is now a visible Studio dropdown, with a separate Slice & repeat settings disclosure. The planet renderer toggle mounts inside Studio, so both Hide and Clean view hide it along with the other controls.
+
+Returning from Hail Mary to Current / custom explicitly resets the styled form flag. Style transactions now honor the requested editor values before rebaking both cached renderers, and the shell renderer resolves presets from a saved baseline instead of layering them onto the previous preset. Each cached renderer retains its own render mode. The two methods still approximate cloud density differently; this fixes stale preset state rather than promising identical pixels.
+
+Validation: 158 Node checks pass, including a Hail Mary → custom → Hail Mary regression across both cached renderers. Browser checks verified the Studio dropdown, slice controls, renderer switching, and hiding the moved renderer toggle with both Hide and Clean view; no console errors were reported.

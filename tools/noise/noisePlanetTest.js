@@ -16,6 +16,7 @@ import {
   disposePlanetCloudLayer,
 } from '../clouds/planetClouds.js';
 import {stylePlanetPanel,planetDisclosure} from '../clouds/planetPanelUi.js';
+import {adoptField,createRailHead,createStudioCard,watchStatus} from '../clouds/cloudLabUi.js';
 import {randomizePlanetCloudConfig,randomizePlanetSceneConfig} from '../clouds/planetCloudRandomize.js';
 import {PLANET_CLOUD_STYLES,planetCloudSimStylePatch} from '../clouds/planetCloudSimStyles.js';
 import {REFERENCE_LOOK_PRESETS,SCULPTED_LOOK_IDS} from '../clouds/cloudLookPresets.js';
@@ -1958,16 +1959,7 @@ function makeNoiseLayerFromMode(mode, overrides = {}) {
 function createTweakPanel(options = {}) {
   const panel = document.createElement('section');
   panel.id = 'noise-planet-tweak-panel';
-  panel.style.cssText = [
-    'display:block',
-    'gap:4px',
-    'margin-top:5px',
-    'padding-top:5px',
-    'border-top:1px solid rgba(255,255,255,0.14)',
-    'color:#e8eefc',
-    'box-sizing:border-box',
-    'min-height:0',
-  ].join(';');
+  panel.style.cssText = 'display:block;min-height:0';
 
   const header = document.createElement('div');
   header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px';
@@ -1989,12 +1981,9 @@ function createTweakPanel(options = {}) {
   ].join(';');
 
   const tabRow = document.createElement('div');
-  tabRow.style.cssText = [
-    'display:flex',
-    'gap:4px',
-    'flex-wrap:wrap',
-    'padding:1px 0 3px',
-  ].join(';');
+  tabRow.className = 'cl-tabs';
+  tabRow.setAttribute('role', 'tablist');
+  tabRow.setAttribute('aria-label', 'Planet sections');
 
   const sectionHost = document.createElement('div');
   sectionHost.style.cssText = [
@@ -2227,6 +2216,7 @@ function createTweakPanel(options = {}) {
   function setPendingEdits() {
     pendingEdits = true;
     rebakeButton.textContent = 'Apply edits ·';
+    rebakeButton.parentElement?.setAttribute('data-dirty', 'true');
     status.textContent = 'Manual changes pending. Choose Apply edits to update the render.';
   }
 
@@ -2235,6 +2225,7 @@ function createTweakPanel(options = {}) {
     pendingEdits = false;
     pendingCloudTextures = false;
     rebakeButton.textContent = 'Apply edits';
+    rebakeButton.parentElement?.removeAttribute('data-dirty');
   }
 
   function scheduleCloudLiveApply(label, path = '', meta = {}) {
@@ -3647,17 +3638,39 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
       syncEditorPathInputs(clouds);
     },
   });
-  const presetPanel = document.createElement('div');
-  presetPanel.id = 'planet-presets';
-  const presetHint = document.createElement('span');
-  presetHint.textContent = 'Choose a preset to preview it immediately.';
-  presetHint.style.cssText = 'font-size:11px;color:#a6c4df';
   const randomCloudButton = document.createElement('button');
   randomCloudButton.type = 'button';
   randomCloudButton.id = 'planet-randomize-clouds';
   randomCloudButton.textContent = 'Randomize planet';
   randomCloudButton.title = 'New terrain, planet colors, atmosphere and cloud variation. Keeps cloud shape, lighting and motion; manual edits stay pending.';
-  presetPanel.append(planetCloudStyleSelect.wrap, quickColorPreset.wrap, randomCloudButton, presetHint);
+  // Studio: the artist path. Presets preview immediately; a look is the full
+  // editor snapshot, so it round-trips everything the advanced tabs can set.
+  const rendererSlot = document.createElement('div');
+  rendererSlot.id = 'planet-render-mode-slot';
+  const studio = createStudioCard({
+    presetFields: [
+      adoptField(planetCloudStyleSelect.wrap, { text: 'Cloud shape' }),
+      adoptField(quickColorPreset.wrap, { text: 'Lighting' }),
+    ],
+    actions: [{ button: randomCloudButton, label: 'Randomize planet' }],
+    extra: [rendererSlot],
+    look: {
+      name: () => `planet-${clouds.value?.cloudStyle || 'clouds'}`,
+      saveImage: async () => {
+        if (typeof options.captureImage !== 'function') throw new Error('The planet is still loading.');
+        return options.captureImage();
+      },
+      getLook: () => ({ app: 'cloud-lab', demo: 'planet', ...readSnapshot() }),
+      applyLook: async (data) => {
+        if (data?.demo && data.demo !== 'planet') throw new Error('That look is for the flat clouds demo.');
+        applySnapshot(data);
+        rebakeButton.click();
+      },
+    },
+  });
+  const presetPanel = studio.element;
+  presetPanel.id = 'planet-presets';
+  planetCloudStyleSelect.input.closest('.cl-select')?.classList.add('cl-select--lg');
   planetCloudStyleSelect.input.id = 'planet-shape-preset';
   quickColorPreset.input.id = 'planet-lighting-preset';
   registerEditorPathInput(clouds,'cloudStyle',planetCloudStyleSelect,'select');
@@ -3748,7 +3761,6 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
   );
 
   const sections = [
-    { key: 'overview', label: 'Overview', node: overview },
     { key: 'render', label: 'Render', node: renderSection },
     { key: 'planetNoise', label: 'Terrain', node: noiseSection },
     { key: 'mixer', label: 'Mixer', node: remixSection },
@@ -3764,15 +3776,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = section.label;
-    button.style.cssText = [
-      'border:1px solid rgba(255,255,255,0.16)',
-      'border-radius:8px',
-      'background:rgba(255,255,255,0.06)',
-      'color:#e8eefc',
-      'padding:3px 5px',
-      'font:9px system-ui,sans-serif',
-      'cursor:pointer',
-    ].join(';');
+    button.setAttribute('role', 'tab');
     button.addEventListener('click', () => setActiveSection(section.key));
     tabButtons[section.key] = button;
     tabRow.appendChild(button);
@@ -3784,8 +3788,8 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
       section.node.style.display = active ? 'block' : 'none';
       const button = tabButtons[section.key];
       if (button) {
-        button.style.background = active ? 'rgba(132,184,255,0.24)' : 'rgba(255,255,255,0.06)';
-        button.style.borderColor = active ? 'rgba(132,184,255,0.62)' : 'rgba(255,255,255,0.16)';
+        button.setAttribute('aria-selected', active ? 'true' : 'false');
+        button.classList.toggle('active', active);
       }
     }
     sectionHost.scrollTop = 0;
@@ -3845,9 +3849,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
   deleteLocalButton.type = 'button';
   deleteLocalButton.textContent = 'Delete local';
 
-  for (const button of [rebakeButton, randomButton, rebakeCloudButton, currentStackButton, resetButton, validateButton, exportButton, importButton, saveLocalButton, loadLocalButton, deleteLocalButton]) {
-    button.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:6px;background:rgba(255,255,255,0.08);color:#e8eefc;padding:4px 5px;font:10px system-ui,sans-serif;cursor:pointer;min-width:0';
-  }
+  rebakeButton.className = 'cl-btn cl-btn--primary cl-btn--sm';
 
   const localRow = document.createElement('div');
   localRow.style.cssText = [
@@ -3872,14 +3874,20 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
   status.id = 'planet-edit-status';
   status.setAttribute('role','status');
   status.textContent = 'Ready. Presets preview automatically; manual edits wait for Apply.';
-  status.style.cssText = 'font-size:10px;color:rgba(226,238,255,0.68);white-space:pre-wrap';
+  status.className = 'cl-applybar__status';
 
   actionRow.append(randomButton, rebakeCloudButton, currentStackButton, resetButton, validateButton, exportButton, importButton, saveLocalButton, loadLocalButton, deleteLocalButton);
   const editActions = document.createElement('div');
   editActions.id = 'planet-edit-actions';
-  editActions.append(rebakeButton, status);
-  body.append(presetPanel, tabRow, sectionHost,
-    planetDisclosure('Save, import & rebuild tools', actionRow, localRow), editActions);
+  editActions.className = 'cl-applybar cl-keep';
+  editActions.append(status, rebakeButton);
+  const advancedHead = document.createElement('div');
+  advancedHead.className = 'cl-advanced-head cl-keep';
+  advancedHead.innerHTML = '<h2 class="cl-section">Advanced</h2><span class="cl-hint">Edits wait for Apply</span>';
+  sectionHost.classList.add('cl-legacy');
+  const toolsDisclosure = planetDisclosure('Save, import & rebuild tools', actionRow, localRow);
+  toolsDisclosure.classList.add('cl-legacy');
+  body.append(presetPanel, advancedHead, tabRow, sectionHost, toolsDisclosure, editActions);
   for (const editor of [planetRender, planetNoise, planetStack, clouds]) {
     editor.textarea.addEventListener('input', () => {
       if (editor === clouds) pendingCloudTextures = true;
@@ -3887,7 +3895,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     });
   }
   header.append(title, collapse);
-  panel.append(header, body);
+  panel.append(body);
   setActiveSection('clouds');
 
   let collapsed = false;
@@ -4001,7 +4009,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     syncCloudLookInputs();
     syncAuroraLookInputs();
     syncCloudChannelInputs();
-    setActiveSection('overview');
+    setActiveSection('clouds');
   }
 
   const LOCAL_SNAPSHOT_KEY = 'noisePlanetTest:tweakSnapshots:v1';
@@ -4192,7 +4200,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     syncCloudLookInputs();
     syncAuroraLookInputs();
     syncCloudChannelInputs();
-    setActiveSection('overview');
+    setActiveSection('clouds');
   }
 
   return {
@@ -4299,27 +4307,8 @@ function createContainer(options = {}) {
   ].join(';');
 
   const hud = document.createElement('aside');
-  hud.style.cssText = [
-    'position:fixed',
-    'left:8px',
-    'top:8px',
-    'bottom:8px',
-    'z-index:5',
-    'width:clamp(340px, 32vw, 430px)',
-    'min-width:340px',
-    'max-width:430px',
-    'padding:6px',
-    'border:1px solid rgba(255,255,255,0.18)',
-    'border-radius:9px',
-    'background:rgba(4,8,18,0.80)',
-    'backdrop-filter:blur(10px)',
-    'box-shadow:0 12px 34px rgba(0,0,0,0.35)',
-    'display:block',
-    'min-height:0',
-    'overflow-y:auto',
-    'overflow-x:hidden',
-    'box-sizing:border-box',
-  ].join(';');
+  hud.className = 'cl-rail cl-root';
+  hud.setAttribute('aria-label', 'Planet controls');
 
   const title = document.createElement('div');
   title.textContent = 'Planet clouds';
@@ -4370,7 +4359,19 @@ function createContainer(options = {}) {
   const tweakPanel = createTweakPanel(options);
 
   actions.append(rerenderButton, disposeButton);
-  hud.append(title, status, tweakPanel.element, planetDisclosure('Scene diagnostics', info, actions));
+  const diagnostics = planetDisclosure('Scene diagnostics', info, actions);
+  diagnostics.classList.add('cl-legacy');
+  const head = createRailHead({
+    title: 'Planet clouds',
+    statusEl: status,
+    switcher: document.getElementById('cloud-demo-navigation'),
+    onToggle: () => hud.classList.toggle('is-collapsed'),
+  });
+  head.querySelector('.cl-rail__title').dataset.panelTitle = '';
+  watchStatus(status);
+  hud.append(head, tweakPanel.element);
+  const applyBar = tweakPanel.element.querySelector('#planet-edit-actions');
+  if (applyBar) applyBar.before(diagnostics); else hud.append(diagnostics);
   stylePlanetPanel(hud);
   container.append(canvas, hud);
   parent.appendChild(container);
@@ -4727,6 +4728,7 @@ function buildPlanetCloudConfig(runtime, result, seed, options = {}) {
     seed: config.seed ?? seed,
     cloudStyle:config.cloudStyle,
     cloudRenderMode:runtime.planetClouds?.activeMode || runtime.cloudRenderMode || config.cloudRenderMode || 'raymarch',
+    renderModeToggleTargetId:'planet-render-mode-slot',
     showCloudStyleControl:false,
     progressiveStartup:false,
     bootstrapFrames:0,
@@ -5055,6 +5057,11 @@ export async function noisePlanetTest(options = {}) {
     async () => new NoiseComputeBuilder(device, queue),
   );
   const { scene, camera, sun, sunSource, depthRenderer } = createScene(engine, ui.canvas, radius, mergedOptions);
+  // Studio "Save image": a full-resolution PNG of the current view, without the UI.
+  mergedOptions.captureImage = async () => {
+    const dataUrl = await BABYLON.Tools.CreateScreenshotAsync(engine, camera, { precision: 1 });
+    return (await fetch(dataUrl)).blob();
+  };
   const stars = addStars(scene, radius);
 
   const runtime = {

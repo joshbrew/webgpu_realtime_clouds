@@ -19436,6 +19436,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         respond(true, { ok: true });
         return;
       }
+      if (type === "captureFrame") {
+        if (!canvasMain || !device) throw new Error("The renderer is not ready yet.");
+        if (queue?.onSubmittedWorkDone) await queue.onSubmittedWorkDone();
+        const blob = await canvasMain.convertToBlob({ type: "image/png" });
+        respond(true, { blob, width: canvasMain.width, height: canvasMain.height });
+        return;
+      }
       if (type === "runFrame") {
         if (payload?.navigationFrame) await waitForLoopGpuBackpressure(0);
         if (payload?.tuning) mergeTuningPatch(payload.tuning);

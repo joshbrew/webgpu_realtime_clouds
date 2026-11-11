@@ -11,7 +11,8 @@ import { CLOUD_FIELD_QUALITIES, normalizeCloudFieldQuality, supportsCloudFieldQu
 import { REFERENCE_LOOK_PRESETS, PAINTERLY_LOOK_IDS, INK_LOOK_IDS } from './cloudLookPresets.js';
 import { installCloudNavigation } from './cloudNavigation.js';
 import { mountFrozenPatternControls } from './cloudFrozenPatternUi.js';
-import { frozenPatternPreset } from './cloudFrozenPattern.js';
+import { frozenPatternPreset, normalizeFrozenPattern } from './cloudFrozenPattern.js';
+import { installCloudLabTheme, adoptField, createRailHead, createStudioCard, createDisclosure, watchStatus, snapshotControls, applyControlSnapshot } from './cloudLabUi.js';
 
 let worker;
 let frozenPatternControls=null;
@@ -1317,6 +1318,166 @@ function createCloudQuickDock() {
   if(playback)dock.querySelector('#quick-playback-slot').appendChild(playback);
 }
 
+// ---- Studio: the simple artist path (preset → adjust → export) ----
+const STUDIO_QUALITIES = [["4", "Draft · fast"], ["2", "Good"], ["1", "Final · full resolution"]];
+const LOOK_FIRST_IDS = ["v-layer-preset", "v-grade", "v-cloud-shading"];
+let syncStudioQuality=()=>{};
+
+function isStudioBusy() {
+  return $("busyOverlay")?.style.display === "flex";
+}
+
+async function waitForStudioIdle(timeoutMs = 120000) {
+  const start = performance.now();
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  while (isStudioBusy() && performance.now() - start < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
+  if (isStudioBusy()) throw new Error("The render is still busy. Try opening the look again when it finishes.");
+}
+
+function flatLookControlFilter(node) {
+  // quick-* fields mirror v-*/c-el fields; Surroundings is the one exception.
+  if (node.id.startsWith("quick-") && node.id !== "quick-terrain") return true;
+  return node.id === "pass" || node.id === "slice" || !!node.closest("#frozen-pattern-panel, #flat-studio");
+}
+
+function readFlatLook() {
+  return {
+    app: "cloud-lab",
+    demo: "flat",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    preset: $("v-layer-preset")?.selectedOptions?.[0]?.textContent || preview.layerPreset || "custom",
+    frozenPattern: safeClone(preview.frozenPattern),
+    values: snapshotControls($("sidebar") || document.body, { exclude: flatLookControlFilter }),
+  };
+}
+
+async function applyFlatLook(look) {
+  if (look?.demo && look.demo !== "flat") throw new Error("That look is for the planet clouds demo.");
+  const values = look?.values || look;
+  if (!values || typeof values !== "object") throw new Error("No control values in that look.");
+  await waitForStudioIdle();
+  await applyControlSnapshot(values, { first: LOOK_FIRST_IDS, settle: () => waitForStudioIdle() });
+  await waitForStudioIdle();
+  if (look.frozenPattern) {
+    preview.frozenPattern = normalizeFrozenPattern(look.frozenPattern);
+    frozenPatternControls?.adoptScene();
+  }
+  // Seeds and noise settings only take effect after a rebake.
+  $("rebake-all")?.click();
+  await waitForStudioIdle();
+  populateCloudQuickDock();
+}
+
+async function captureFlatImage() {
+  try {
+    const res = await rpc("captureFrame");
+    if (res?.blob) return res.blob;
+  } catch (err) {
+    console.warn("worker capture failed; trying the page canvas", err);
+  }
+  const canvas = $("gpuCanvas");
+  return canvas ? new Promise((resolve) => canvas.toBlob(resolve, "image/png")) : null;
+}
+
+function createStudioQualityField() {
+  const range = $("quick-render-scale");
+  const label = document.createElement("label");
+  const select = document.createElement("select");
+  select.id = "studio-image-quality";
+  select.title = "Ray resolution for the render and saved image. Final traces one ray per pixel and is slower.";
+  for (const [value, text] of STUDIO_QUALITIES) select.append(new Option(text, value));
+  const custom = new Option("Custom", "custom");
+  custom.hidden = true;
+  select.append(custom);
+  const sync = () => {
+    const v = String(range?.value || "4");
+    const known = STUDIO_QUALITIES.some(([value]) => value === v);
+    custom.hidden = known;
+    custom.textContent = `Custom · ÷${v}`;
+    select.value = known ? v : "custom";
+  };
+  select.addEventListener("change", () => {
+    if (!range || select.value === "custom") return;
+    range.value = select.value;
+    range.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  range?.addEventListener("input", sync);
+  $("v-render-scale-divider")?.addEventListener("input", sync);
+  $("v-render-scale-divider")?.addEventListener("change", sync);
+  label.append(document.createTextNode("Image quality"), select);
+  sync();
+  return { field: adoptField(label, { text: "Image quality" }), sync };
+}
+
+function buildFlatStudio() {
+  const sidebar = $("sidebar"), dock = $("cloud-quick-dock");
+  if (!sidebar || !dock || $("flat-studio")) return;
+  const status = $("cloud-quick-status");
+  sidebar.classList.add("cl-rail", "cl-root", "cl-legacy");
+  sidebar.setAttribute("aria-label", "Cloud controls");
+
+  const head = createRailHead({
+    title: "Flat clouds",
+    statusEl: status,
+    switcher: $("cloud-demo-navigation"),
+    onToggle: () => sidebar.classList.toggle("is-collapsed"),
+  });
+  watchStatus(status);
+
+  const labelOf = (id) => $(id)?.closest("label");
+  const captionOf = (id) => { const c = $(id); c?.removeAttribute("style"); return c; };
+  const quality = createStudioQualityField();
+  syncStudioQuality=quality.sync;
+  const patternSlot = document.createElement('div');
+  patternSlot.id = 'flat-studio-patterns';
+  const studio = createStudioCard({
+    presetFields: [
+      adoptField(labelOf("quick-layer-preset"), { text: "Cloud preset" }),
+      patternSlot,
+      adoptField(labelOf("quick-grade"), { text: "Color grade" }),
+    ],
+    lookFields: [
+      adoptField(labelOf("quick-sun-height"), { caption: captionOf("quick-sun-height-label") }),
+      adoptField(labelOf("quick-cloud-scale"), { caption: captionOf("quick-cloud-scale-label") }),
+      adoptField(labelOf("quick-cloud-shading"), { text: "Shading" }),
+      quality.field,
+    ],
+    actions: [
+      { button: $("quick-render-button"), label: "Render" },
+      { button: $("quick-randomize-button"), label: "New variation" },
+    ],
+    extra: [$("quick-playback-slot")],
+    look: {
+      name: () => `clouds-${preview.layerPreset || "custom"}`,
+      saveImage: captureFlatImage,
+      getLook: readFlatLook,
+      applyLook: applyFlatLook,
+    },
+  });
+  studio.element.id = "flat-studio";
+  $("quick-layer-preset")?.closest(".cl-select")?.classList.add("cl-select--lg");
+
+  const tabs = dock.querySelector(".cloud-tabs");
+  tabs?.classList.add("cl-tabs");
+  tabs?.setAttribute("role", "tablist");
+  tabs?.querySelectorAll("[data-cloud-pass]").forEach((button) => button.setAttribute("role", "tab"));
+  dock.querySelector(".cloud-quick-title")?.setAttribute("hidden", "");
+
+  const scene = createDisclosure("Scene & quality", [dock], { id: "flat-scene-settings" });
+  const advancedHead = document.createElement("div");
+  advancedHead.className = "cl-advanced-head cl-keep";
+  advancedHead.innerHTML = '<h2 class="cl-section">Advanced</h2><span class="cl-hint">Textures, weather and tuning</span>';
+
+  sidebar.prepend(head);
+  head.after(studio.element);
+  studio.element.after(scene);
+  scene.after(advancedHead);
+  if (tabs) advancedHead.after(tabs);
+}
+
 function cloneOptions(fromId, toId) {
   const source = $(fromId);
   const target = $(toId);
@@ -1392,6 +1553,7 @@ function populateCloudQuickDock() {
   setFieldValue("quick-render-scale", scale);
   const scaleLabel = $("quick-render-scale-label");
   if (scaleLabel) scaleLabel.textContent = scale;
+  syncStudioQuality();
 }
 
 function updateCloudQuickStatus() {
@@ -1409,7 +1571,9 @@ function updateCloudQuickStatus() {
 function updateCloudQuickDockState() {
   const passValue = $("pass")?.value || "preview";
   document.querySelectorAll("[data-cloud-pass]").forEach((button) => {
-    button.classList.toggle("active", button.getAttribute("data-cloud-pass") === passValue);
+    const selected = button.getAttribute("data-cloud-pass") === passValue;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-selected", String(selected));
   });
   updateCloudQuickStatus();
   populateCloudQuickDock();
@@ -1420,7 +1584,7 @@ function wireCloudQuickDock() {
   if (!dock || dock.dataset.wired === "true") return;
   dock.dataset.wired = "true";
 
-  dock.querySelectorAll("[data-cloud-pass]").forEach((button) => {
+  document.querySelectorAll("[data-cloud-pass]").forEach((button) => {
     button.addEventListener("click", () => {
       const pass = button.getAttribute("data-cloud-pass") || "preview";
       const select = $("pass");
@@ -6072,6 +6236,8 @@ async function init() {
   injectPreviewLookControls();
   addCloudUiClasses();
   createCloudQuickDock();
+  installCloudLabTheme();
+  buildFlatStudio();
   installTextureSliceControls();
   organizeCloudPanels();
   removeLegacySliceArtifacts(document);
@@ -6470,7 +6636,7 @@ async function init() {
   populateCloudQuickDock();
   wireCloudQuickDock();
   frozenPatternControls=mountFrozenPatternControls({
-    parent:$('cloud-quick-dock'),getPattern:()=>preview.frozenPattern,
+    parent:$('flat-studio-patterns'),getPattern:()=>preview.frozenPattern,
       getSupported:()=>true,
       getCanFreeze:()=>readTuning().formType>0,
       getDimensions:()=>readTuning().formType>0?CLOUD_FIELD_QUALITIES[preview.fieldQuality||'balanced'].dimensions:[128,128,128],

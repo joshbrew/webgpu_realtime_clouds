@@ -4,7 +4,7 @@ import { CloudTimingReport } from './cloudTiming.js';
 import { CloudVolumeMips } from './cloudVolumeMips.js';
 import { PlanetCloudNoise } from './planetCloudNoise.js';
 import { advancePlanetCloudTime, planetCloudMotion, regeneratePlanetCloudWeather } from './planetCloudMotion.js';
-import { PLANET_CLOUD_STYLES, planetCloudStyleOptions } from './planetCloudStyles.js';
+import { PLANET_CLOUD_STYLES, planetCloudStyleOptions, resolvePlanetCloudStyleOptions } from './planetCloudStyles.js';
 export { PLANET_CLOUD_STYLES, planetCloudStyleOptions } from './planetCloudStyles.js';
 import {
   createPlanetCloudSurfaceLayer,
@@ -1417,7 +1417,9 @@ function queuePlanetCloudAlternatePreload(controller) {
 
 function createPlanetCloudToggleButton(controller) {
   if (!controller?.parent || controller.options.showRenderModeToggle === false) return null;
-  ensureToggleParentPosition(controller.parent);
+  const menuParent = controller.options.renderModeToggleTargetId && document.getElementById(controller.options.renderModeToggleTargetId);
+  const buttonParent = menuParent || controller.parent;
+  if (!menuParent) ensureToggleParentPosition(buttonParent);
   const button = document.createElement('button');
   button.type = 'button';
   button.className = controller.options.renderModeToggleClassName || 'planet-cloud-render-mode-toggle';
@@ -1436,6 +1438,10 @@ function createPlanetCloudToggleButton(controller) {
     cursor: 'pointer',
     backdropFilter: 'blur(8px)',
   });
+  if (menuParent) {
+    button.classList.add('cl-btn');
+    Object.assign(button.style, { position: 'static', width: '100%', backdropFilter: 'none' });
+  }
   button.addEventListener('click', async () => {
     try {
       await togglePlanetCloudRenderMode(controller);
@@ -1443,7 +1449,7 @@ function createPlanetCloudToggleButton(controller) {
       console.error('Failed to toggle planet cloud renderer:', error);
     }
   });
-  controller.parent.appendChild(button);
+  buttonParent.appendChild(button);
   controller.toggleButton = button;
   updatePlanetCloudToggleButton(controller);
   return button;
@@ -1477,37 +1483,38 @@ function createPlanetCloudStyleControl(layer) {
 
 // A deliberate one-time texture rebake, with the last complete image retained
 // until all maps are ready. Ordinary camera/sun/option changes still never bake.
-export async function setPlanetCloudStyle(layer, style) {
+export async function setPlanetCloudStyle(layer, style, overrides = {}) {
   if(!layer || layer.disposed)return null;
   const target=layer;
-  if(target._stylePromise){await target._stylePromise;return setPlanetCloudStyle(layer,style);}
-  const transaction=applyPlanetCloudStyle(layer,style);
+  if(target._stylePromise){await target._stylePromise;return setPlanetCloudStyle(layer,style,overrides);}
+  const transaction=applyPlanetCloudStyle(layer,style,overrides);
   target._stylePromise=transaction;
   try{return await transaction;}
   finally{if(target._stylePromise===transaction)target._stylePromise=null;}
 }
 
-async function applyPlanetCloudStyle(layer, style) {
+async function applyPlanetCloudStyle(layer, style, overrides = {}) {
   if (!layer || layer.disposed) return null;
   if(layer.kind === 'planet-cloud-render-toggle') {
     if(layer.switchPromise)await layer.switchPromise;
     // Keep cached peers coherent; returning to raymarch must not resurrect
     // an old weather map after editing the style in mesh mode.
-    for(const renderer of layer.renderers.values())await applyPlanetCloudStyle(renderer,style);
+    for(const renderer of layer.renderers.values())await applyPlanetCloudStyle(renderer,style,overrides);
     layer.options=mergePlain(layer.options,{...layer.activeLayer.options,cloudRenderMode:layer.activeMode});
     if(layer.styleControl)layer.styleControl.value=style;
     return layer.options;
   }
   const target=layer.activeLayer || layer;
-  if(target.kind==='mc33-shell')return setPlanetCloudSurfaceStyle(target,style);
+  if(target.kind==='mc33-shell')return setPlanetCloudSurfaceStyle(target,style,overrides);
   if(target.options.auroraMode) throw new Error('Cloud styles do not apply to aurora.');
-  const overrides=planetCloudStyleOptions(style,target.radius);
+  planetCloudStyleOptions(style,target.radius);
   if(target.refinementPromise) await target.refinementPromise;
   if(layer.disposed || target.disposed) return null;
   target._styleBaseOptions ||= clonePlain(target.options);
   const previous=target.options,previousKeys=target.resourceKeys,previousTextures=target.textures;
   const base=target._styleBaseOptions;
-  const next=mergePlain(base,{...overrides,cloudStyle:style,
+  const next=resolvePlanetCloudStyleOptions(base,style,target.radius,{...overrides,
+    cloudRenderMode:target.options.cloudRenderMode || 'raymarch',
     resourceNonce:`${base.resourceNonce}-style-${(target._styleRevision=(target._styleRevision||0)+1)}`});
   const nextKeys=Object.fromEntries(['weather','shape','detail','blue'].map(kind=>[kind,cloudResourceKey(next,kind,target.seed)]));
   target.styleChanging=true;

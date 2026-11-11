@@ -46,12 +46,15 @@ async function run(){
   pipelines.push({label,pipe:await device.createComputePipelineAsync({...desc,compute:{...desc.compute,module}})});
  }
  const dims=b._fieldResources.dimensions,bytes=dims[0]*dims[1]*dims[2]*8,read=device.createBuffer({size:bytes,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
+ // Readback is diagnostic-only; production caches retain their original usage.
+ const capture=device.createTexture({dimension:'3d',size:dims,format:'rgba16float',usage:GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.COPY_SRC});
+ const captureGroup=device.createBindGroup({layout:b._getFlatStageSetup().densityBgl,entries:[{binding:4,resource:{buffer:b._fieldParamsBuffer}},{binding:5,resource:capture.createView()}]});
  const half=v=>{const e=v>>10&31,m=v&1023;return e===0?m*2**-24:(1+m/1024)*2**(e-15);};
  const snapshot=async(pipe,time)=>{
   b.setNoiseTransforms({shapeOffsetWorld:[time*.04,0,0],detailOffsetWorld:[0,0,time*.004]});
   const enc=device.createCommandEncoder(),pass=enc.beginComputePass();b._encodeFlatFields(pass,[]);
-  pass.setPipeline(pipe);pass.setBindGroup(0,b._currentBg0);pass.setBindGroup(1,b._currentBg1);pass.setBindGroup(2,b._fieldDensityBg);pass.dispatchWorkgroups(...dims.map(n=>Math.ceil(n/4)));pass.end();
-  enc.copyTextureToBuffer({texture:b._fieldResources.density},{buffer:read,bytesPerRow:dims[0]*8,rowsPerImage:dims[1]},dims);device.queue.submit([enc.finish()]);
+  pass.setPipeline(pipe);pass.setBindGroup(0,b._currentBg0);pass.setBindGroup(1,b._currentBg1);pass.setBindGroup(2,captureGroup);pass.dispatchWorkgroups(...dims.map(n=>Math.ceil(n/4)));pass.end();
+  enc.copyTextureToBuffer({texture:capture},{buffer:read,bytesPerRow:dims[0]*8,rowsPerImage:dims[1]},dims);device.queue.submit([enc.finish()]);
   await read.mapAsync(GPUMapMode.READ);const raw=new Uint16Array(read.getMappedRange()),values=new Float32Array(raw.length/4);for(let i=0;i<values.length;i++)values[i]=half(raw[i*4]);read.unmap();return values;
  };
  const rows=[];

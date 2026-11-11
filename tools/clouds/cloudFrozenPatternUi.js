@@ -1,9 +1,10 @@
 import {FROZEN_PATTERN_PRESETS,normalizeFrozenPattern,frozenPatternPreset} from './cloudFrozenPattern.js';
+import {adoptField} from './cloudLabUi.js';
 export function mountFrozenPatternControls({parent,getPattern,onChange,getSupported,getCanFreeze,getSceneKey,getDimensions}){
- const panel=document.createElement('details');panel.id='frozen-pattern-panel';panel.style.cssText='grid-column:1/-1;padding:10px;border:1px solid #35455d;border-radius:9px;background:#111b2b';
- panel.innerHTML=`<summary style="cursor:pointer">Cloud patterns</summary>
-  <p style="font-size:11px;line-height:1.4">Choose one plane, a range, or spaced slices of the current renderer. Live slices keep evolving. Frozen volumes hold their shape and lighting, then scroll and repeat with Animate clouds.</p>
-  <label class="cloud-quick-field"><span>Pattern preset</span><select id="frozen-pattern-preset">${Object.entries(FROZEN_PATTERN_PRESETS).map(([key,p])=>`<option value="${key}">${p.label}</option>`).join('')}<option value="custom">Custom slice subset</option></select></label>
+ const panel=document.createElement('section');panel.id='frozen-pattern-panel';panel.style.cssText='display:grid;gap:8px;grid-column:1/-1';
+ panel.innerHTML=`<label class="cloud-quick-field"><span>Cloud patterns</span><select id="frozen-pattern-preset">${Object.entries(FROZEN_PATTERN_PRESETS).map(([key,p])=>`<option value="${key}">${p.label}</option>`).join('')}<option value="custom">Custom slice subset</option></select></label>
+  <details class="cl-disclosure"><summary>Slice & repeat settings</summary><div class="cl-disclosure__body" style="display:grid;gap:8px">
+  <p class="cl-hint">Choose one plane, a range, or spaced slices. Live slices keep evolving; frozen volumes hold their shape and lighting, then scroll and repeat with Animate clouds.</p>
   <label class="cloud-quick-field"><span>Freeze shape and lighting</span><input id="frozen-pattern-held" type="checkbox"></label>
   <div id="frozen-pattern-options" style="display:grid;gap:8px;margin-top:9px">
    <label class="cloud-quick-field"><span>Slice direction</span><select id="frozen-pattern-axis"><option value="0">Full volume</option><option value="2">Horizontal · Y</option><option value="1">Vertical · X</option><option value="3">Vertical · Z</option></select></label>
@@ -14,7 +15,8 @@ export function mountFrozenPatternControls({parent,getPattern,onChange,getSuppor
    <label class="cloud-quick-field"><span>Repeat size × <b id="frozen-pattern-repeat-label"></b></span><input id="frozen-pattern-repeat" type="range" min="0.25" max="8" step="0.05"></label>
    <label class="cloud-quick-field"><span>Scroll speed × <b id="frozen-pattern-speed-label"></b></span><input id="frozen-pattern-speed" type="range" min="0" max="8" step="0.1"></label>
    <button id="frozen-pattern-recapture" type="button">Capture current clouds again</button>
-  </div><small id="frozen-pattern-status" style="display:block;margin-top:8px;line-height:1.4"></small>`;
+  </div><small id="frozen-pattern-status" class="cl-hint"></small></div></details>`;
+ panel.querySelectorAll('label').forEach(label=>adoptField(label,{caption:label.querySelector('span')}));
  parent.append(panel);
  const el=id=>panel.querySelector('#frozen-pattern-'+id);let scene=getSceneKey();
  const refresh=()=>{

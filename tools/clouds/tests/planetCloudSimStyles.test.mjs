@@ -38,5 +38,5 @@ test('simulation config preserves explicit overrides and selects the compact sty
  assert.match(source,/await setPlanetCloudStyle\(runtime\.planetClouds,layerOptions\.cloudStyle,layerOptions\)/);
  assert.match(source,/label:'Cloud shape preset',type:'select'/);
  assert.match(source,/const \{aurora,textures,\.\.\.presetConfig\}=cloudConfigForStyle/);
- assert.match(source,/presetPanel\.append\(planetCloudStyleSelect\.wrap, quickColorPreset\.wrap/);
+ assert.match(source,/presetFields: \[\s*adoptField\(planetCloudStyleSelect\.wrap[^\n]*\n\s*adoptField\(quickColorPreset\.wrap/);
 });
