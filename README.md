@@ -16,6 +16,8 @@
 
 # Screenshots
 
+<img width="800" alt="Screenshot 2026-11-11 201334" src="https://github.com/user-attachments/assets/dc943078-e4b9-43e9-a336-acfa98ef7f34" />
+<img width="800"  alt="Screenshot 2026-11-11 233928" src="https://github.com/user-attachments/assets/dc9ac7fe-4f57-48d6-aaa2-1567522db793" />
 <img  width="800" alt="cloud-wide-fine-traversal" src="https://github.com/user-attachments/assets/969c6765-d9a4-479f-9d4e-159a7b8563c6" />
 <img  width="800" alt="Screenshot 2026-10-04 121156" src="https://github.com/user-attachments/assets/ee527653-a534-4d2a-a4bc-fb98e4d52d96" />
 <img width="800" alt="Screenshot 2026-10-18 012757" src="https://github.com/user-attachments/assets/d0d8c96e-4392-408c-9e79-f0dc9500dc4b" />
