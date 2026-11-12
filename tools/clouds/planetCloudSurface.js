@@ -211,8 +211,9 @@ async function bakeSurfaceTextures(layer, bakeOptions = {}) {
   }, 'gpu-submit');
   const maps = await layer.surfaceNoise.bake({key, seed:layer.seed,
     shapeSize:options.surfaceShapeSize ?? 64,
-    weatherWidth:options.surfaceMapWidth ?? 512, weatherHeight:options.surfaceMapHeight ?? 256,
-    weatherStyle:options.cloudStyle});
+    weatherWidth:options.cloudStyle === 'satellite_realistic' ? options.weatherWidth ?? 1536 : options.surfaceMapWidth ?? 512,
+    weatherHeight:options.cloudStyle === 'satellite_realistic' ? options.weatherHeight ?? 768 : options.surfaceMapHeight ?? 256,
+    weatherStyle:options.cloudStyle, weatherSystemScale:options.weatherSystemScale, shapeMips:true});
   if(layer.disposed){layer.surfaceNoise.release(key);throw new Error('MC33 layer disposed during texture preparation');}
   if (bakeOptions.waitForGpu) await layer.queue.onSubmittedWorkDone();
   layer.textures = {weatherView:maps.weatherView, shapeView:maps.shapeView, detailView:maps.shapeView};
@@ -512,6 +513,7 @@ function writeRenderParams(layer, cameraValues, sunDirection, elapsedSeconds) {
   const warp=planetCloudWarp(options,elapsedSeconds);
   view.setFloat32(148,warp.warpAmount,true);
   view.setFloat32(152,warp.warpPhase,true);
+  view.setFloat32(156, Number(!!layer.terrainDepthView), true);
   layer.queue.writeBuffer(layer.renderParamsBuffer, 0, buffer);
 }
 
@@ -539,7 +541,16 @@ function ensureContext(layer) {
       device: layer.device,
       format: layer.colorFormat,
       alphaMode: 'premultiplied',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT |
+        (layer.options.retainCloudOpacity ? GPUTextureUsage.COPY_SRC : 0),
     });
+    layer.opacityTexture?.destroy();
+    layer.opacityTexture = layer.options.retainCloudOpacity ? layer.device.createTexture({
+      label: 'Planet cloud surface opacity',
+      size: [width, height],
+      format: layer.colorFormat,
+      usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
+    }) : null;
     layer.depthTexture?.destroy?.();
     layer.msaaTexture?.destroy?.();
     layer.depthTexture = layer.device.createTexture({
@@ -654,6 +665,14 @@ function createBindGroups(layer) {
       { binding: 16, resource: { buffer: layer.projectionDispatchBuffer } },
     ],
   });
+  buildRenderBindGroup(layer);
+}
+
+function buildRenderBindGroup(layer) {
+  layer.emptyTerrainDepth ??= layer.device.createTexture({
+    size: [1, 1], format: 'rgba16float', usage: GPUTextureUsage.TEXTURE_BINDING,
+  });
+  layer.emptyTerrainDepthView ??= layer.emptyTerrainDepth.createView();
   layer.renderBindGroup = layer.device.createBindGroup({
     label: 'Planet cloud surface render bind group',
     layout: layer.pipelines.renderPipeline.getBindGroupLayout(0),
@@ -664,6 +683,7 @@ function createBindGroups(layer) {
       { binding: 3, resource: layer.textures.detailView },
       { binding: 4, resource: layer.sampler },
       { binding: 5, resource: layer.textures.weatherView },
+      { binding: 6, resource: layer.terrainDepthView || layer.emptyTerrainDepthView },
     ],
   });
 }
@@ -729,7 +749,8 @@ function encodeSurfaceCompute(layer, encoder, {
 }
 
 function encodeRenderSurface(layer, encoder) {
-  const currentView = layer.context.getCurrentTexture().createView();
+  const currentTexture = layer.context.getCurrentTexture();
+  const currentView = currentTexture.createView();
   const pass = encoder.beginRenderPass({
     label: 'Planet cloud surface render pass',
     colorAttachments: [{
@@ -750,6 +771,10 @@ function encodeRenderSurface(layer, encoder) {
   pass.setBindGroup(0, layer.renderBindGroup);
   pass.drawIndirect(layer.indirectBuffer, 0);
   pass.end();
+  if (layer.opacityTexture) {
+    encoder.copyTextureToTexture({ texture: currentTexture }, { texture: layer.opacityTexture },
+      [layer.contextWidth, layer.contextHeight]);
+  }
 }
 
 export async function createPlanetCloudSurfaceLayer({
@@ -760,6 +785,7 @@ export async function createPlanetCloudSurfaceLayer({
   sourceCanvas,
   getCameraState,
   getSunDir,
+  getTerrainDepth,
   radius = 50,
   atmosphereRadius = 68,
   options = {},
@@ -866,6 +892,7 @@ export async function createPlanetCloudSurfaceLayer({
       fovYDeg: 60,
       aspect: sourceCanvas.width / Math.max(sourceCanvas.height, 1),
     })),
+    getTerrainDepth,
     getSunDir: getSunDir || (() => [0.65, 0.37, -0.65]),
     angularCells: clamp(Math.floor(mergedOptions.surfaceAngularCells), 16, 256),
     radialCells: clamp(Math.floor(mergedOptions.surfaceRadialCells), 4, 64),
@@ -1182,6 +1209,11 @@ export async function updatePlanetCloudSurfaceLayer(layer, { forceExtract = fals
     : 1.0;
 
   const cameraValues = writeComputeParams(layer, camera, elapsedSeconds, fieldBlend);
+  const terrainDepthView = layer.getTerrainDepth?.(layer.contextWidth, layer.contextHeight);
+  if (layer.terrainDepthView !== terrainDepthView) {
+    layer.terrainDepthView = terrainDepthView;
+    buildRenderBindGroup(layer);
+  }
   writeRenderParams(layer, cameraValues, layer.getSunDir?.() || [0.65, 0.37, -0.65], elapsedSeconds);
 
   const destinationFieldIndex = updateField ? (layer.currentFieldIndex + 1) % 3 : layer.currentFieldIndex;
@@ -1326,5 +1358,7 @@ export function disposePlanetCloudSurfaceLayer(layer) {
   destroyGpuResources(layer);
   try { layer.depthTexture?.destroy?.(); } catch {}
   try { layer.msaaTexture?.destroy?.(); } catch {}
+  layer.emptyTerrainDepth?.destroy();
+  layer.opacityTexture?.destroy();
   try { layer.canvas?.remove?.(); } catch {}
 }

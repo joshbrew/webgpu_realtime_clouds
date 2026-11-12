@@ -4,7 +4,7 @@ import {readFile} from 'node:fs/promises';
 
 // Exercise the actual editor state transitions without creating terrain or
 // a GPU. The regressions here concern staged edits and asynchronous bakes.
-const source=await readFile(new URL('../../noise/noisePlanetTest.js',import.meta.url),'utf8');
+const source=await (Promise.all(['planetStudioPanel.js','noisePlanetTest.js'].map(file => readFile(new URL('../../noise/' + file,import.meta.url),'utf8'))).then(parts => parts.join('\n')));
 
 test('planet motion menu exposes staged warp controls and uses readable status labels',()=>{
  assert.match(source,/addCloudTransformControl\('motion.warpAmount', 'Warp amount'/);

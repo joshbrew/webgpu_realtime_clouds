@@ -19,7 +19,7 @@ test('randomizing a planet cloud field preserves every selected shape, palette a
 });
 
 test('a later preset wins while cloud randomization keeps manual edits pending',async()=>{
-  const source=await readFile(new URL('../../noise/noisePlanetTest.js',import.meta.url),'utf8');
+  const source=await (Promise.all(['planetStudioPanel.js','noisePlanetTest.js'].map(file => readFile(new URL('../../noise/' + file,import.meta.url),'utf8'))).then(parts => parts.join('\n')));
   const method=source.slice(source.indexOf('    async randomizeClouds('),source.indexOf('    syncRandomizedPlanet('))
     .trim().replace('async randomizeClouds(', 'async function randomizeClouds(').replace(/,$/,'');
   const live={cloudStyle:'cyclonic',motion:{warpSpeed:1},noise:{weather:{seed:1}}};
@@ -61,7 +61,7 @@ test('scene randomize varies terrain, palette and atmosphere while retaining the
 });
 
 test('randomized scene seeds synchronize without applying unrelated draft values',async()=>{
- const source=(await readFile(new URL('../../noise/noisePlanetTest.js',import.meta.url),'utf8')).replaceAll('\r\n','\n');
+ const source=(await (Promise.all(['planetStudioPanel.js','noisePlanetTest.js'].map(file => readFile(new URL('../../noise/' + file,import.meta.url),'utf8'))).then(parts => parts.join('\n')))).replaceAll('\r\n','\n');
  const method=source.slice(source.indexOf('    syncRandomizedPlanet('),source.indexOf('    async flushPresetPreview('))
   .trim().replace('syncRandomizedPlanet(', 'function syncRandomizedPlanet(').replace(/,$/,'');
  const editor=value=>({value,setValue(next){this.value=next}});

@@ -620,22 +620,23 @@ export class CloudComputeBuilder {
     // when it is > 1. Do not compile their large call graph for that case.
     const useFields = mode === 0 && this._dvTuning.getFloat32(240, true) > 0;
     const planetStyle = mode !== 0 && this._planetStyleMode === true && this._dvTuning.getFloat32(240, true) > 0.5 && (this._dvView?.getFloat32(92,true) ?? 1) <= 1.5;
-    const detailedLighting = !useFields && !planetStyle && this._dvTuning.getInt32(8, true) <= 1;
+    const sceneAurora = mode !== 0 && this._sceneAuroraMode === true;
+    const detailedLighting = !useFields && !planetStyle && !sceneAurora && this._dvTuning.getInt32(8, true) <= 1;
     const divider = Math.max(1, coarseFactor | 0);
     const scratchBytes = Math.max(1, Math.ceil((this.width || 1) / divider)) * Math.max(1, Math.ceil((this.height || 1) / divider)) * Math.max(1, this.layers || 1) * 32;
     const stagedResolve = mode === 0 && scratchBytes <= (this.device.limits?.maxStorageBufferBindingSize ?? 134217728);
     const frozen=useFields && this._frozenPattern?.enabled;
-    return mode | (customPos ? 4 : 0) | (writeRGB ? 8 : 0) | (detailedLighting ? 16 : 0) | (stagedResolve ? 32 : 0) | (useFields ? 64 : 0) | (planetStyle ? 128 : 0) | (frozen ? 256 : 0) | (mode===0 && this._frozenPattern?.axis>0 ? 512 : 0);
+    return mode | (customPos ? 4 : 0) | (writeRGB ? 8 : 0) | (detailedLighting ? 16 : 0) | (stagedResolve ? 32 : 0) | (useFields ? 64 : 0) | (planetStyle ? 128 : 0) | (frozen ? 256 : 0) | (mode===0 && this._frozenPattern?.axis>0 ? 512 : 0) | (sceneAurora ? 1024 : 0);
   }
 
   _computePipelineDescriptorForKey(key = this._currentComputeVariantKey()) {
     const mode = key & 3;
     const isSpherical = mode !== 0;
-    const entryPoint = (key & 128) ? "computeCloudPlanet" : isSpherical ? "computeCloudSphere" : "computeCloudBox";
+    const entryPoint = (key & 1024) ? "computeSceneAurora" : (key & 128) ? "computeCloudPlanet" : isSpherical ? "computeCloudSphere" : "computeCloudBox";
     return {
       layout: (key & 96) ? this._getFlatStageSetup().layout : this._computePipelineLayout,
       compute: {
-        module: (key & 128) ? this._getPlanetShaderModule() : (key & 64) ? this._getFieldShaderModule() : (key & 32) ? this._getStagedLayerShaderModule() : this.module,
+        module: (key & (128 | 1024)) ? this._getPlanetShaderModule() : (key & 64) ? this._getFieldShaderModule() : (key & 32) ? this._getStagedLayerShaderModule() : this.module,
         entryPoint,
         constants: {
           CLOUD_IS_SPHERICAL: isSpherical ? 1 : 0,
@@ -654,7 +655,7 @@ export class CloudComputeBuilder {
     };
   }
 
-  _beginComputePipelineTiming(key, async, entryPoint = (key & 128) ? "computeCloudPlanet" : (key & 3) ? "computeCloudSphere" : "computeCloudBox") {
+  _beginComputePipelineTiming(key, async, entryPoint = (key & 1024) ? "computeSceneAurora" : (key & 128) ? "computeCloudPlanet" : (key & 3) ? "computeCloudSphere" : "computeCloudBox") {
     const started = performance.now();
     const timing = {
       key,
@@ -788,8 +789,9 @@ export class CloudComputeBuilder {
     const mode = aurora || spherical ? 1 : 0;
     const fields = mode === 0 && formType > 0;
     const planetStyle = mode !== 0 && !aurora && planetStyleMode && formType > 0.5;
+    const sceneAurora = aurora && this._sceneAuroraMode === true;
     const frozen = fields && this._frozenPattern?.enabled;
-    const key = mode | (useCustomPos ? 4 : 0) | (writeRGB ? 8 : 0) | (!fields && !planetStyle && (sunStride | 0) <= 1 ? 16 : 0) | (mode === 0 ? 32 : 0) | (fields ? 64 : 0) | (planetStyle ? 128 : 0) | (frozen ? 256 : 0) | (mode===0 && this._frozenPattern?.axis > 0 ? 512 : 0);
+    const key = mode | (useCustomPos ? 4 : 0) | (writeRGB ? 8 : 0) | (!fields && !planetStyle && !sceneAurora && (sunStride | 0) <= 1 ? 16 : 0) | (mode === 0 ? 32 : 0) | (fields ? 64 : 0) | (planetStyle ? 128 : 0) | (frozen ? 256 : 0) | (mode===0 && this._frozenPattern?.axis>0 ? 512 : 0) | (sceneAurora ? 1024 : 0);
     const [pipeline] = await Promise.all([
       this._ensureComputePipelineForKeyAsync(key),
       (key & 32) ? this._ensureFlatStagePipelineAsync("resolveCloudFlat") : null,
@@ -1888,6 +1890,7 @@ export class CloudComputeBuilder {
   // -------------------- UBO setters --------------------
   setOptions(opts = {}) {
     if (typeof opts.planetStyleMode === 'boolean') this._planetStyleMode = opts.planetStyleMode;
+    if (typeof opts.sceneAuroraMode === 'boolean') this._sceneAuroraMode = opts.sceneAuroraMode;
     const s = this._state.options;
 
     if (_has(opts, "useCustomPos")) s.useCustomPos = !!opts.useCustomPos;
@@ -2371,9 +2374,14 @@ export class CloudComputeBuilder {
       viewExtraC = 0.0,
       aircraft = {},
       terrainEnabled = false,
+      terrainDepthView,
       cloudScale,
     } = opts;
 
+    if (terrainDepthView !== undefined && this._externalTerrainView !== terrainDepthView) {
+      this._externalTerrainView = terrainDepthView;
+      this._bg1Dirty = true;
+    }
     const dv = this._dvView;
 
     const norm = (v) => {
@@ -2417,7 +2425,7 @@ export class CloudComputeBuilder {
       f[0],
       f[1],
       f[2],
-      terrainEnabled && planetRadius <= 0 ? 1 : 0,
+      terrainDepthView || (terrainEnabled && planetRadius <= 0) ? 1 : 0,
       (fovYDeg * Math.PI) / 180,
       a,
       stepBase,
@@ -2820,7 +2828,7 @@ export class CloudComputeBuilder {
       this._getResId(this.historyPrevView || this._dummyHistoryPrevView),
       this._getResId(this.motionView || this._dummy2DMotionView),
       this._getResId(this.depthPrevView || this._dummy2DDepthView),
-      this._getResId(this._terrainView || this._dummy2DMotionView),
+      this._getResId(this._externalTerrainView || this._terrainView || this._dummy2DMotionView),
     ];
     return ids.join("|");
   }
@@ -2917,7 +2925,7 @@ export class CloudComputeBuilder {
         { binding: 11, resource: historyPrev },
         { binding: 13, resource: motionView },
         { binding: 15, resource: depthView },
-        { binding: 17, resource: this._terrainView || this._dummy2DMotionView },
+        { binding: 17, resource: this._externalTerrainView || this._terrainView || this._dummy2DMotionView },
       ],
     });
   }
@@ -3745,7 +3753,7 @@ export class CloudComputeBuilder {
   }
 
   _encodeTerrainPass(enc) {
-    if(!this._dvView || this._dvView.getFloat32(60,true)<.5){return;}
+    if(this._externalTerrainView || !this._dvView || this._dvView.getFloat32(60,true)<.5){return;}
     if(!this._terrainMesh){
       const {vertices,indices}=createTerrainMesh();
       const vertex=this.device.createBuffer({size:vertices.byteLength,usage:GPUBufferUsage.VERTEX|GPUBufferUsage.COPY_DST});

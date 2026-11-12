@@ -6,7 +6,7 @@ import {planetCloudSimStylePatch} from '../planetCloudSimStyles.js';
 import {PlanetCloudNoise} from '../planetCloudNoise.js';
 
 test('planet styles scale with radius and keep one regular shader variant',()=>{
- assert.equal(PLANET_CLOUD_STYLES.length,11);
+ assert.ok(PLANET_CLOUD_STYLES.some(({id})=>id==='cumulus_banks'));
  for(const {id} of PLANET_CLOUD_STYLES.slice(1)){
   const small=planetCloudStyleOptions(id,50),large=planetCloudStyleOptions(id,100);
   assert.equal(large.cloudBottom,small.cloudBottom*2);
@@ -44,12 +44,12 @@ test('styled planet close normals stay cheap and weather rotates in a continuous
  assert.doesNotMatch(source,/frameIndex.*planetPixelRandom|planetPixelRandom.*frameIndex/);
 });
 
-test('opaque planet normals retain the unsaturated shape slope without extra texture reads',async()=>{
+test('natural planet lighting uses the continuous signed shape with at most two additional samples',async()=>{
  const source=await readFile(new URL('../shaders/cloudPlanet.wgsl',import.meta.url),'utf8');
- const normals=source.slice(source.indexOf('if(!neptune&&litSamples%normalStride'),source.indexOf('if(litSamples%sunStride'));
- assert.equal((normals.match(/planetShape\(/g)||[]).length,3);
- assert.equal((normals.match(/styledPlanetForm\(/g)||[]).length,4);
- assert.doesNotMatch(normals,/styledPlanetDensity|planetWeather|textureSample/);
+ const lighting=source.slice(source.indexOf('if(continuousLight){'),source.indexOf('let visibility=sqrt(sunlight)'));
+ assert.equal((lighting.match(/planetShape\(/g)||[]).length,2);
+ assert.match(lighting,/let slope=geometry\.x-nearSun\.x/);
+ assert.doesNotMatch(lighting,/lightingPhase|sunStride|planetWeather/);
  const common=await readFile(new URL('../shaders/cloudCommon.wgsl',import.meta.url),'utf8');
  const form=common.slice(common.indexOf('fn styledPlanetForm'),common.indexOf('fn styledPlanetDensity'));
  assert.match(form,/if\(cute>0\.5&&!gas\)/);

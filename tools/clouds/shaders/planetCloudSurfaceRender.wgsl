@@ -24,7 +24,7 @@ struct RenderParams {
   weatherTime: f32,
   warpAmount: f32,
   warpPhase: f32,
-  _padding: f32,
+  terrainDepthEnabled: f32,
 }
 
 struct VertexOut {
@@ -40,6 +40,7 @@ struct VertexOut {
 @group(0) @binding(3) var detailTex: texture_3d<f32>;
 @group(0) @binding(4) var linearSampler: sampler;
 @group(0) @binding(5) var weatherTex: texture_2d_array<f32>;
+@group(0) @binding(6) var terrainDepth: texture_2d<f32>;
 
 const PI: f32 = 3.141592653589793;
 
@@ -89,7 +90,14 @@ fn segment_hits_planet(ro: vec3<f32>, point: vec3<f32>, radius: f32) -> bool {
 @fragment
 fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
   let occlusionRadius = max(params.planetRadius,params.terrainOcclusionRadius);
-  if (segment_hits_planet(params.camPos, input.worldPosition, occlusionRadius)) {
+  if (params.terrainDepthEnabled > 0.5) {
+    let dims = vec2<i32>(textureDimensions(terrainDepth));
+    let pixel = min(vec2<i32>(input.clipPosition.xy), dims - 1);
+    let distance = textureLoad(terrainDepth, pixel, 0).a;
+    if (distance > 0.0 && length(input.worldPosition - params.camPos) >= distance) {
+      discard;
+    }
+  } else if (segment_hits_planet(params.camPos, input.worldPosition, occlusionRadius)) {
     discard;
   }
 
@@ -112,13 +120,16 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
   let phase=params.evolutionPhase;
   let warp=vec3<f32>(sin(rawDomain.y*5.7+phase),sin(rawDomain.z*6.3-phase*.71),sin(rawDomain.x*5.1+phase*.47));
   let domain=rawDomain+vec3<f32>(.018,.011,-.014)*phase+warp*.055;
-  let detailSample0 = textureSampleLevel(detailTex,linearSampler,domain,0.0);
-  let detailSample1 = textureSampleLevel(detailTex,linearSampler,domain*2.17+vec3<f32>(0.31,0.19,0.43),0.0);
+  let detailSample0 = textureSampleGrad(detailTex,linearSampler,domain,dpdx(domain),dpdy(domain));
+  let detailSample1 = textureSampleGrad(detailTex,linearSampler,domain*2.17+vec3<f32>(0.31,0.19,0.43),
+    dpdx(domain)*2.17,dpdy(domain)*2.17);
   let baseNdotV = clamp(dot(baseNormal, viewDir), 0.0, 1.0);
   let detailFade = smoothstep(0.06, 0.30, baseNdotV);
   // Screen derivatives of continuous 3D noise give subtle hull breakup with
   // two filtered texture reads, no pole tangent switch or extra light march.
-  let bump=detailSample0.g*0.72+detailSample1.b*0.28;
+  let detailed = isDetailedCumulus(params.formType);
+  let fineWeight = select(select(0.28, 0.44, detailed), 0.58, isFineCumulus(params.formType));
+  let bump = mix(detailSample0.g, detailSample1.b, fineWeight);
   let px=dpdx(input.worldPosition);let py=dpdy(input.worldPosition);
   let rx=cross(py,baseNormal);let ry=cross(baseNormal,px);
   let determinant=dot(px,rx);
@@ -145,7 +156,7 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
   let backTransmission = pow(clamp(-nDotL, 0.0, 1.0), 1.5) * rim * transmissionGate * smoothstep(0.35, 0.85, viewSun);
   let fineNoise = mix(detailSample0.r, detailSample1.r, 0.34);
 
-  let warmLight = params.lightColor * vec3<f32>(1.03, 1.00, 0.94);
+  let warmLight = params.lightColor * select(vec3<f32>(1.03, 1.00, 0.94), vec3<f32>(1.01, 1.00, 0.99), detailed);
   let coolShadow = params.shadowColor;
   var body = coolShadow * (0.52 + params.ambient * 0.28);
   body = mix(body, warmLight, clamp(diffuse * 1.10, 0.0, 1.0));
@@ -162,7 +173,7 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
     let weather=textureSampleLevel(weatherTex,linearSampler,uv,0,0.0);
     body*=gasWeatherColor(weather,params.formType);
   }
-  body = body / (vec3<f32>(1.0) + body * 0.22);
+  body = body / (vec3<f32>(1.0) + body * select(0.22, 0.72, detailed));
   body = clamp(body, vec3<f32>(0.0), vec3<f32>(1.18));
 
   let alpha = clamp(params.opacity * (0.982 + litRim * 0.018), 0.0, 1.0);

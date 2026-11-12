@@ -16,7 +16,7 @@ test('cloud color picker preserves HDR brightness and scales hue independently',
 });
 
 test('planet colors/opacity are prominent, live-applied and synchronized after style switches', async () => {
-  const source = await readFile(new URL('../../noise/noisePlanetTest.js', import.meta.url),'utf8');
+  const source = await (Promise.all(['planetStudioPanel.js', 'noisePlanetTest.js'].map(file => readFile(new URL('../../noise/' + file, import.meta.url),'utf8'))).then(parts => parts.join('\n')));
   assert.match(source, /addQuickCloudColor\('params.frontLightColor', 'Lit'\)/);
   assert.match(source, /addQuickCloudColor\('params.shadowLightColor', 'Shadow'\)/);
   assert.match(source, /registerEditorPathInput\(clouds, path, color, 'colorVec3'\)/);

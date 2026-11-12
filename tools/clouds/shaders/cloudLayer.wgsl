@@ -166,7 +166,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
   let rd_camera = normalize(vec3<f32>(ndc.x * V.aspect * tanY, -ndc.y * tanY, -1.0));
   let rayRd = normalize(basisRight * rd_camera.x + basisUp * rd_camera.y - camFwd * rd_camera.z);
   var aircraft=sceneAircraft(rayRo,rayRd,V.aircraftPosition,V.right,V.up,V.fwd,V._v0,V._v1,V._v2,V.aircraftYaw,normalize(L.sunDir));
-  let worldTerrainDistance=cloudTerrainDepth(cloudTerrainTexture,jitteredUvPix,select(V._v3,0.0,sphericalCloudMode()));
+  let worldTerrainDistance=cloudTerrainDepth(cloudTerrainTexture,jitteredUvPix,V._v3);
   if(worldTerrainDistance<aircraft.distance){aircraft.distance=1000000.0;}
   let emptyRayColor=select(vec4<f32>(aircraft.color,1.0),vec4<f32>(0.0),aircraft.distance>=1000000.0);
 
@@ -234,7 +234,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     }
   }
 
-  t1=min(t1,terrainDistance);
+  t1=min(t1,max(0.0,terrainDistance - select(0.0,0.0005,sphericalCloudMode())));
   if(t0>=t1){storeLayerSample(pixI,emptyRayColor,0.0,temporalHistoryActive);return;}
   // Only cloud in front of the opaque hull contributes to its fogging.
   if(aircraft.distance<1000000.0){
@@ -784,7 +784,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     let auroraStepLimit = select(occStepLimit, max(occStepLimit, stepLen), auroraLayerMode());
     // A midpoint sample represents the interval that was actually sampled.
     // Expanding it afterwards skipped surface structure and painted comb bands.
-    let sampleStepLen = select(integrationStepLen, clamp(stepLen * stepBoost, TUNE.minStep, auroraStepLimit), sphericalCloudMode());
+    let sampleStepLen = select(integrationStepLen, min(t1 - t, clamp(stepLen * stepBoost, TUNE.minStep, auroraStepLimit)), sphericalCloudMode());
 
     if (densSmoothed > 0.00008) {
       if (auroraLayerMode()) {
@@ -983,6 +983,12 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
         let nightTint = C.shadowLightColor * 0.18;
         let dayTint = C.frontLightColor * mix_f(0.82, 1.08, spaceDay);
         lightCol *= mix_v3(nightTint, dayTint, spaceDay) * mix_f(0.18, 1.18, spaceDay);
+        if (V._v3 >= 0.5 && !auroraLayerMode()) {
+          let skyFill = mix_v3(vec3<f32>(0.26, 0.30, 0.36), C.shadowLightColor, 0.28);
+          lightCol = max(lightCol, skyFill * spaceDay);
+          let peak = max(lightCol.x, max(lightCol.y, lightCol.z));
+          lightCol /= 1.0 + 0.72 * max(peak - 0.65, 0.0);
+        }
 
         let limbRim = pow(1.0 - saturate(dot(shellN, viewDir)), 2.75) * smoothstep(-0.12, 0.38, sunDotShell);
         lightCol += C.sunColor * alpha * (limbRim * 0.12 + spaceTerminator * 0.035);

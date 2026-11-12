@@ -20,14 +20,14 @@ test('simulation nested controls use the exact radius-relative production preset
  assert.equal(planetCloudSimStylePatch('legacy').shell,undefined);
 });
 test('simulation config preserves explicit overrides and selects the compact style kernel',async()=>{
- const source=await readFile(new URL('../../noise/noisePlanetTest.js',import.meta.url),'utf8');
- const code=source.slice(source.indexOf('function buildPlanetCloudConfig'),source.indexOf('async function setupPlanetClouds'));
+ const source=await (Promise.all(['planetStudioPanel.js','noisePlanetTest.js'].map(file => readFile(new URL('../../noise/' + file,import.meta.url),'utf8'))).then(parts => parts.join('\n')));
+ const code=source.slice(source.indexOf('function buildPlanetCloudConfig'),source.indexOf('export { DEFAULT_SEGMENTS'));
  const legacy={enabled:true,shell:{cloudBottom:1,cloudTop:3,maxHalfHeight:.25},params:{globalDensity:1},tuning:{formType:0},motion:{offsets:{}},transforms:{shapeScale:.05},textures:{shapeSize:128}};
  const cfg=(style,radius)=>merge(legacy,planetCloudSimStylePatch(style,radius));
  const build=new Function('mergePlain','cloudConfigForStyle',code+';return buildPlanetCloudConfig')(merge,cfg);
  const result=build({}, {radius:100},123,{clouds:{cloudStyle:'diorama',params:{globalDensity:24}}});
  assert.equal(result.cloudOptions.cloudTop,22.5);assert.equal(result.cloudOptions.params.globalDensity,24);
- assert.equal(result.cloudOptions.tuning.formType,2);assert.equal(result.cloudOptions.transforms.shapeScale,.44);
+ assert.equal(result.cloudOptions.tuning.formType,2);assert.equal(result.cloudOptions.transforms.shapeScale,.86);
  assert.equal(result.cloudOptions.progressiveStartup,false);assert.equal(result.cloudOptions.cloudRenderMode,'raymarch');
  assert.equal(build({}, {radius:50},123).cloudOptions.cloudStyle,'realistic');
  assert.equal(build({}, {radius:50},123,{clouds:{cloudStyle:'hail_mary'}}).cloudOptions.surfaceOpacity,.72);

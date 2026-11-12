@@ -5,7 +5,7 @@ import {REFERENCE_LOOK_PRESETS,SCULPTED_LOOK_IDS} from '../cloudLookPresets.js';
 
 // Exercise the planet's actual palette converter without initializing terrain
 // or Babylon. Applying a look must preserve cloud anatomy and sampling budget.
-const source=await readFile(new URL('../../noise/noisePlanetTest.js',import.meta.url),'utf8');
+const source=await (Promise.all(['planetStudioPanel.js','noisePlanetTest.js'].map(file => readFile(new URL('../../noise/' + file,import.meta.url),'utf8'))).then(parts => parts.join('\n')));
 const registry=source.slice(source.indexOf('export const CLOUD_LIGHTING_COLOR_PRESETS'),source.indexOf('function makeFullNoiseLayer')).replaceAll('export const','const');
 const converter=source.slice(source.indexOf('function colorVec3FromPreset'),source.indexOf('function makeNoiseLayerFromMode'));
 const convert=new Function('REFERENCE_LOOK_PRESETS','SCULPTED_LOOK_IDS',registry+converter+'return cloudColorPresetToConfigPatch;')(REFERENCE_LOOK_PRESETS,SCULPTED_LOOK_IDS);

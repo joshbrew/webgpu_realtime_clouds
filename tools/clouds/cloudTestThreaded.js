@@ -133,7 +133,7 @@ const preview = {
   },
   renderScaleDivider: STARTUP_PROFILE.renderScaleDivider,
   temporalCellRate: STARTUP_PROFILE.temporalCellRate,
-  layerPreset: "rain_shelf",
+  layerPreset: "cumulonimbus_anvil",
   volumeShape: "box",
   gradeStyle: 46,
   cloudShading: "auto",
@@ -5378,11 +5378,11 @@ function populateAllModeSelects() {
 let savedWeatherScene=null, weatherCycleUIBusy=false;
 function weatherCycleConfig(enabled=$('weather-cycle-enabled')?.checked) {
   return {enabled,timeOfDay:$('weather-cycle-tod')?.checked!==false,
-    weatherSeconds:num('weather-cycle-minutes',7)*60,daySeconds:num('weather-cycle-day-minutes',3)*60,startHour:num('weather-cycle-hour',9)};
+    weatherSeconds:num('weather-cycle-minutes',1)*60,daySeconds:num('weather-cycle-day-minutes',1)*60,startHour:num('weather-cycle-hour',9)};
 }
-async function changeWeatherCycle(enabled) {
+async function changeWeatherCycle(enabled, { startup = false } = {}) {
   if(weatherCycleUIBusy) return;
-  const wasAnimating = animRunning;
+  const wasAnimating = startup || animRunning;
   weatherCycleUIBusy=true;
   const toggle=$('weather-cycle-enabled'), status=$('weather-cycle-status');
   toggle.disabled=true;
@@ -5398,7 +5398,9 @@ async function changeWeatherCycle(enabled) {
       status.textContent='Preparing cached weather maps…';
       // One coordinated shape/detail bake on entry, never a preset rebake per
       // weather transition. Manual controls are restored on exit.
-      await applyCloudLayerPreset('cumulonimbus_anvil',true);
+      if (!startup && preview.layerPreset !== 'cumulonimbus_anvil') {
+        await applyCloudLayerPreset('cumulonimbus_anvil', true);
+      }
       await rpc('stopLoop',{}); animRunning=false; stopVisualFpsTicker();
       setBusy(true,'Preparing weather cycle…');
       await rpc('setWeatherCycle',weatherCycleConfig(true));
@@ -6211,6 +6213,7 @@ function scheduleInitialBakeAndRender() {
         status.dataset.manual = "false";
         status.textContent = "Cloud preview ready";
       }
+      if ($('weather-cycle-enabled')?.checked) await changeWeatherCycle(true, { startup: true });
     } catch (err) {
       console.error("initial cloud bake/render failed", err);
       cloudFirstLoadTiming.mark("startup-failed", { error: String(err?.message || err) });

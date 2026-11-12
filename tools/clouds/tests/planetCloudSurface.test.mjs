@@ -59,7 +59,8 @@ test('MC33 sampling is periodic in all axes and retains an explicit closed shell
   const shader=await readFile(new URL('../shaders/planetCloudSurfaceMC33.wgsl',import.meta.url),'utf8');
   for(const axis of ['U','V','W'])assert.match(source,new RegExp(`addressMode${axis}: 'repeat'`));
   assert.match(shader,/shapeTex: texture_3d/);
-  assert.match(shader,/planetWarpPosition\(pos,params.shapeTime,params.formType,params.warpAmount,params.warpPhase\)\*params.worldScale/);
+  assert.match(shader,/let shape=surface_shape\(planetEvolvingDomain\(domain,params.detailTime\)\)/);
+  assert.match(shader,/shapePosition=planetWarpPosition\(pos,params.shapeTime,params.formType,params.warpAmount,params.warpPhase\)/);
   assert.match(shader,/min\(ph,1\.0-ph\)/);
   assert.doesNotMatch(shader,/legacy_scalar_field|cloud_blob_field/);
   assert.match(source,/surfaceOcclusionRadiusScale: 1\.0/);

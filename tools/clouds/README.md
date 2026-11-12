@@ -1,5 +1,8 @@
 # WebGPU Volumetric Clouds
 
+In **Planet Clouds → Terrain**, open **Terrain layers and region map** to edit the five noise layers and their shared region map. Each layer has its own algorithm, uniforms, and weights for mountains, canyons, granite, and volcanic terrain. **Copy look** and **Download .json** save the seed, planet settings, and terrain recipe with the cloud settings. **Open .json** followed by **Apply edits** restores the look.
+
+
 
 
 Realtime WebGPU volumetric clouds with GPU-baked procedural noise, compute-shader raymarching, temporal reprojection, large cloud boxes, and a browser tuning playground.

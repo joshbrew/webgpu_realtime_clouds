@@ -1,3 +1,6 @@
+import { CloudVolumeMips } from './cloudVolumeMips.js';
+import { planetBillowNoiseMode } from './planetCloudStyles.js';
+
 // Small, independent GPU stages. Periodic value FBM has a continuous
 // Cartesian domain, signed-safe integer hashing and no longitude seams.
 const SOURCE=`
@@ -87,15 +90,151 @@ fn stormWarp(direction:vec3<f32>,axis:vec3<f32>)->vec3<f32> {
  let p=(vec3<f32>(id)+0.5)/f32(settings.size.x);let seed=settings.seed.x;
  textureStore(shape,vec3<i32>(id),vec4<f32>(fbm(p,4,seed),fbm(p,8,seed+173u),fbm(p,16,seed+347u),fbm(p,2,seed+523u)));
 }
+// Periodic, jittered spheres give the towers rounded lobes. Their cost is
+// paid when baking the volume, shared by the raymarch and MC33 renderers.
+fn cellularDistances(p:vec3<f32>, period:i32, seed:u32)->vec2<f32> {
+ let domain=p*f32(period);
+ let cell=vec3<i32>(floor(domain));
+ let local=fract(domain);
+ let wrap=vec3<i32>(period);
+ var nearest=3.0;var second=3.0;
+ for(var z=-1;z<=1;z++){for(var y=-1;y<=1;y++){for(var x=-1;x<=1;x++){
+  let offset=vec3<i32>(x,y,z);
+  let site=((cell+offset)%wrap+wrap)%wrap;
+  let jitter=vec3<f32>(hash(site,seed),hash(site,seed+173u),hash(site,seed+347u));
+  let delta=vec3<f32>(offset)+mix(vec3<f32>(0.12),vec3<f32>(0.88),jitter)-local;
+  let distance=dot(delta,delta);
+  second=min(second,max(nearest,distance));
+  nearest=min(nearest,distance);
+ }}}
+ return sqrt(vec2<f32>(nearest,second));
+}
+@compute @workgroup_size(4,4,4) fn billowShapeNoise(@builtin(global_invocation_id) id:vec3<u32>) {
+ if(any(id>=vec3<u32>(settings.size.x))){return;}
+ let p=(vec3<f32>(id)+0.5)/f32(settings.size.x);
+ let seed=settings.seed.x;
+ let warp=vec3<f32>(value(p*3.0,3,seed+881u),value(p*3.0,3,seed+997u),value(p*3.0,3,seed+1223u));
+ let q=p+(warp-0.5)*0.13;
+ let mode=settings.seed.z;
+ let fine=mode>=2u;
+ // An integer shear preserves wrap continuity while stretching the wisp lobes.
+ let stretched=mode==4u || mode==5u;
+ var lobeDomain=select(q,vec3<f32>(q.x+2.0*q.y,q.y+q.z,q.z-q.y),stretched);
+ if(mode==12u){lobeDomain=vec3<f32>(q.x+q.y,q.y,q.z-q.x);}
+ let stormTowers=mode==10u || mode==14u || mode==15u;
+ let period=select(8,select(11,13,mode==3u || mode==13u || stormTowers),fine);
+ let body=fbm(q,3,seed);
+ let cellular=cellularDistances(lobeDomain,period,seed+173u);
+ let antiWorley=1.0-smoothstep(0.04,0.80,cellular.x*cellular.x);
+ let cellEdge=1.0-smoothstep(0.03,0.33,cellular.y-cellular.x);
+ let smoothField=fbm(lobeDomain,period-1,seed+319u);
+ var lobes=mix(smoothField,antiWorley,0.70);
+ if(mode==1u||mode==2u||mode==6u){lobes=mix(smoothField,antiWorley,0.37)-cellEdge*0.12;}
+ if(mode==4u){lobes=mix(smoothField,cellEdge,0.36);}
+ if(mode==5u){lobes=mix(smoothField,antiWorley,0.40)-cellEdge*0.24;}
+ if(mode==7u){lobes=mix(smoothField,antiWorley,0.15);}
+ if(mode==8u){lobes=mix(smoothField,antiWorley,0.54);}
+ if(mode==9u){lobes=mix(smoothField,antiWorley,0.20)-cellEdge*0.12;}
+ if(mode==13u){lobes=mix(smoothField,antiWorley,0.58)-cellEdge*0.085;}
+ if(mode==11u){lobes=mix(smoothField,antiWorley,0.40)-cellEdge*0.12;}
+ if(stormTowers){lobes=mix(smoothField,antiWorley,0.33)-cellEdge*0.16;}
+ if(mode==12u){lobes=smoothField*.69+cellEdge*.29-(antiWorley-.5)*.12;}
+ let detailPeriod=select(17,24,fine);
+ let finePeriod=select(31,43,fine && settings.size.x>=96u);
+ let coarseBillows=value(lobeDomain*f32(detailPeriod),detailPeriod,seed+347u);
+ let fineBillows=value(lobeDomain*f32(finePeriod),finePeriod,seed+1619u);
+ let detail=clamp(mix(coarseBillows,fineBillows,0.38)+(cellular.y-cellular.x-.21)*.16,0.0,1.0);
+ textureStore(shape,vec3<i32>(id),vec4<f32>(body,lobes,detail,fbm(q,2,seed+523u)));
+}
+// Project nearby seeded cells onto the local tangent plane. Each cell
+// supplies a narrow updraft and the wider, displaced outflow from that updraft.
+fn convectiveWeather(direction:vec3<f32>,seed:u32,mode:u32)->vec4<f32> {
+ let anvil=mode==10u;
+ let bank=mode==14u;
+ let frequency=select(select(11.0,8.0,bank),7.0,anvil);
+ let p=direction*frequency+sphereCurl(direction,seed+3191u)*.048;
+ let cell=vec3<i32>(floor(p));
+ let windAxis=vec3<f32>(.36,.48,.80);
+ let projectedWind=windAxis-direction*dot(direction,windAxis);
+ let wind=projectedWind/max(length(projectedWind),.18);
+ var core=0.0;
+ var outflow=0.0;
+ var height=0.0;
+ var base=0.0;
+ var weight=0.0;
+ for(var z=-1;z<=1;z++){for(var y=-1;y<=1;y++){for(var x=-1;x<=1;x++){
+  let site=cell+vec3<i32>(x,y,z);
+  let jitter=vec3<f32>(hash(site,seed),hash(site,seed+173u),hash(site,seed+347u));
+  let delta=p-(vec3<f32>(site)+.5+(jitter-.5)*.66);
+  let window=1.0-smoothstep(.76,1.12,max(max(abs(delta.x),abs(delta.y)),abs(delta.z)));
+  if(window<=0.0){continue;}
+  let radial=dot(delta,direction);
+  let activity=hash(site,seed+3797u);
+  let strength=window*(1.0-smoothstep(.24,.75,abs(radial)))*smoothstep(.13,.44,activity);
+  let lateral=delta-direction*radial;
+  let width=mix(.31,select(.60,.73,bank),jitter.x);
+  let rising=strength*(1.0-smoothstep(width*.24,width,length(lateral)));
+  let along=dot(lateral,wind);
+  let crosswind=lateral-wind*along;
+  let capDistance=length(vec2<f32>((along-width*.61)*.68,length(crosswind)*1.30));
+  let spread=strength*(1.0-smoothstep(width*.39,width*1.27,capDistance));
+  core=max(core,rising);
+  outflow=max(outflow,spread);
+  let localWeight=max(rising,spread*.65);
+  height+=localWeight*jitter.y;
+  base+=localWeight*jitter.z;
+  weight+=localWeight;
+ }}}
+ let texture=fbm(direction*.36+vec3<f32>(.41,.57,.38),27,seed+5711u);
+ let scoured=(texture-.52)*.20;
+ return vec4<f32>(clamp(core+scoured,0.0,1.0),height/max(weight,.001),
+   clamp(outflow+scoured,0.0,1.0),base/max(weight,.001));
+}
 @compute @workgroup_size(8,8,1) fn weatherNoise(@builtin(global_invocation_id) id:vec3<u32>) {
  if(any(id.xy>=settings.size.yz)){return;}
  let uv=(vec2<f32>(id.xy)+0.5)/vec2<f32>(settings.size.yz);
  // Same convention as sphereUVFromWorld: atan2(z,x)/(2*pi), no half-turn.
  let longitude=uv.x*6.283185307;let latitude=uv.y*3.141592654;
  let direction=vec3<f32>(sin(latitude)*cos(longitude),cos(latitude),sin(latitude)*sin(longitude));
+ let mode=settings.seed.z;
+ if(mode==10u || mode==14u || mode==15u){
+  textureStore(weather,vec2<i32>(id.xy),0,convectiveWeather(direction,settings.seed.x,mode));
+  return;
+ }
  let p=direction*0.36+vec3<f32>(0.5);let a=fbm(p,4,settings.seed.x+911u);let b=fbm(p,8,settings.seed.x+1237u);
  let hemisphere=smoothstep(-0.12,0.16,dot(direction,normalize(vec3<f32>(1.0,0.10,0.0)))+(b-0.5)*0.32);
- textureStore(weather,vec2<i32>(id.xy),0,vec4<f32>(a,b,0.0,hemisphere));
+ var crest=0.0;
+ if(settings.seed.z>=2u){
+  let drift=dot(direction,vec3<f32>(.37,.83,-.41))*42.0+12.0*a;
+  let wave=0.5+0.5*sin(drift+3.2*b);
+  crest=mix(b,wave,smoothstep(.38,.64,a)*.72);
+ }
+ var weatherSample=vec4<f32>(a,b,crest,hemisphere);
+ if(settings.seed.z==9u || settings.seed.z==13u){
+  let seed=settings.seed.x;
+  let flow=normalize(direction-sphereCurl(direction,seed+3191u)*.035);
+  let strips=vec3<f32>(dot(flow,vec3<f32>(.36,.48,.80))*.36,
+   dot(flow,vec3<f32>(-.80,.60,0))*1.12,dot(flow,vec3<f32>(-.48,-.64,.60))*.61);
+  let bands=fbm(strips+vec3<f32>(.51,.43,.69),9,seed+5849u);
+  let pockets=fbm(p,24,seed+8363u);
+  let system=fbm(p,6,seed+719u);
+  let deck=smoothstep(.34,.67,mix(bands,a,.36)+(system-.5)*.24);
+  let openings=smoothstep(.37,.66,mix(system,pockets,.27));
+  weatherSample=vec4<f32>(deck,pockets,b,openings);
+  if(settings.seed.z==13u){weatherSample=vec4<f32>(openings,b,pockets,system);}
+ }
+ if(settings.seed.z==11u){
+  let seed=settings.seed.x;
+  let climate=fbm(direction*.31+vec3<f32>(.46,.63,.27),3,seed+9131u);
+  let variety=clamp(.5+(climate-.5)*2.55,0.0,1.0);
+  let opening=smoothstep(.37,.64,a*.70+b*.30);
+  weatherSample=vec4<f32>(opening,b,crest,variety);
+ }
+ if(settings.seed.z==12u){
+  let ripples=.5+.5*sin(dot(direction,vec3<f32>(.27,.89,.36))*134.0+a*21.0+b*5.0);
+  weatherSample=vec4<f32>(a,b,mix(b,ripples,.44),hemisphere);
+ }
+ textureStore(weather,vec2<i32>(id.xy),0,weatherSample);
 }
 // Satellite cloud maps: connected fronts, curled storm shields and smaller
 // maritime clouds. This runs at setup or in-place regeneration, never per ray sample.
@@ -105,6 +244,27 @@ fn stormWarp(direction:vec3<f32>,axis:vec3<f32>)->vec3<f32> {
  let lon=uv.x*6.283185307;let lat=uv.y*3.141592654;
  let original=vec3<f32>(sin(lat)*cos(lon),cos(lat),sin(lat)*sin(lon));
  var d=original;let seed=settings.seed.x;let mode=settings.seed.y;
+ if(mode==7u){
+  // Work in a scaled Cartesian domain so the same front width covers a
+  // smaller angle on larger worlds. No repetition in latitude/longitude.
+  let scale=bitcast<f32>(settings.seed.w);
+  let world=original*scale;
+  let flow=world+sphereCurl(world,seed+3191u)*(.05/scale);
+  let p=flow*.34+vec3<f32>(.57,.39,.68);
+  let shield=fbm(p,5,seed+911u);
+  let banks=fbm(p,15,seed+5711u);
+  let cells=fbm(p,44,seed+1237u);
+  let oriented=vec3<f32>(dot(flow,vec3<f32>(.36,.48,.80))*.24,
+   dot(flow,vec3<f32>(-.80,.60,0))*.64,dot(flow,vec3<f32>(-.48,-.64,.60))*.40);
+  let streaks=fbm(oriented+vec3<f32>(.13,.61,.79),12,seed+2101u);
+  let front=smoothstep(.46,.70,streaks+(banks-.50)*.44);
+  let region=smoothstep(.33,.68,shield);
+  let low=smoothstep(.44,.68,cells)*smoothstep(.38,.62,banks);
+  let high=smoothstep(.53,.79,streaks+(cells-.5)*.35)*smoothstep(.36,.57,shield);
+  let cover=clamp(front*(.18+region*.67)+low*.37,0.0,1.0);
+  textureStore(weather,vec2<i32>(id.xy),0,vec4<f32>(cover,cells,banks,high));
+  return;
+ }
  var shields=0.0;
  for(var i=0u;i<6u;i++){
   let cell=vec3<i32>(i32(i),83,137);
@@ -139,7 +299,8 @@ fn stormWarp(direction:vec3<f32>,axis:vec3<f32>)->vec3<f32> {
  if(mode==6u){cover=clamp(front*openings*.36+sheets*.32+cells*.66+shields*.25,0.0,1.0);}
  // Fine erosion softens ragged rims while keeping large cloud shields intact.
  cover=clamp(cover+(fine-.5)*.16,0.0,1.0);
- textureStore(weather,vec2<i32>(id.xy),0,vec4<f32>(cover,fine,0.0,1.0));
+ let crest=mix(banks,0.5+0.5*sin(dot(d,vec3<f32>(.36,.48,.8))*46.0+8.0*broad),0.53);
+ textureStore(weather,vec2<i32>(id.xy),0,vec4<f32>(cover,fine,crest,1.0));
 }
 // Bake or regenerate the weather map; keep backtracing outside ray samples.
 @compute @workgroup_size(8,8,1) fn gasWeatherNoise(@builtin(global_invocation_id) id:vec3<u32>) {
@@ -236,28 +397,46 @@ export class PlanetCloudNoise {
    [this.shapePipeline,this.weatherPipeline]=await Promise.all(['shapeNoise','weatherNoise'].map(entryPoint=>d.createComputePipelineAsync({layout,compute:{module,entryPoint}})));
   })().catch(error=>{this.ready=null;throw error;});return this.ready;
  }
- async bake({key,seed=1,shapeSize=128,weatherWidth=1024,weatherHeight=512,gas=false,weatherStyle='legacy'}){
+ async bake({key,seed=1,shapeSize=128,weatherWidth=1024,weatherHeight=512,gas=false,weatherStyle='legacy',weatherSystemScale=1,shapeMips=false}){
   for(const size of [shapeSize,weatherWidth,weatherHeight])if(!Number.isInteger(size)||size<1)throw new RangeError('Planet noise dimensions must be positive integers');
   const gasMode=weatherStyle==='neptune'?2:weatherStyle==='hail_mary'?3:weatherStyle==='gas_giant'||gas?1:0;
-  const satelliteMode=weatherStyle==='satellite'?4:weatherStyle==='cyclonic'?5:weatherStyle==='trade_winds'?6:0;
+  const billowMode = planetBillowNoiseMode(weatherStyle);
+  const satelliteMode = billowMode === 6 || weatherStyle === 'satellite' ? 4
+   : weatherStyle === 'cyclonic' ? 5 : weatherStyle === 'trade_winds' ? 6 : weatherStyle === 'satellite_realistic' ? 7 : 0;
   gas=gasMode>0;
   await this.prepare();this.release(key);const d=this.device,usage=GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.TEXTURE_BINDING;
+  if (billowMode && !this.billowShapePipelineReady) {
+   this.billowShapePipelineReady = d.createComputePipelineAsync({
+    layout: this.pipelineLayout, compute: {module: this.module, entryPoint: 'billowShapeNoise'},
+   }).catch(error => { this.billowShapePipelineReady = null; throw error; });
+  }
+  const shapePipeline = billowMode ? await this.billowShapePipelineReady : this.shapePipeline;
   if(gas && !this.gasPipelineReady)this.gasPipelineReady=d.createComputePipelineAsync({layout:this.pipelineLayout,compute:{module:this.module,entryPoint:'gasWeatherNoise'}}).catch(error=>{this.gasPipelineReady=null;throw error;});
   if(satelliteMode && !this.satellitePipelineReady)this.satellitePipelineReady=d.createComputePipelineAsync({layout:this.pipelineLayout,compute:{module:this.module,entryPoint:'satelliteWeatherNoise'}}).catch(error=>{this.satellitePipelineReady=null;throw error;});
   const weatherPipeline=satelliteMode?await this.satellitePipelineReady:gas?await this.gasPipelineReady:this.weatherPipeline;
-  const shape=d.createTexture({dimension:'3d',size:[shapeSize,shapeSize,shapeSize],format:'rgba16float',usage});
+  const mipLevelCount = shapeMips ? 1 + Math.floor(Math.log2(shapeSize)) : 1;
+  if (mipLevelCount > 1) {
+   this.shapeMips ??= new CloudVolumeMips(d);
+   await this.shapeMips.prepare();
+  }
+  const shape=d.createTexture({dimension:'3d',size:[shapeSize,shapeSize,shapeSize],format:'rgba16float',mipLevelCount,usage});
   const weather=d.createTexture({size:[weatherWidth,weatherHeight,1],format:'rgba16float',usage});
   const uniform=d.createBuffer({size:32,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
   const shapeView=shape.createView(),weatherView=weather.createView({dimension:'2d-array'});
   const resource={shape,weather,shapeView,weatherView,uniform,weatherPipeline,
    weatherGroups:[Math.ceil(weatherWidth/8),Math.ceil(weatherHeight/8),1],phaseUniform:new Float32Array(1),weatherPhase:0};this.resources.set(key,resource);
-  d.queue.writeBuffer(uniform,0,new Uint32Array([shapeSize,weatherWidth,weatherHeight,0,seed>>>0,satelliteMode||gasMode,0,0]));
-  const group=d.createBindGroup({layout:this.layout,entries:[{binding:0,resource:{buffer:uniform}},{binding:1,resource:shapeView},{binding:2,resource:weatherView}]});
+  const settings=new Uint32Array([shapeSize,weatherWidth,weatherHeight,0,seed>>>0,satelliteMode||gasMode,billowMode,0]);
+  if(satelliteMode===7) new Float32Array(settings.buffer)[7]=Number.isFinite(weatherSystemScale)
+    ? Math.max(0.25,Math.min(weatherSystemScale,12)) : 1;
+  d.queue.writeBuffer(uniform,0,settings);
+  const group=d.createBindGroup({layout:this.layout,entries:[{binding:0,resource:{buffer:uniform}},{binding:1,resource:shape.createView({mipLevelCount:1})},{binding:2,resource:weatherView}]});
   resource.group=group;
   const encoder=d.createCommandEncoder();
-  for(const [pipeline,groups] of [[this.shapePipeline,[Math.ceil(shapeSize/4),Math.ceil(shapeSize/4),Math.ceil(shapeSize/4)]],[weatherPipeline,[Math.ceil(weatherWidth/8),Math.ceil(weatherHeight/8),1]]]){
+  for(const [pipeline,groups] of [[shapePipeline,[Math.ceil(shapeSize/4),Math.ceil(shapeSize/4),Math.ceil(shapeSize/4)]],[weatherPipeline,[Math.ceil(weatherWidth/8),Math.ceil(weatherHeight/8),1]]]){
    const pass=encoder.beginComputePass();pass.setPipeline(pipeline);pass.setBindGroup(0,group);pass.dispatchWorkgroups(...groups);pass.end();
-  }d.queue.submit([encoder.finish()]);return resource;
+  }
+  if (mipLevelCount > 1) this.shapeMips.encode(encoder, shape, shapeSize);
+  d.queue.submit([encoder.finish()]);return resource;
  }
  // Reuse the existing map/view/bindings. Shape/detail volumes are untouched.
  regenerateWeather(key,phase){

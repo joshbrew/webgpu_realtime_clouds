@@ -12,8 +12,8 @@ test('realistic mesh breaks periodic rows only in the cached field stage',()=>{
   assert.match(shape,/realistic_shape_domain\(q.zxy\)\*\.739/);
   assert.match(shape,/mix\(primary,secondary,\.26\)/);
   assert.doesNotMatch(shape,/fract|floor|atan2|camPos|for\s*\(/);
-  assert.match(shader,/surface_shape\(planetEvolvingDomain\(planetWarpPosition\(pos,params.shapeTime,params.formType,params.warpAmount,params.warpPhase\)\*params.worldScale,params.detailTime\)\)/);
-  const normal=shader.slice(shader.indexOf('fn smooth_world_normal'),shader.indexOf('fn planetEvolvingDomain'));
+  assert.match(shader,/planetWarpPosition\(pos,params.shapeTime,params.formType,params.warpAmount,params.warpPhase\)[\s\S]*?surface_shape\(planetEvolvingDomain\(domain,params.detailTime\)\)/);
+  const normal=shader.slice(shader.indexOf('fn smooth_world_normal'),shader.indexOf('fn realistic_shape_domain'));
   assert.doesNotMatch(normal,/surface_shape|textureSample/);
 });
 

@@ -4,7 +4,7 @@ import { CloudTimingReport } from './cloudTiming.js';
 import { CloudVolumeMips } from './cloudVolumeMips.js';
 import { PlanetCloudNoise } from './planetCloudNoise.js';
 import { advancePlanetCloudTime, planetCloudMotion, regeneratePlanetCloudWeather } from './planetCloudMotion.js';
-import { PLANET_CLOUD_STYLES, planetCloudStyleOptions, resolvePlanetCloudStyleOptions } from './planetCloudStyles.js';
+import { PLANET_CLOUD_STYLES, planetBillowNoiseMode, planetCloudStyleOptions, resolvePlanetCloudStyleOptions } from './planetCloudStyles.js';
 export { PLANET_CLOUD_STYLES, planetCloudStyleOptions } from './planetCloudStyles.js';
 import {
   createPlanetCloudSurfaceLayer,
@@ -1005,7 +1005,7 @@ struct OverlayParams {
   opacity: f32,
   alphaPower: f32,
   alphaCutoff: f32,
-  layerIndex: u32,
+  terrainComposite: f32,
 };
 @group(0) @binding(0) var samp: sampler;
 @group(0) @binding(1) var tex: texture_2d_array<f32>;
@@ -1041,7 +1041,7 @@ fn sampleCloudOverlay(uv: vec2<f32>) -> vec4<f32> {
     tex,
     samp,
     clamp(uv, vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999)),
-    i32(params.layerIndex),
+    0,
     0.0
   );
 }
@@ -1050,7 +1050,8 @@ fn overlayTapWeight(center: vec4<f32>, tap: vec4<f32>, spatialWeight: f32) -> f3
   let alphaDelta = abs(clamp(tap.a, 0.0, 1.0) - clamp(center.a, 0.0, 1.0));
   let lumaDelta = abs(overlayLuma(tap.rgb) - overlayLuma(center.rgb));
   let alphaWeight = exp(-alphaDelta * 11.0);
-  let lumaWeight = exp(-lumaDelta * 7.0);
+  // At high opacity most single-pixel luma variation is march noise.
+  let lumaWeight = exp(-lumaDelta * mix(7.0, 2.1, smoothstep(0.35, 0.87, min(center.a, tap.a))));
   let thinVisibility = mix(0.34, 1.0, smoothstep(0.002, 0.085, tap.a));
   return spatialWeight * alphaWeight * lumaWeight * thinVisibility;
 }
@@ -1077,7 +1078,8 @@ fn resolveCloudOverlay(uv: vec2<f32>) -> vec4<f32> {
   let a = clamp(center.a, 0.0, 1.0);
   let thinBand = 1.0 - smoothstep(0.10, 0.62, a);
   let edgeBand = smoothstep(0.006, 0.18, a) * (1.0 - smoothstep(0.42, 0.92, a));
-  let resolveAmount = clamp(0.18 * thinBand + 0.36 * edgeBand, 0.0, 0.54);
+  let body = smoothstep(0.18, 0.83, a);
+  let resolveAmount = min(0.24 * thinBand + 0.42 * edgeBand + 0.50 * body, 0.58);
   return mix(center, filtered, resolveAmount);
 }
 
@@ -1091,7 +1093,15 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let liftGate = smoothstep(0.025, 0.24, rawA);
   let premulLift = select(0.0, clamp(a / max(rawA, 0.001), 0.0, 1.55), rawA > 0.00001);
   let premulScale = mix(1.0, premulLift, liftGate);
-  let rgb = max(c.rgb, vec3<f32>(0.0)) * premulScale;
+  var rgb = max(c.rgb, vec3<f32>(0.0)) * premulScale;
+  if (params.terrainComposite > 0.5) {
+    // The scene canvas is display-encoded. Encode straight cloud radiance
+    // before premultiplying so shaded clouds don't composite as black patches.
+    let linear = clamp(c.rgb / max(rawA, 0.001), vec3<f32>(0.0), vec3<f32>(1.0));
+    let display = select(12.92 * linear, 1.055 * pow(linear, vec3<f32>(1.0 / 2.4)) - 0.055,
+      linear > vec3<f32>(0.0031308));
+    rgb = display * clamp(a, 0.0, 1.0);
+  }
   return vec4<f32>(rgb, clamp(a, 0.0, 1.0));
 }
 `,
@@ -1151,7 +1161,7 @@ function renderOverlay(layer) {
   const opacity = finiteNumber(layer.options.opacity, 1.0);
   const alphaPower = finiteNumber(layer.options.alphaPower, 0.82);
   const alphaCutoff = finiteNumber(layer.options.alphaCutoff, 0.0);
-  const data = new Float32Array([opacity, alphaPower, alphaCutoff, 0.0]);
+  const data = new Float32Array([opacity, alphaPower, alphaCutoff, Number(!!layer.getTerrainDepth && !layer.options.auroraMode)]);
   layer.device.queue.writeBuffer(layer.overlayParams, 0, data.buffer, data.byteOffset, data.byteLength);
 
   const sourceView = layer.cloudBuilder.outView;
@@ -1358,10 +1368,11 @@ function updatePlanetCloudToggleButton(controller) {
   const mode = controller.activeMode || 'raymarch';
   const alternateMode = mode === 'mc33-shell' ? 'raymarch' : 'mc33-shell';
   const alternateReady = !!controller?.renderers?.get?.(alternateMode) && !controller.renderers.get(alternateMode)?.disposed;
-  button.textContent = mode === 'mc33-shell' ? 'Clouds: MC33 Shell' : 'Clouds: Raymarch';
+  button.textContent = mode === 'mc33-shell' ? 'Cloud renderer: Voxel mesh (MC33)' : 'Cloud renderer: Raymarch';
+  button.setAttribute('aria-pressed', String(mode === 'mc33-shell'));
   button.dataset.cloudRenderMode = mode;
   button.dataset.alternateReady = alternateReady ? 'true' : 'false';
-  button.title = mode === 'mc33-shell' ? 'Switch planet clouds to raymarch' : 'Switch planet clouds to MC33 shell';
+  button.title = mode === 'mc33-shell' ? 'Switch to volumetric raymarch' : 'Switch to the MC33 mesh extracted from cloud voxels';
   button.disabled = !!controller.switchPromise;
   button.style.opacity = button.disabled ? '0.66' : '1';
 }
@@ -1516,7 +1527,8 @@ async function applyPlanetCloudStyle(layer, style, overrides = {}) {
   const next=resolvePlanetCloudStyleOptions(base,style,target.radius,{...overrides,
     cloudRenderMode:target.options.cloudRenderMode || 'raymarch',
     resourceNonce:`${base.resourceNonce}-style-${(target._styleRevision=(target._styleRevision||0)+1)}`});
-  const nextKeys=Object.fromEntries(['weather','shape','detail','blue'].map(kind=>[kind,cloudResourceKey(next,kind,target.seed)]));
+  const seed = Math.floor(overrides.seed ?? target.seed) >>> 0;
+  const nextKeys=Object.fromEntries(['weather','shape','detail','blue'].map(kind=>[kind,cloudResourceKey(next,kind,seed)]));
   target.styleChanging=true;
   const release=keys=>{
     if(!keys)return;
@@ -1527,7 +1539,7 @@ async function applyPlanetCloudStyle(layer, style, overrides = {}) {
     }
   };
   const transaction=(async()=>{
-    await bakePlanetCloudResources(target,{options:next});
+    await bakePlanetCloudResources(target,{options:next, seed});
     await target.queue.onSubmittedWorkDone();
     if(layer.disposed || target.disposed) {release(target.resourceKeys);return null;}
     target.options=next;configurePlanetCloudBuilder(target);
@@ -1536,6 +1548,7 @@ async function applyPlanetCloudStyle(layer, style, overrides = {}) {
     await target.cloudBuilder.ensureComputePipelineReadyAsync?.();
     if(layer.disposed || target.disposed) {release(target.resourceKeys);return null;}
     destroyCloudHistory(target);
+    target.seed = seed;
     if(layer.activeLayer) layer.options=mergePlain(layer.options,next);
     if(layer.styleControl)layer.styleControl.value=style;
     release(previousKeys);
@@ -1818,6 +1831,7 @@ export async function createPlanetCloudLayer({
   sourceCanvas,
   getCameraState = makeDefaultCameraState,
   getSunDir = () => [0.65, 0.37, -0.65],
+  getTerrainDepth,
   radius = 50,
   atmosphereRadius = 68,
   options = {},
@@ -1841,6 +1855,7 @@ export async function createPlanetCloudLayer({
       sourceCanvas,
       getCameraState,
       getSunDir,
+      getTerrainDepth,
       radius,
       atmosphereRadius,
       options,
@@ -1855,6 +1870,7 @@ export async function createPlanetCloudLayer({
       sourceCanvas,
       getCameraState,
       getSunDir,
+      getTerrainDepth,
       radius,
       atmosphereRadius,
       options,
@@ -1867,6 +1883,7 @@ export async function createPlanetCloudLayer({
       sourceCanvas,
       getCameraState,
       getSunDir,
+      getTerrainDepth,
       radius,
       atmosphereRadius,
       options,
@@ -2016,6 +2033,7 @@ export async function createPlanetCloudLayer({
     atmosphereRadius,
     getCameraState,
     getSunDir,
+    getTerrainDepth,
     canvasFormat: navigator.gpu.getPreferredCanvasFormat?.() || 'bgra8unorm',
     frame: 0,
     disposed: false,
@@ -2060,6 +2078,7 @@ export async function createPlanetCloudLayer({
     sourceCanvas,
     getCameraState,
     getSunDir,
+    getTerrainDepth,
     radius,
     atmosphereRadius,
     options,
@@ -2297,7 +2316,7 @@ export async function bakePlanetCloudResources(layer, bakeOptions = {}) {
   const opt = bakeOptions.options
     ? mergePlain(layer.options, bakeOptions.options)
     : layer.options;
-  const seed = layer.seed;
+  const seed = bakeOptions.seed ?? layer.seed;
   const quality = bakeOptions.quality || 'full';
   const timingReport = bakeOptions.timingReport || null;
   const waitForGpu = !!bakeOptions.waitForGpu;
@@ -2336,9 +2355,11 @@ export async function bakePlanetCloudResources(layer, bakeOptions = {}) {
   }, 'gpu-submit');
   publishTiming();
   const styled = !opt.auroraMode && opt.cloudStyle && opt.cloudStyle !== 'legacy';
+  const bakeShapeMips = planetBillowNoiseMode(opt.cloudStyle) !== 0;
   const styledMaps = styled ? await planetStyleNoise(nb).bake({key:resourceKeys.shape,seed,
     shapeSize:opt.shapeSize || DEFAULT_SHAPE_SIZE,weatherWidth:opt.weatherWidth || DEFAULT_WEATHER_WIDTH,
-    weatherHeight:opt.weatherHeight || DEFAULT_WEATHER_HEIGHT,weatherStyle:opt.cloudStyle}) : null;
+    weatherHeight:opt.weatherHeight || DEFAULT_WEATHER_HEIGHT,weatherStyle:opt.cloudStyle,
+    weatherSystemScale:opt.weatherSystemScale,shapeMips:bakeShapeMips}) : null;
   const weatherView = styledMaps?.weatherView || await bakeSphericalWeather(nb, {
     ...opt,
     seed,
@@ -2351,11 +2372,10 @@ export async function bakePlanetCloudResources(layer, bakeOptions = {}) {
     size: opt.shapeSize,
   }, 'gpu-submit');
   publishTiming();
-  const shape3DView = styledMaps ? await planetVolumeMips(nb).bake(styledMaps.shapeView,opt.shapeSize || DEFAULT_SHAPE_SIZE,resourceKeys.shape) : await bakeShapeVolume(nb, {
-    ...opt,
-    seed,
-    textureId: resourceKeys.shape,
-  });
+  const shapeSize = opt.shapeSize || DEFAULT_SHAPE_SIZE;
+  const shape3DView = styledMaps
+    ? (bakeShapeMips ? styledMaps.shapeView : await planetVolumeMips(nb).bake(styledMaps.shapeView,shapeSize,resourceKeys.shape))
+    : await bakeShapeVolume(nb, { ...opt, seed, textureId: resourceKeys.shape });
   const shapeGpuWaitMs = await finishStage(stage, { resourceKey: resourceKeys.shape });
 
   const detailStarted = performance.now();
@@ -2420,7 +2440,8 @@ export async function bakePlanetCloudResources(layer, bakeOptions = {}) {
 export function configurePlanetCloudBuilder(layer) {
   const opt = layer.options;
   const cb = layer.cloudBuilder;
-  cb.setOptions({ sphericalMode: true, planetStyleMode:!opt.auroraMode && !!opt.cloudStyle && opt.cloudStyle!=='legacy', writeRGB: true, outputChannel: 0, r1: 0.0 });
+  cb.setOptions({ sphericalMode: true, planetStyleMode:!opt.auroraMode && !!opt.cloudStyle && opt.cloudStyle!=='legacy',
+    sceneAuroraMode: !!(opt.auroraMode && layer.getTerrainDepth), writeRGB: true, outputChannel: 0, r1: 0.0 });
   cb.setParams(opt.params || PLANET_CLOUD_FLAT_LAB_PRESET.params);
   cb.setNoiseTransforms(opt.transforms || PLANET_CLOUD_FLAT_LAB_PRESET.transforms);
   cb.setTuning(resolvePlanetCloudTuning(opt));
@@ -2540,13 +2561,22 @@ export async function updatePlanetCloudLayer(layer) {
 
   const frameStride = Math.max(1, Math.floor(opt.updateEvery ?? 1));
   layer.frame += 1;
-  if ((layer.frame % frameStride) !== 0 && layer.cloudBuilder.outView) {
+  const cameraHistoryState = { camPos, fwd, right, up, fovYDeg, aspect };
+  const previousCamera = layer.lastCameraHistoryState;
+  const usesSceneDepth = opt.auroraMode && layer.getTerrainDepth;
+  // Even a small camera move can put a close ridge in front of open sky.
+  const cameraIsMoving = usesSceneDepth && previousCamera
+    ? distanceArray3(previousCamera.camPos, camPos) > 0 ||
+      distanceArray3(previousCamera.fwd, fwd) > 0 ||
+      distanceArray3(previousCamera.right, right) > 0 ||
+      distanceArray3(previousCamera.up, up) > 0 ||
+      previousCamera.fovYDeg !== fovYDeg || previousCamera.aspect !== aspect
+    : cameraMovedForHistory(previousCamera, cameraHistoryState, layer.radius, opt);
+  if (layer.frame % frameStride !== 0 && layer.cloudBuilder.outView &&
+      (!usesSceneDepth || (!cameraIsMoving && previousCamera))) {
     renderOverlay(layer);
     return;
   }
-
-  const cameraHistoryState = { camPos, fwd, right, up, fovYDeg, aspect };
-  const cameraIsMoving = cameraMovedForHistory(layer.lastCameraHistoryState, cameraHistoryState, layer.radius, opt);
   if (layer.wasCameraMoving && !cameraIsMoving && wantsCloudHistory(layer)) {
     layer.historyWarmupFrames = Math.max(1, layer.historyWarmupFrames | 0);
   }
@@ -2717,6 +2747,7 @@ export async function updatePlanetCloudLayer(layer) {
     viewExtraA: finiteNumber(auroraCap.halfAngleDeg, 12.0),
     viewExtraB: finiteNumber(auroraCap.featherDeg, 6.0),
     viewExtraC: auroraHemisphere,
+    terrainDepthView: layer.getTerrainDepth?.(outW, outH),
   });
   layer.cloudBuilder.setLight({ sunDir, camPos });
 

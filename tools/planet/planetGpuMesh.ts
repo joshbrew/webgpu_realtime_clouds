@@ -1,6 +1,6 @@
 import * as BABYLON from 'babylonjs';
 import { NoiseComputeBuilder } from '../noise/noiseCompute';
-import * as colorGrads from './planetGradients';
+import { PLANET_GRADIENTS as gradientChoices } from './planetGradientChoices.js';
 import { bakeStudioMap } from '../noise/studio-map.js';
 import { getPreset } from './studioPresets.js';
 
@@ -204,24 +204,7 @@ const DEFAULT_PARTITION_SKIRTS = true;
 const DEFAULT_PARTITION_SKIRT_DEPTH_FACTOR = 0.003;
 const DEFAULT_MIN_PARTITION_SKIRT_DEPTH = 0.08;
 
-export const PLANET_GRADIENTS: PlanetGradientChoice[] = [
-  { name: 'Utahish', colors: colorGrads.gradientColorsUtah as RGB[] },
-  { name: 'Volcanic', colors: colorGrads.gradientColorsVolcanic as RGB[] },
-  { name: 'Desert', colors: colorGrads.gradientColorsDesert as RGB[] },
-  { name: 'Forest', colors: colorGrads.gradientColorsForest as RGB[] },
-  { name: 'Oceanic', colors: colorGrads.gradientColorsOceanic as RGB[] },
-  { name: 'Ice', colors: colorGrads.gradientColorsIce as RGB[] },
-  { name: 'Ice2', colors: colorGrads.gradientColorsIce2 as RGB[] },
-  { name: 'Mars Dawn', colors: colorGrads.gradientColorsMarsDawn as RGB[] },
-  { name: 'Badlands', colors: colorGrads.gradientColorsBadlands as RGB[] },
-  { name: 'Jungle', colors: colorGrads.gradientColorsJungle as RGB[] },
-  { name: 'Toxic', colors: colorGrads.gradientColorsToxic as RGB[] },
-  { name: 'Lavender Dusk', colors: colorGrads.gradientColorsLavenderDusk as RGB[] },
-  { name: 'Gas Giant', colors: colorGrads.gradientColorsGasGiant as RGB[] },
-  { name: 'Copper Oxide', colors: colorGrads.gradientColorsCopperOxide as RGB[] },
-  { name: 'Moon Dust', colors: colorGrads.gradientColorsMoonDust as RGB[] },
-  { name: 'Coral Sea', colors: colorGrads.gradientColorsCoralSea as RGB[] },
-];
+export const PLANET_GRADIENTS = gradientChoices as PlanetGradientChoice[];
 
 export const noiseEntryPointByType: Record<string, string> = {
   PerlinNoise: 'computePerlin',

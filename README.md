@@ -162,10 +162,8 @@ must fail the G-channel continuity check. Production files are not modified.
 `http://127.0.0.1:8766/planet-gas` checks the production Hail Mary weather bake
 across three seeds, reports equal-area rust/thread coverage, and previews the
 shared palette on a diagnostic globe (not the full cloud/terrain compositor).
-For repeatable full-simulation review, start the same server with
-`PLANET_REVIEW=1` and open `/demo?demo=planet`. That test-only mode selects Hail
-Mary with terrain seed 17 and holds the sun fixed; ordinary production weather
-shaders, cloud animation, terrain and camera controls are unchanged.
+For repeatable cloud shader review, start the same server with `PLANET_REVIEW=1`
+and open `/demo?demo=planet`. The fixture selects Hail Mary with terrain seed 17.
 
 The check requires a WebGPU-capable browser and the project's existing esbuild
 installation (local esbuild or the Windows global tinybuild dependency).
@@ -1511,12 +1509,25 @@ Silvering now emphasizes thin backlit silhouettes near the sun in both flat
 lighting finishes; empty sky and opaque cloud interiors receive no added
 compositor rim. Fluffy scattering reuses cached sun visibility and edge distance.
 
-The shared demo entry now has bottom-right **Flat clouds / Planet clouds** links
-(`?demo=flat` or `?demo=planet`). A switch navigates to a fresh document so the
-previous GPU scene and worker are released. The planet simulation starts with
-the thin realistic raymarch style; choose the other styles at the top of its
-Clouds controls. Style switches prepare cloud maps without rebuilding terrain,
-update the nested settings editor, and preserve the independent aurora settings.
+Switch between **Flat clouds** and **Planet clouds** in the demo. Planet clouds uses the full
+[Marching Cubes Planet Approach](https://github.com/joshbrew/MarchingCubes33_DynamicLODs)
+terrain, atmosphere and flight controls. Choose **Low flyover** or **Near surface** to fly below the cloud deck.
+Use WASD to move, Space/C to climb or descend and right drag to look around.
+Change shape, lighting, motion and quality in **Clouds**, edit the volume textures in **Cloud noise**,
+or change the mesh LOD and terrain noise in **Terrain**. Switch between the volumetric raymarcher
+and **Voxel mesh (MC33)** from the Studio card. The voxel renderer extracts a mesh
+from the 3D density field on the GPU and reuses it between updates. Try **Detailed
+cloud towers** for tall, dense banks. **Broken cumulus banks**, **Fair-weather puffs**
+and **Wind-swept wisps** add finer detail with more open sky. Try **Frontal wave
+bands** or **Altocumulus ripples** for wave-shaped cloud tops. **Mixed weather
+systems** blends twelve cloud profiles across the planet with a seeded, moving
+weather map. **Shape evolution speed** controls how quickly the billows grow and
+break apart. **Show aurora** toggles the polar curtains.
+Clouds and aurora use the planet depth during flyovers.
+
+To refresh the shared terrain module, run `npm run build` in Marching Cubes and copy its
+`dist/planet-approach.esm.js` to `tools/planet/planet-approach.esm.js` here, then rebuild.
+The [WebGPU Noise Playground](https://webgpunoise.netlify.app/) hosts the **Erosion terrain** demo.
 
 - Thin realistic layer (`realistic`)
 - Big diorama clouds (`diorama`)

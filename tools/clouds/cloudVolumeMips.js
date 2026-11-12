@@ -78,9 +78,18 @@ export class CloudVolumeMips {
       this.resources.set(key, resource);
     }
     const encoder = device.createCommandEncoder({ label: 'planet-noise-mip-bake' });
-    for (let mip = 0; mip < levels; mip++) {
-      const src = mip ? resource.texture.createView({ baseMipLevel: mip - 1, mipLevelCount: 1 }) : view;
-      const dst = resource.texture.createView({ baseMipLevel: mip, mipLevelCount: 1 });
+    this.encode(encoder, resource.texture, size, view);
+    device.queue.submit([encoder.finish()]);
+    return resource.view;
+  }
+
+  // With a source view, copy level zero. Otherwise it was baked in place.
+  encode(encoder, texture, size, sourceView = null) {
+    const device = this.device;
+    const levels = 1 + Math.floor(Math.log2(size));
+    for (let mip = sourceView ? 0 : 1; mip < levels; mip++) {
+      const src = mip ? texture.createView({ baseMipLevel: mip - 1, mipLevelCount: 1 }) : sourceView;
+      const dst = texture.createView({ baseMipLevel: mip, mipLevelCount: 1 });
       const group = device.createBindGroup({ layout: this.layout, entries: [
         { binding: 0, resource: src }, { binding: 1, resource: dst },
       ] });
@@ -91,8 +100,6 @@ export class CloudVolumeMips {
       pass.dispatchWorkgroups(groups, groups, groups);
       pass.end();
     }
-    device.queue.submit([encoder.finish()]);
-    return resource.view;
   }
 
   release(key) {

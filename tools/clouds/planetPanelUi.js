@@ -1,8 +1,8 @@
 // Planet rail specifics. The shared look lives in cloudLabUi.js; this only
 // pins the apply bar to the bottom of the planet rail and sizes the
 // advanced editor grids for the 360px rail.
-export function stylePlanetPanel(hud) {
-  hud.id = 'planet-controls';
+export function stylePlanetPanel(hud, id = 'planet-controls') {
+  hud.id = id;
   const style = document.createElement('style');
   style.textContent = `
     #planet-controls #planet-edit-actions { position:sticky; bottom:calc(-1 * var(--space-5)); z-index:2;
@@ -12,6 +12,7 @@ export function stylePlanetPanel(hud) {
     #planet-controls .cl-disclosure + .cl-disclosure, #planet-controls .cl-legacy .cl-disclosure { margin-top:var(--space-4); }
     #planet-controls .cl-legacy label { gap:var(--space-2) !important; }
   `;
+  style.textContent = style.textContent.replaceAll('#planet-controls', '#' + id);
   hud.prepend(style);
 }
 

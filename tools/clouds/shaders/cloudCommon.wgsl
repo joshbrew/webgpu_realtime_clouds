@@ -715,10 +715,14 @@ fn intersectSphericalCloudShell(roWorld: vec3<f32>, rd: vec3<f32>) -> vec2<f32> 
   var t1 = outerHit.y;
 
   let innerHit = intersectSphere_robust(ro, rd, radii.x);
-  if (innerHit.x <= innerHit.y && innerHit.x > 0.0) {
-    // Treat the planet and the lower atmosphere as opaque, so far-side clouds do
-    // not draw through the planet.
-    t1 = min(t1, innerHit.x);
+  if (innerHit.x <= innerHit.y) {
+    if (innerHit.x > 0.0) {
+      // March the near half of the cloud shell. Terrain clips this segment further.
+      t1 = min(t1, innerHit.x);
+    } else if (V._v3 >= 0.5 && innerHit.y > 0.0 && dot(ro, ro) < radii.x * radii.x) {
+      // Surface cameras below the cloud deck can skip the clear air entirely.
+      t0 = max(t0, innerHit.y);
+    }
   }
 
   if (t0 >= t1) {
@@ -727,6 +731,23 @@ fn intersectSphericalCloudShell(roWorld: vec3<f32>, rd: vec3<f32>) -> vec2<f32> 
   return vec2<f32>(t0, t1);
 }
 
+// A ray can meet the shell twice, with a clear segment between them.
+// Preserve both visible intervals at the limb, then clip them against terrain.
+fn sceneCloudIntervals(ro:vec3<f32>, rd:vec3<f32>, limit:f32) -> vec4<f32> {
+ return sceneShellIntervals(ro,rd,limit,shellNominalRadii());
+}
+fn sceneShellIntervals(ro:vec3<f32>, rd:vec3<f32>, limit:f32, radii:vec2<f32>) -> vec4<f32> {
+ let relative=ro-B.center;
+ let outer=intersectSphere_robust(relative,rd,radii.y);
+ let start=max(outer.x,0.0);
+ let end=min(outer.y,limit);
+ if(end<=start){return vec4<f32>(0.0);}
+ let inner=intersectSphere_robust(relative,rd,radii.x);
+ if(inner.x>=inner.y||inner.y<=start||inner.x>=end){return vec4<f32>(start,end,end,end);}
+ let nearEnd=clamp(inner.x,start,end);
+ let farStart=clamp(inner.y,nearEnd,end);
+ return vec4<f32>(start,nearEnd,farStart,end);
+}
 fn intersectSphericalCloudShellView(roWorld: vec3<f32>, rd: vec3<f32>) -> vec2<f32> {
   var hit = intersectSphericalCloudShell(roWorld, rd);
   if (hit.x > hit.y) {
@@ -1193,7 +1214,10 @@ fn sampleDetailRGB(pos: vec3<f32>, ph: f32, lod: f32) -> vec3<f32> {
 }
 
 fn auroraRibbonUVW(pos: vec3<f32>, ph: f32, offsetWorld: vec3<f32>, scaleBase: f32) -> vec3<f32> {
-  let uv = auroraAnimatedUVFromWorld(pos);
+  return auroraRibbonUVWFromUV(auroraAnimatedUVFromWorld(pos), ph, offsetWorld, scaleBase);
+}
+
+fn auroraRibbonUVWFromUV(uv: vec2<f32>, ph: f32, offsetWorld: vec3<f32>, scaleBase: f32) -> vec3<f32> {
   let phs = saturate(ph);
   let drift = vec2<f32>(
     offsetWorld.x * 0.055 + offsetWorld.z * 0.021,
@@ -1645,8 +1669,6 @@ fn styledPlanetForm(ph: f32, wm: vec4<f32>, s: vec4<f32>) -> vec2<f32> {
   // Smooth volumetric FBM, not a thresholded Worley edge texture extruded
   // through a shell. Broad bands form the mass, fine erosion only the rim.
   var mass = select(s.r * 0.72 + s.g * 0.20 + s.b * 0.08, 0.58 + wm.a * 0.18 + (s.g-0.5)*0.12, gas);
-  // Satellite coverage is a connected weather field, with 3D billows at its rim.
-  if(TUNE.formType>1.2 && TUNE.formType<1.5){mass=0.29+wm.r*0.45+(s.r-0.5)*0.12+(s.g-0.5)*0.04;}
   let lower = smoothstep(0.025, mix_f(0.16, 0.22, cute), ph);
   let summit = clamp(0.78 + (s.a - 0.5) * mix_f(0.24, 0.42, cute), 0.48, 0.97);
   let upper = 1.0 - smoothstep(summit - 0.28, summit, ph);
@@ -1665,8 +1687,12 @@ fn styledPlanetForm(ph: f32, wm: vec4<f32>, s: vec4<f32>) -> vec2<f32> {
 
 fn styledPlanetDensity(ph: f32, wm: vec4<f32>, s: vec4<f32>, erosion: f32) -> f32 {
   if (ph < 0.0 || ph > 1.0 || wm.b > 1.0) { return 0.0; }
+  return styledPlanetDensityFromForm(styledPlanetForm(ph,wm,s), erosion);
+}
+
+fn styledPlanetDensityFromForm(geometry: vec2<f32>, erosion: f32) -> f32 {
   let cute = saturate(TUNE.formType - 1.0);
-  let geometry=styledPlanetForm(ph,wm,s);let form=geometry.x;
+  let form = geometry.x;
   let skin = 1.0 - smoothstep(0.04, 0.16, form);
   let density = smoothstep(-0.018, mix_f(0.18, 0.085, cute), form - erosion * skin);
   return density * geometry.y * smoothstep(0.0, 0.10, C.globalCoverage) * max(C.globalDensity * 10.0, 0.0);
@@ -1865,14 +1891,14 @@ fn densityWeatherProxy(ph: f32, wm: vec4<f32>) -> f32 {
 }
 
 fn auroraCurtainDensity(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>, pos: vec3<f32>) -> f32 {
-  if (ph < 0.0) { return 0.0; }
-  if (wm.b > 1.0) { return 0.0; }
-
-  let phs = saturate(ph);
   let cap = auroraCapMask(pos);
   if (cap <= 0.0001) { return 0.0; }
+  return auroraCurtainDensityAtUV(ph, wm, s, det, cap, auroraAnimatedUVFromWorld(pos));
+}
 
-  let uv = auroraAnimatedUVFromWorld(pos);
+fn auroraCurtainDensityAtUV(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>, cap: f32, uv: vec2<f32>) -> f32 {
+  if (ph < 0.0 || wm.b > 1.0) { return 0.0; }
+  let phs = saturate(ph);
   let broadWeather = saturate(wm.r * 0.60 + wm.g * 0.40);
   let weatherGate = smoothstep(0.30, 0.78, broadWeather);
   let shellBand = smoothstep(0.035, 0.18, phs) * (1.0 - smoothstep(0.82, 1.0, phs));
@@ -1913,8 +1939,11 @@ fn auroraCurtainDensity(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>, po
 }
 
 fn auroraSpectralColor(pos: vec3<f32>, ph: f32) -> vec3<f32> {
+  return auroraSpectralColorAtUV(auroraAnimatedUVFromWorld(pos), ph);
+}
+
+fn auroraSpectralColorAtUV(uv: vec2<f32>, ph: f32) -> vec3<f32> {
   let phs = saturate(ph);
-  let uv = auroraAnimatedUVFromWorld(pos);
   let colorWave = 0.5 + 0.5 * sin((uv.x * 4.0 + uv.y * 2.7 + phs * 0.48) * 2.0 * PI);
   let colorWave2 = 0.5 + 0.5 * sin((uv.x * 6.0 - uv.y * 3.4 + phs * 0.73 + 1.2) * 2.0 * PI);
   let strandWave = shellHash(vec2<f32>(uv.x, uv.y * 5.8 + phs * 0.40),17.0);

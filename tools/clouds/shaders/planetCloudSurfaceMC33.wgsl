@@ -169,11 +169,6 @@ fn smooth_world_normal(pos:vec3<f32>)->vec3<f32> {
   return select(normalize(pos),gradient/max(length(gradient),1e-8),length(gradient)>1e-8);
 }
 
-fn planetEvolvingDomain(p:vec3<f32>,phase:f32)->vec3<f32> {
-  let warp=vec3<f32>(sin(p.y*5.7+phase),sin(p.z*6.3-phase*.71),sin(p.x*5.1+phase*.47));
-  return p+vec3<f32>(.018,.011,-.014)*phase+warp*.055;
-}
-
 // A texture can wrap seamlessly and still advertise its small tile. Only the
 // high-frequency realistic mesh needs these extra field-stage samples. Oblique
 // domains, broad noise warping and an incommensurate second scale break the
@@ -184,6 +179,14 @@ fn realistic_shape_domain(p:vec3<f32>)->vec3<f32> {
 }
 
 fn surface_shape(p:vec3<f32>)->vec4<f32> {
+  if(isCumulusBank(params.formType)){
+    // Low-pass the source at the voxel pitch to keep small billows from
+    // aliasing into facets. Angular pitch is shared across cube faces.
+    let pitch=2.0*params.planetRadius/f32(params.angularCells);
+    let texels=pitch*params.worldScale*f32(textureDimensions(shapeTex).x);
+    let lod=clamp(log2(max(texels*0.42,1.0)),0.0,f32(textureNumLevels(shapeTex))-1.0);
+    return textureSampleLevel(shapeTex,linearSampler,p,lod);
+  }
   if(params.formType<0.5 || params.formType>=1.5){
     return textureSampleLevel(shapeTex,linearSampler,p,0.0);
   }
@@ -207,7 +210,43 @@ fn scalar_field_world(pos:vec3<f32>)->f32 {
   if(params.formType>=.5){weatherDir=planetWarpDirection(normalize(pos),params.weatherTime,params.formType,params.warpAmount,params.warpPhase);}
   let uv=vec2<f32>(fract(atan2(weatherDir.z,weatherDir.x)/(2.0*PI)),acos(clamp(weatherDir.y,-1.0,1.0))/PI);
   let wm=sample_weather(uv);
-  let s=surface_shape(planetEvolvingDomain(planetWarpPosition(pos,params.shapeTime,params.formType,params.warpAmount,params.warpPhase)*params.worldScale,params.detailTime));
+  var shapePosition=planetWarpPosition(pos,params.shapeTime,params.formType,params.warpAmount,params.warpPhase);
+  if(isLenticular(params.formType)){shapePosition=normalize(shapePosition)*params.planetRadius;}
+  let domain=planetWeatherShapeDomain(shapePosition*params.worldScale,wm,ph,params.formType);
+  let shape=surface_shape(planetEvolvingDomain(domain,params.detailTime));
+  let s=evolvePlanetCloudShape(shape,params.detailTime,params.formType);
+  if(isMixedPlanetWeather(params.formType)){
+    let form=mixedPlanetWeatherForm(ph,wm,s,params.coverageThreshold).x;
+    return max(-form,-min(ph,1.0-ph)*0.5)*h;
+  }
+  if(isAnvilCloud(params.formType)){
+    let form=anvilCloudForm(ph,wm,s,params.coverageThreshold).x;
+    return max(-form,-min(ph,1.0-ph)*0.5)*h;
+  }
+  if(isRealisticSatellite(params.formType)){
+    let form=realisticSatelliteForm(ph,wm,s,params.coverageThreshold).x;
+    return max(-form,-min(ph,1.0-ph)*0.5)*h;
+  }
+  if(params.formType==1.0){
+    let form=thinCloudForm(ph,wm,s,params.coverageThreshold).x;
+    return max(-form,-min(ph,1.0-ph)*0.5)*h;
+  }
+  if(params.formType==2.0){
+    let form=dioramaCloudForm(ph,wm,s,params.coverageThreshold).x;
+    return max(-form,-min(ph,1.0-ph)*0.5)*h;
+  }
+  if(isPlanetFront(params.formType)){
+    let form=planetFrontForm(ph,wm,s,params.coverageThreshold).x;
+    return max(-form,-min(ph,1.0-ph)*0.5)*h;
+  }
+  if(isLenticular(params.formType)){
+    let form=lenticularForm(ph,wm,s,params.coverageThreshold).x;
+    return max(-form,-min(ph,1.0-ph)*0.5)*h;
+  }
+  if(isCumulusBank(params.formType)){
+    let form=cumulusBankForm(ph,wm,s,params.coverageThreshold,params.formType).x;
+    return max(-form,-min(ph,1.0-ph)*0.5)*h;
+  }
   let cute=saturate(params.formType-1.0);
   let gas=params.formType>=4.5;
   let scattered=params.formType>=3.5 && !gas;
@@ -215,8 +254,6 @@ fn scalar_field_world(pos:vec3<f32>)->f32 {
   let coverage=saturate(params.coverageThreshold*mix(0.72,1.0,max(wm.r,wm.g*0.65)));
   let threshold=select(mix(0.82,0.46,coverage),0.63,scattered)-select(0.0,0.030,cute>0.5 && !gas);
   var mass=select(s.r*0.72+s.g*0.20+s.b*0.08,0.58+wm.a*0.18+(s.g-0.5)*0.12,gas);
-  // Satellite coverage is a connected weather field, with 3D billows at its rim.
-  if(params.formType>1.2 && params.formType<1.5){mass=0.29+wm.r*0.45+(s.r-0.5)*0.12+(s.g-0.5)*0.04;}
   let lower=smoothstep(0.025,mix(0.16,0.22,cute),ph);
   let summit=clamp(0.78+(s.a-0.5)*mix(0.24,0.42,cute),0.48,0.97);
   let upper=1.0-smoothstep(summit-0.28,summit,ph);
