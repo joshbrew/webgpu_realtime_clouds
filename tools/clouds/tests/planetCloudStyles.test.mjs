@@ -78,8 +78,8 @@ test('planet setup noise shares tiny stages, records dimensions/seed and release
  await bake.bake({key:'gas-again',shapeSize:32,gas:true});assert.equal(calls.compile,3,'gas bake pipeline must be reused');
  for(const [weatherStyle,mode] of [['gas_giant',1],['neptune',2],['hail_mary',3],['satellite',4],['cyclonic',5],['trade_winds',6]]){
   await bake.bake({key:weatherStyle,seed:17,shapeSize:32,weatherWidth:64,weatherHeight:32,weatherStyle});
-  assert.deepEqual(calls.uniform,[32,64,32,0,17,mode,0,0]);
-  assert.equal(calls.compile,mode<4?3:4,'each family reuses its lazy bake pipeline');
+  assert.deepEqual(calls.uniform,[32,64,32,0,17,mode,mode<4?0:13,mode<4?0:0x3f800000]);
+  assert.equal(calls.compile,mode<4?3:5,'each family reuses its lazy bake pipeline');
  }
  const saved=bake.resources.get('hail_mary'),count=allocations.length,compileCount=calls.compile,dispatchCount=calls.groups.length;
  assert.equal(bake.regenerateWeather('hail_mary',.125),true);

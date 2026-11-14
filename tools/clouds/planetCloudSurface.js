@@ -1,7 +1,7 @@
 import { MC33_ALL_TABLES } from './mc33Tables.js';
 import { CloudTimingReport } from './cloudTiming.js';
 import { PlanetCloudNoise } from './planetCloudNoise.js';
-import { planetCloudStyleOptions, resolvePlanetCloudStyleOptions } from './planetCloudStyles.js';
+import { isSatelliteWeatherStyle, planetCloudStyleOptions, resolvePlanetCloudStyleOptions } from './planetCloudStyles.js';
 import { advancePlanetCloudTime, planetCloudWarp, regeneratePlanetCloudWeather } from './planetCloudMotion.js';
 import planetCloudSurfaceMC33WGSL from './shaders/planetCloudSurfaceMC33.wgsl';
 import planetCloudSurfaceRenderWGSL from './shaders/planetCloudSurfaceRender.wgsl';
@@ -211,8 +211,8 @@ async function bakeSurfaceTextures(layer, bakeOptions = {}) {
   }, 'gpu-submit');
   const maps = await layer.surfaceNoise.bake({key, seed:layer.seed,
     shapeSize:options.surfaceShapeSize ?? 64,
-    weatherWidth:options.cloudStyle === 'satellite_realistic' ? options.weatherWidth ?? 1536 : options.surfaceMapWidth ?? 512,
-    weatherHeight:options.cloudStyle === 'satellite_realistic' ? options.weatherHeight ?? 768 : options.surfaceMapHeight ?? 256,
+    weatherWidth:isSatelliteWeatherStyle(options.cloudStyle) ? options.weatherWidth ?? 1536 : options.surfaceMapWidth ?? 512,
+    weatherHeight:isSatelliteWeatherStyle(options.cloudStyle) ? options.weatherHeight ?? 768 : options.surfaceMapHeight ?? 256,
     weatherStyle:options.cloudStyle, weatherSystemScale:options.weatherSystemScale, shapeMips:true});
   if(layer.disposed){layer.surfaceNoise.release(key);throw new Error('MC33 layer disposed during texture preparation');}
   if (bakeOptions.waitForGpu) await layer.queue.onSubmittedWorkDone();
@@ -551,6 +551,7 @@ function ensureContext(layer) {
       format: layer.colorFormat,
       usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
     }) : null;
+    layer.opacityView = layer.opacityTexture?.createView({ dimension: '2d-array' });
     layer.depthTexture?.destroy?.();
     layer.msaaTexture?.destroy?.();
     layer.depthTexture = layer.device.createTexture({

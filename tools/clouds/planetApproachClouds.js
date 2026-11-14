@@ -1,4 +1,5 @@
 import { mountPlanetApproach, sunDirection } from '../planet/planet-approach.esm.js';
+import { isSatelliteWeatherStyle } from './planetCloudStyles.js';
 import { cloudDemoUrl } from './cloudDemoNavigation.js';
 import { installCloudLabTheme } from './cloudLabUi.js';
 import { stylePlanetPanel } from './planetPanelUi.js';
@@ -8,15 +9,17 @@ import {
 } from './planetClouds.js';
 import { createTweakPanel, buildPlanetCloudConfig, buildPlanetAuroraConfig } from '../noise/planetStudioPanel.js';
 import terrainDepthShader from './shaders/planetTerrainDepth.wgsl';
+import cloudOverlayOpacityShader from './shaders/cloudOverlayOpacity.wgsl';
+import cloudOverlayReconstructionShader from './shaders/cloudOverlayReconstruction.wgsl';
 
 const cloudRadius = 50;
 const referencePlanetRadius = 262_144;
 
-async function createTerrainDepthPass(device) {
+async function createTerrainDepthPass(device, terrainCoverage) {
   const pipeline = await device.createComputePipelineAsync({
     label: 'Planet depth for cloud occlusion',
     layout: 'auto',
-    compute: { module: device.createShaderModule({ code: terrainDepthShader }), entryPoint: 'main' },
+    compute: { module: device.createShaderModule({ code: cloudOverlayOpacityShader + cloudOverlayReconstructionShader + terrainDepthShader }), entryPoint: 'main' },
   });
   const params = device.createBuffer({
     size: 48,
@@ -24,12 +27,12 @@ async function createTerrainDepthPass(device) {
   });
   const values = new Float32Array(12);
   const empty = device.createTexture({ size: [1, 1], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING });
-  const views = new WeakMap();
+  const emptyView = empty.createView({ dimension: '2d-array' });
   const sampler = device.createSampler({ minFilter: 'linear', magFilter: 'linear' });
   let source, opacitySource, output, outputView, group;
   return {
     sample(depth, camera, scale, width, height, foreground) {
-      const cloud = foreground?.texture ?? empty;
+      const cloud = foreground?.view ?? emptyView;
       if (!output || output.width !== width || output.height !== height) {
         output?.destroy();
         output = device.createTexture({
@@ -44,14 +47,13 @@ async function createTerrainDepthPass(device) {
       if (source !== depth || opacitySource !== cloud || !group) {
         source = depth;
         opacitySource = cloud;
-        if (!views.has(cloud)) views.set(cloud, cloud.createView({ dimension: '2d', arrayLayerCount: 1 }));
         group = device.createBindGroup({
           layout: pipeline.getBindGroupLayout(0),
           entries: [
             { binding: 0, resource: depth.createView() },
             { binding: 1, resource: outputView },
             { binding: 2, resource: { buffer: params } },
-            { binding: 3, resource: views.get(cloud) },
+            { binding: 3, resource: cloud },
             { binding: 4, resource: sampler },
           ],
         });
@@ -65,6 +67,8 @@ async function createTerrainDepthPass(device) {
       values[6] = foreground?.alphaPower ?? 1;
       values[7] = foreground?.opacity ?? 0;
       values[8] = foreground?.cutoff ?? 0;
+      values[9] = Number(terrainCoverage);
+      values[10] = Number(foreground?.reconstruct ?? false);
       device.queue.writeBuffer(params, 0, values);
       const encoder = device.createCommandEncoder();
       const pass = encoder.beginComputePass();
@@ -90,6 +94,8 @@ let disposed = false;
 let settingsWork = Promise.resolve();
 let preparing = false;
 let capture;
+let firstSceneFrame;
+let initialSettings;
 
 // The cloud builders use a left-handed view; reflect the world and light together.
 function cloudVector([x, y, z], scale = 1) {
@@ -112,9 +118,19 @@ function layerVisible(layer, visible) {
 }
 
 async function createLayer(options, isAurora = false) {
-  const depth = isAurora
-    ? (auroraDepth ??= await createTerrainDepthPass(planet.device))
-    : (cloudDepth ??= await createTerrainDepthPass(planet.device));
+  if (disposed) return null;
+  const sceneReady = firstSceneFrame?.promise;
+  let depth = isAurora ? auroraDepth : cloudDepth;
+  if (!depth) {
+    depth = await createTerrainDepthPass(planet.device, !isAurora);
+    if (disposed) {
+      depth.dispose();
+      return null;
+    }
+    if (isAurora) auroraDepth = depth;
+    else cloudDepth = depth;
+  }
+  if (options.cloudRenderMode === 'mc33-shell' && !isAurora) await sceneReady;
   if (disposed) return null;
   const layer = await createPlanetCloudLayer({
     device: planet.device,
@@ -127,6 +143,7 @@ async function createLayer(options, isAurora = false) {
       depth.sample(planet.depth, camera, cloudRadius / planet.radius, width, height,
         isAurora ? foregroundClouds() : null),
     radius: cloudRadius,
+    beforeFirstFrame: sceneReady ? () => sceneReady : undefined,
     options,
   });
   if (disposed) {
@@ -150,6 +167,8 @@ async function applyCloudSettings(config, rebake = false) {
     loadingMessage: false,
     preloadAlternateCloudRendererOnIdle: false,
     retainCloudOpacity: true,
+    reconstructAtPresentation: true,
+    satelliteOrbitRefinement: true,
     surfaceFieldUpdateHz: cloudOptions.surfaceFieldUpdateHz ?? 12,
     surfaceMeshUpdateHz: cloudOptions.surfaceMeshUpdateHz ?? 12,
     surfaceComputeBudget: cloudOptions.surfaceComputeBudget ?? 0.20,
@@ -163,7 +182,7 @@ async function applyCloudSettings(config, rebake = false) {
     reprojection: { ...cloudOptions.reprojection, temporalCellRate: 1, compactInterleave: 0, temporalBlend: 0.86 },
   };
   const planetRadius = planet.radius;
-  if (options.cloudStyle === 'satellite_realistic') {
+  if (isSatelliteWeatherStyle(options.cloudStyle)) {
     // The renderer uses a fixed radius of 50. Convert authored heights and
     // frequencies to the active world's scale before baking and rendering.
     const relativeRadius = planetRadius / referencePlanetRadius;
@@ -174,15 +193,15 @@ async function applyCloudSettings(config, rebake = false) {
     options.weatherSystemScale = relativeRadius * (config.style?.weatherSystemScale ?? 1);
   }
   const wantsClouds = options.enabled;
-  const satelliteScaleChanged = clouds?.options.cloudStyle === 'satellite_realistic'
-    && options.cloudStyle === 'satellite_realistic'
+  const satelliteScaleChanged = isSatelliteWeatherStyle(clouds?.options.cloudStyle)
+    && isSatelliteWeatherStyle(options.cloudStyle)
     && options.weatherSystemScale !== clouds.options.weatherSystemScale;
-  if (wantsClouds && (!clouds || rebake || satelliteScaleChanged)) {
+  if (wantsClouds && (!clouds || rebake)) {
     disposePlanetCloudLayer(clouds);
     clouds = null;
     clouds = await createLayer(options);
   } else if (clouds) {
-    if (wantsClouds && clouds.options.cloudStyle !== options.cloudStyle) {
+    if (wantsClouds && (clouds.options.cloudStyle !== options.cloudStyle || satelliteScaleChanged)) {
       await setPlanetCloudStyle(clouds, options.cloudStyle, options);
     }
     updatePlanetCloudLayerOptions(clouds, options, { resetHistory: true });
@@ -280,11 +299,12 @@ function foregroundClouds() {
   const active = clouds?.activeLayer ?? clouds;
   if (!active || active.options.enabled === false) return null;
   const voxel = active.kind === 'mc33-shell';
-  const texture = voxel ? active.opacityTexture : active.cloudBuilder?.outTexture;
-  if (!texture) return null;
+  const view = voxel ? active.opacityView : active.cloudRenderView;
+  if (!view) return null;
   const { cloudBottom, cloudTop, tuning, alphaPower, opacity, alphaCutoff } = active.options;
   const lift = Math.max(0, tuning?.anvilLift ?? 0);
-  return { texture, bottom: cloudRadius + cloudBottom, top: cloudRadius + cloudTop + lift,
+  return { view, bottom: cloudRadius + cloudBottom, top: cloudRadius + cloudTop + lift,
+    reconstruct: !voxel && active.options.reconstructAtPresentation,
     alphaPower: voxel ? 1 : alphaPower ?? 0.82, opacity: voxel ? 1 : opacity ?? 1,
     cutoff: voxel ? 0 : alphaCutoff ?? 0 };
 }
@@ -305,20 +325,42 @@ function saveFrame() {
   canvas.toBlob(blob => blob ? request.resolve(blob) : request.reject(new Error('Screenshot capture failed.')));
 }
 
+function disposeCloudStudio(error) {
+  if (disposed) return;
+  disposed = true;
+  firstSceneFrame?.reject(error);
+  firstSceneFrame = null;
+  disposePlanetCloudLayer(clouds);
+  disposePlanetCloudLayer(aurora);
+  cloudDepth?.dispose();
+  auroraDepth?.dispose();
+  capture?.reject(error);
+}
+
 await mountPlanetApproach({
   setup,
+  onDeviceReady(world) {
+    planet = world;
+    firstSceneFrame = Promise.withResolvers();
+    firstSceneFrame.promise.catch(() => {});
+    studio.setStatus('Generating cloud volumes…');
+    initialSettings = queueSettings(cloudConfig);
+    initialSettings.catch(() => {});
+  },
   sampleDepth: true,
   onTerrainReady(editor) { terrainEditor = editor; },
   onFrame(world, view, phase) {
     planet = world;
     camera = view;
     sunPhase = phase;
+    firstSceneFrame?.resolve();
+    firstSceneFrame = null;
     if (pendingFrame || disposed) return;
     const seed = world.studioSeed;
     pendingFrame = true;
     (async () => {
       const seedChanged = seed !== activeSeed;
-      const scaleChanged = world.radius !== activeRadius && cloudConfig.cloudStyle === 'satellite_realistic';
+      const scaleChanged = world.radius !== activeRadius && isSatelliteWeatherStyle(cloudConfig.cloudStyle);
       if ((seedChanged || scaleChanged) && !preparing) {
         const first = activeSeed === undefined;
         activeSeed = seed;
@@ -326,11 +368,13 @@ await mountPlanetApproach({
         preparing = true;
         studio.setStatus('Generating cloud volumes…');
         try {
-          if (first || !seedChanged) await queueSettings(cloudConfig, !first);
+          if (first) await (initialSettings ?? queueSettings(cloudConfig));
+          else if (!seedChanged) await queueSettings(cloudConfig);
           else await studio.randomizeClouds(seed, config => queueSettings(config, true));
           studio.setStatus('Clouds ready.');
         } finally {
           preparing = false;
+          initialSettings = null;
         }
       }
       await updatePlanetCloudLayer(clouds);
@@ -343,12 +387,10 @@ await mountPlanetApproach({
     }).finally(() => { pendingFrame = false; });
   },
   onDispose() {
-    disposed = true;
-    disposePlanetCloudLayer(clouds);
-    disposePlanetCloudLayer(aurora);
-    cloudDepth?.dispose();
-    auroraDepth?.dispose();
-    capture?.reject(new Error('The planet preview closed.'));
+    disposeCloudStudio(new Error('The planet preview closed.'));
   },
+}).catch(error => {
+  disposeCloudStudio(error);
+  throw error;
 });
 

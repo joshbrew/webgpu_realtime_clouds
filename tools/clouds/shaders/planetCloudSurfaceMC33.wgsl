@@ -205,26 +205,28 @@ fn surface_shape(p:vec3<f32>)->vec4<f32> {
 // space first: scaling or rotating it cannot introduce a longitude seam.
 fn scalar_field_world(pos:vec3<f32>)->f32 {
   let h=max(params.cloudTop-params.cloudBottom,0.001);
-  let ph=(length(pos)-params.planetRadius-params.cloudBottom)/h;
+  let radius=length(pos);
+  let ph=(radius-params.planetRadius-params.cloudBottom)/h;
   var weatherDir=normalize(rotate_domain(pos,params.weatherTime));
   if(params.formType>=.5){weatherDir=planetWarpDirection(normalize(pos),params.weatherTime,params.formType,params.warpAmount,params.warpPhase);}
   let uv=vec2<f32>(fract(atan2(weatherDir.z,weatherDir.x)/(2.0*PI)),acos(clamp(weatherDir.y,-1.0,1.0))/PI);
   let wm=sample_weather(uv);
   var shapePosition=planetWarpPosition(pos,params.shapeTime,params.formType,params.warpAmount,params.warpPhase);
   if(isLenticular(params.formType)){shapePosition=normalize(shapePosition)*params.planetRadius;}
-  let domain=planetWeatherShapeDomain(shapePosition*params.worldScale,wm,ph,params.formType);
+  let domain=planetWeatherShapeDomain(shapePosition*params.worldScale,wm,ph,params.formType,
+    params.planetRadius/max(radius,.001));
   let shape=surface_shape(planetEvolvingDomain(domain,params.detailTime));
   let s=evolvePlanetCloudShape(shape,params.detailTime,params.formType);
   if(isMixedPlanetWeather(params.formType)){
-    let form=mixedPlanetWeatherForm(ph,wm,s,params.coverageThreshold).x;
+    let form=mixedPlanetWeatherForm(ph,wm,s,params.coverageThreshold,params.detailTime).x;
     return max(-form,-min(ph,1.0-ph)*0.5)*h;
   }
   if(isAnvilCloud(params.formType)){
     let form=anvilCloudForm(ph,wm,s,params.coverageThreshold).x;
     return max(-form,-min(ph,1.0-ph)*0.5)*h;
   }
-  if(isRealisticSatellite(params.formType)){
-    let form=realisticSatelliteForm(ph,wm,s,params.coverageThreshold).x;
+  if(isSatelliteForm(params.formType)){
+    let form=realisticSatelliteForm(ph,wm,s,params.coverageThreshold,params.formType,params.detailTime).x;
     return max(-form,-min(ph,1.0-ph)*0.5)*h;
   }
   if(params.formType==1.0){

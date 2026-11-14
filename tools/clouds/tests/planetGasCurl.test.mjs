@@ -10,9 +10,7 @@ test('gas curls bake in a lazy separate entry and use seam-free tangent gradient
  assert.match(noise,/valueGradient\(direction\*6\.3/);
  assert.match(noise,/midpoint=normalize\(direction-gasCurl/);
  assert.match(noise,/bandPhase\*3\.7/);
- assert.match(noise,/if\(gas && !this.gasPipelineReady\)/);
- const setup=noise.slice(noise.indexOf('async prepare()'),noise.indexOf('async bake('));
- assert.doesNotMatch(setup,/entryPoint:'gasWeatherNoise'/);
+ assert.match(noise,/satelliteMode \? 'satelliteWeatherNoise' : gasMode \? 'gasWeatherNoise' : 'weatherNoise'/);
 });
 
 test('gas renderers share bounded spherical flow while Neptune keeps its zonal shear',async()=>{

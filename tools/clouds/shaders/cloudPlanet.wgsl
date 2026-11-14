@@ -1,17 +1,24 @@
-// Compact regular planet styles. Independent of flat morphology, detailed
-// legacy lighting and aurora call graphs; all seven styles share this entry.
+// The default thin layer specializes the shared entry point so the GPU
+// compiler can prune the other forms from the march and lighting probes.
+override CLOUD_THIN_PLANET_FORM: bool = false;
+
+fn planetFormType() -> f32 {
+ if(CLOUD_THIN_PLANET_FORM){return 1.0;}
+ return TUNE.formType;
+}
 fn planetShape(p:vec3<f32>,lod:f32,weather:vec4<f32>,ph:f32)->vec4<f32> {
  var moved=sphericalSampleDriftedWorld(p,vec3<f32>(NTransform.shapeOffsetWorld.x,0,NTransform.shapeOffsetWorld.z))-B.center;
- if(TUNE.formType>=.5 && TUNE.formType<4.5){
-  moved=planetWarpPosition(p-B.center,NTransform.shapeOffsetWorld.x*6.283185307,TUNE.formType,NTransform.planetWarpAmount,NTransform.planetWarpPhase);
+ if(planetFormType()>=.5 && planetFormType()<4.5){
+  moved=planetWarpPosition(p-B.center,NTransform.shapeOffsetWorld.x*6.283185307,planetFormType(),NTransform.planetWarpAmount,NTransform.planetWarpPhase);
   moved=sphericalDriftedWorld(B.center+moved,vec3<f32>(0,0,NTransform.shapeOffsetWorld.z))-B.center;
  }
  let scale=max(V.worldToUV*B.uvScale,EPS)*max(NTransform.shapeScale,EPS);
- if(isLenticular(TUNE.formType)){moved=normalize(moved)*V.planetRadius;}
- let domain=planetWeatherShapeDomain(moved*axisOrOne3(NTransform.shapeAxisScale)*scale,weather,ph,TUNE.formType);
+ if(isLenticular(planetFormType())){moved=normalize(moved)*V.planetRadius;}
+ let domain=planetWeatherShapeDomain(moved*axisOrOne3(NTransform.shapeAxisScale)*scale,weather,ph,planetFormType(),
+  V.planetRadius/max(V.planetRadius+mix(V.cloudBottom,V.cloudTop,ph),EPS));
  let phase=NTransform.shapeOffsetWorld.y;
  let shape=textureSampleLevel(shape3D,sampShape,planetEvolvingDomain(domain,phase),lod);
- return evolvePlanetCloudShape(shape,phase,TUNE.formType);
+ return evolvePlanetCloudShape(shape,phase,planetFormType());
 }
 fn planetPhase(p:vec3<f32>)->f32 {return (length(p-B.center)-V.planetRadius-V.cloudBottom)/max(V.cloudTop-V.cloudBottom,EPS);}
 fn planetWeather(p:vec3<f32>)->vec4<f32> {
@@ -19,38 +26,38 @@ fn planetWeather(p:vec3<f32>)->vec4<f32> {
  // coverage travel with the shell without sliding through a longitude seam.
  let wind=NTransform.weatherOffsetWorld;
  var moved=sphericalDriftedWorld(p,wind);
- if(TUNE.formType>=.5){
-  moved=B.center+planetWarpDirection(normalize(p-B.center),wind.x*6.283185307,TUNE.formType,NTransform.planetWarpAmount,NTransform.planetWarpPhase);
-  if(TUNE.formType<4.5){moved=sphericalDriftedWorld(moved,vec3<f32>(0,wind.y,wind.z));}
+ if(planetFormType()>=.5){
+  moved=B.center+planetWarpDirection(normalize(p-B.center),wind.x*6.283185307,planetFormType(),NTransform.planetWarpAmount,NTransform.planetWarpPhase);
+  if(planetFormType()<4.5){moved=sphericalDriftedWorld(moved,vec3<f32>(0,wind.y,wind.z));}
  }
  let uv=sphereUVFromWorld(moved);
  let latitudeScale=axisOrOne3(NTransform.weatherAxisScale).z*max(NTransform.weatherScale,EPS);
  return wrap2D(weather2D,samp2D,(uv-vec2<f32>(.5))*vec2<f32>(1,latitudeScale)+vec2<f32>(.5),0,0.0);
 }
 fn planetCloudForm(ph: f32, weather: vec4<f32>, shape: vec4<f32>) -> vec2<f32> {
- if(isMixedPlanetWeather(TUNE.formType)){
-  return mixedPlanetWeatherForm(ph,weather,shape,C.globalCoverage);
+ if(isMixedPlanetWeather(planetFormType())){
+  return mixedPlanetWeatherForm(ph,weather,shape,C.globalCoverage,NTransform.shapeOffsetWorld.y);
  }
- if(isAnvilCloud(TUNE.formType)){
+ if(isAnvilCloud(planetFormType())){
   return anvilCloudForm(ph,weather,shape,C.globalCoverage);
  }
- if(isRealisticSatellite(TUNE.formType)){
-  return realisticSatelliteForm(ph,weather,shape,C.globalCoverage);
+ if(isSatelliteForm(planetFormType())){
+  return realisticSatelliteForm(ph,weather,shape,C.globalCoverage,planetFormType(),NTransform.shapeOffsetWorld.y);
  }
- if(TUNE.formType==1.0){
+ if(planetFormType()==1.0){
   return thinCloudForm(ph,weather,shape,C.globalCoverage);
  }
- if(TUNE.formType==2.0){
+ if(planetFormType()==2.0){
   return dioramaCloudForm(ph,weather,shape,C.globalCoverage);
  }
- if(isPlanetFront(TUNE.formType)){
+ if(isPlanetFront(planetFormType())){
   return planetFrontForm(ph,weather,shape,C.globalCoverage);
  }
- if(isLenticular(TUNE.formType)){
+ if(isLenticular(planetFormType())){
   return lenticularForm(ph,weather,shape,C.globalCoverage);
  }
- if(isCumulusBank(TUNE.formType)){
-  return cumulusBankForm(ph,weather,shape,C.globalCoverage,TUNE.formType);
+ if(isCumulusBank(planetFormType())){
+  return cumulusBankForm(ph,weather,shape,C.globalCoverage,planetFormType());
  }
  return styledPlanetForm(ph,weather,shape);
 }
@@ -87,9 +94,18 @@ fn computeCloudPlanet(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(loca
  var ro=V.camPos;if(CLOUD_USE_CUSTOM_POS!=0u){ro=posBuf[u32(pix.y)*frame.fullWidth+u32(pix.x)].xyz;}
  let rd=normalize(V.fwd+V.right*(ndc.x*V.aspect*tan(V.fovY*0.5))-V.up*(ndc.y*tan(V.fovY*0.5)));
  var intervals:vec4<f32>;
+ var terrainDistance=1000000.0;
+ var rayEnd=1000000.0;
+ var mixedTerrainCoverage=0.0;
  if(V._v3>=0.5){
-  let terrain=max(0.0,cloudTerrainDepth(cloudTerrainTexture,uv,V._v3)-0.0005);
-  intervals=sceneCloudIntervals(ro,rd,planetOcclusionDistance(ro,rd,terrain));
+  let dims=vec2<i32>(textureDimensions(cloudTerrainTexture));
+  let scene=textureLoad(cloudTerrainTexture,min(vec2<i32>(uv*vec2<f32>(dims)),dims-1),0);
+  if(scene.a>0.0){terrainDistance=max(0.0,scene.a-0.0005);}
+  let mixed=scene.g<0.0&&scene.r>0.0&&scene.r<1.0&&scene.a>0.0;
+  mixedTerrainCoverage=select(0.0,scene.r,mixed);
+  rayEnd=select(terrainDistance,1000000.0,mixed);
+  // A terrain hit clips integration without moving the samples in front of it.
+  intervals=sceneCloudIntervals(ro,rd,planetOcclusionDistance(ro,rd,1000000.0));
  }else{
   let hit=intersectSphericalCloudShellView(ro,rd);
   intervals=vec4<f32>(hit,hit.y,hit.y);
@@ -97,39 +113,67 @@ fn computeCloudPlanet(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(loca
  let firstLength=max(intervals.y-intervals.x,0.0);
  let pathLength=firstLength+max(intervals.w-intervals.z,0.0);
  let historyActive=reproj.enabled==1u||temporalCellRateNormalized()>1u||reproj.temporalBlend>0.0001;
- if(pathLength<=EPS){storeLayerSample(pix,vec4<f32>(0.0),0.0,historyActive);return;}
+ if(pathLength<=EPS||rayEnd<=intervals.x){storeLayerSample(pix,vec4<f32>(0.0),0.0,historyActive);return;}
  let h=max(V.cloudTop-V.cloudBottom,EPS);let shapeDims=vec3<f32>(textureDimensions(shape3D));
  let scale=max(V.worldToUV*B.uvScale*NTransform.shapeScale,EPS);
  let rayPixelScale=2.0*tan(V.fovY*0.5)/f32(frame.fullHeight);
- let steps=clamp(TUNE.maxSteps,16,160);
- let invSteps=1.0/f32(steps);
+ let detailScale=max(V.worldToUV*B.uvScale*4.0*NTransform.detailScale,EPS);
+ let detailTexelsPerUnit=detailScale*f32(textureDimensions(detail3D).x);
+ let maxDetailLod=f32(textureNumLevels(detail3D))-1.0;
+ let baseSteps=f32(clamp(TUNE.maxSteps,16,160));
+ let grazing=smoothstep(3.5,12.0,pathLength/h);
+ let cameraRadius=length(ro-B.center);
+ let cloudTopRadius=V.planetRadius+V.cloudTop;
+ var orbitLimb=0.0;
+ if(abs(planetFormType()-1.35)<.004){
+  let cameraClearance=(cameraRadius-cloudTopRadius)/h;
+  if(cameraClearance>2.0){
+   let relativeOrigin=ro-B.center;
+   let closest=relativeOrigin+rd*max(0.0,-dot(relativeOrigin,rd));
+   let skim=smoothstep(-1.0,0.40,(length(closest)-V.planetRadius)/h);
+   // Through the limb, long rays can turn thin wisps into an opaque ring.
+   orbitLimb=skim*grazing*smoothstep(2.0,12.0,cameraClearance);
+  }
+ }
+ // Horizon rays cross much more cloud than a vertical ray. Add strata only
+ // on those long paths, with a partial last stratum to avoid step-count pops.
+ let extraSteps=min(min(baseSteps*0.30,24.0),160.0-baseSteps);
+ let stepBudget=baseSteps+grazing*extraSteps;
+ let steps=i32(ceil(stepBudget));
+ let invSteps=1.0/stepBudget;
  let baseProbe=clamp(1.7/(scale*shapeDims.x),h*.018,h*.16);
  let extinction=max(C.globalDensity,0.0)*0.34/h;
+ let densityScale=max(C.globalDensity*10.0,EPS);
+ let maxShapeLod=f32(textureNumLevels(shape3D))-1.0;
  var path=0.0;var tr=1.0;var color=vec3<f32>(0.0);
- // Blue noise decorrelates neighboring rays. Change the phase only while
- // history is actually blending, so panning does not expose frame flicker.
+ var hiddenAlpha=0.0;
+ // Use blue noise across pixels. Cycle through an eight-frame stratification
+ // only when history is blending. Camera movement uses a stable phase.
  let noiseSize=vec2<i32>(textureDimensions(blueTex));
  var pixelPhase=planetPixelRandom(vec2<u32>(pix));
  if(all(noiseSize>vec2<i32>(1))){
   pixelPhase=textureLoad(blueTex,pix%noiseSize,0,0).r;
  }
- let temporalPhase=select(0.0,fract(f32(reproj.frameIndex%64u)*0.618033989),reproj.temporalBlend>.05);
- // Give the foreground finer strata on long grazing rays. This allocates
- // the same fixed sample count across the visible shell, with no hard
- // distance switch and no shared world-space lattice.
- let focus=mix(.18,.54,1.0-smoothstep(h,h*13.0,intervals.x));
+ let phaseIndex=(reverseBits(reproj.frameIndex & 7u)>>29u);
+ let temporalPhase=select(0.0,f32(phaseIndex)*0.125,reproj.temporalBlend>.05);
+ // Keep strata more evenly spaced on long paths. A strong foreground bias
+ // would still leave widely spaced samples in the far part of those rays.
+ let nearFocus=mix(.18,.54,1.0-smoothstep(h,h*13.0,intervals.x));
+ let focus=mix(nearFocus,.14,grazing);
  var stratum=1;
  var sunVisibility=1.0;var normal=normalize(ro+rd*intervals.x-B.center);
  var targetSun=1.0;var targetNormal=normal;
  let sun=normalize(L.sunDir);
+ let forwardScatter=pow(max(dot(rd,sun),0.0),max(8.0,C.silverExponent*6.0));
  var lastDenseSample=-100;
- let neptune=TUNE.formType>=5.5&&TUNE.formType<6.5;
- let continuousLight=TUNE.formType>=.5&&TUNE.formType<4.5;
- let detailed=isCumulusBank(TUNE.formType)||isPlanetFront(TUNE.formType)||isThinOrDiorama(TUNE.formType);
- let texturedLight=isThinOrDiorama(TUNE.formType)||isMixedPlanetWeather(TUNE.formType)||isRealisticSatellite(TUNE.formType);
- let skinErosion=select(select(0.053,0.091,detailed),0.119,isFineCumulus(TUNE.formType));
+ let neptune=planetFormType()>=5.5&&planetFormType()<6.5;
+ let continuousLight=planetFormType()>=.5&&planetFormType()<4.5;
+ let anvil=isAnvilCloud(planetFormType());
+ let detailed=anvil||isCumulusBank(planetFormType())||isPlanetFront(planetFormType())||isThinOrDiorama(planetFormType());
+ let texturedLight=anvil||isThinOrDiorama(planetFormType())||isMixedPlanetWeather(planetFormType())||isSatelliteForm(planetFormType());
+ let skinErosion=select(select(0.053,0.091,detailed),0.119,anvil||isFineCumulus(planetFormType()));
  let sunStride=max(TUNE.sunStride,1);
- let normalStride=select(sunStride,min(sunStride,2),length(ro-B.center)<V.planetRadius+V.cloudTop+h*0.5);
+ let normalStride=select(sunStride,min(sunStride,2),cameraRadius<cloudTopRadius+h*0.5);
  for(var i=0;i<=steps;i++){
   if(path>=pathLength||tr<0.012){break;}
   let farSide=path>=firstLength;
@@ -137,39 +181,49 @@ fn computeCloudPlanet(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(loca
   let fraction=min(f32(stratum)*invSteps,1.0);
   let boundary=select(pathLength*fraction*(1.0-focus+focus*fraction),pathLength,stratum>=steps);
   let end=min(boundary,spanEnd);
-  let segmentLength=end-path;
-  let jitter=fract(pixelPhase+temporalPhase+f32(i)*0.754877666);
-  let t=select(intervals.x+path,intervals.z+path-firstLength,farSide)+segmentLength*mix(.10,.90,jitter);
+  let segmentStart=select(intervals.x+path,intervals.z+path-firstLength,farSide);
+  if(segmentStart>=rayEnd){break;}
+  let intervalLength=end-path;
+  let segmentLength=min(intervalLength,rayEnd-segmentStart);
+  // Use two interleaved phases so adjacent strata don't repeat a marching
+  // pattern on long paths through a cloud deck.
+  let phase=fract(pixelPhase+temporalPhase+f32(i/2)*0.754877666);
+  let jitter=fract(phase+f32(i&1)*0.5);
+  let sampleOffset=mix(.10+.80*jitter,jitter,grazing);
+  let t=segmentStart+segmentLength*sampleOffset;
   path=end;
   if(end>=boundary){stratum++;}
   if(segmentLength<=EPS){continue;}
-  let p=ro+rd*t;let ph=planetPhase(p);
+  let p=ro+rd*t;
+  let relative=p-B.center;
+  let radius=length(relative);
+  let ph=(radius-V.planetRadius-V.cloudBottom)/h;
   if(ph>0.0&&ph<1.0){
    // Match texture detail to the screen footprint and to long march steps.
-   let marchFootprint=segmentLength*mix(.36,.64,smoothstep(h,8.0*h,t));
+   let marchFootprint=intervalLength*mix(.36,.64,smoothstep(h,8.0*h,t));
    let footprint=max(max(t*rayPixelScale,marchFootprint),0.25/(scale*shapeDims.x));
-   let lod=clamp(log2(max(footprint*scale*shapeDims.x,1.0)),0.0,f32(textureNumLevels(shape3D))-1.0);
+   let lod=clamp(log2(max(footprint*scale*shapeDims.x,1.0)),0.0,maxShapeLod);
    let weather=planetWeather(p);
+   if(weather.b>1.0){continue;}
    let s=planetShape(p,lod,weather,ph);
    let geometry=planetCloudForm(ph,weather,s);
-   let densityScale=max(C.globalDensity*10.0,EPS);
-   var density=select(styledPlanetDensityFromForm(geometry,0.0)/densityScale,0.0,weather.b>1.0);
+   var density=styledPlanetDensityFromForm(geometry,0.0)/densityScale;
    if(density>0.0001){
-    // Fine noise only erodes the skin; dense interiors remain coherent. Real
-    // mip filtering limits subpixel shimmer without a camera-relative reset.
-    let detailScale=max(V.worldToUV*B.uvScale*4.0*NTransform.detailScale,EPS);
-    let detailLod=clamp(log2(max(footprint*detailScale*f32(textureDimensions(detail3D).x),1.0)),0.0,f32(textureNumLevels(detail3D))-1.0);
+    // A sample represents an entire ray segment. Filter the fine erosion over
+    // that interval as well as the projected pixel, especially near the horizon.
+    let detailFootprint=max(t*rayPixelScale,intervalLength);
+    let detailLod=log2(max(detailFootprint*detailTexelsPerUnit,1.0));
     let detailWeight=1.0-smoothstep(1.5,3.5,detailLod);
-    let erosionStrength=skinErosion*planetCloudErosionStrength(weather,TUNE.formType)*mix(.42,1.55,clamp(TUNE.definition,0.0,1.0));
+    let erosionStrength=skinErosion*planetCloudErosionStrength(weather,planetFormType())*mix(.42,1.55,clamp(TUNE.definition,0.0,1.0));
     var erosion=erosionStrength*.46;
-    if(detailWeight>0.0&&!isLenticular(TUNE.formType)){
+    if(detailWeight>0.0&&!isLenticular(planetFormType())){
      var detailPos=sphericalSampleDriftedWorld(p,NTransform.detailOffsetWorld)-B.center;
-     if(TUNE.formType>=.5 && TUNE.formType<4.5){
-      detailPos=planetWarpPosition(p-B.center,NTransform.detailOffsetWorld.x*6.283185307,TUNE.formType,NTransform.planetWarpAmount,NTransform.planetWarpPhase);
+     if(planetFormType()>=.5 && planetFormType()<4.5){
+      detailPos=planetWarpPosition(p-B.center,NTransform.detailOffsetWorld.x*6.283185307,planetFormType(),NTransform.planetWarpAmount,NTransform.planetWarpPhase);
       detailPos=sphericalDriftedWorld(B.center+detailPos,vec3<f32>(0,NTransform.detailOffsetWorld.y,NTransform.detailOffsetWorld.z))-B.center;
      }
      let detailDomain=planetEvolvingDomain(detailPos*detailScale,NTransform.shapeOffsetWorld.y*1.75);
-     let detail=textureSampleLevel(detail3D,sampDetail,detailDomain,detailLod).rgb;
+     let detail=textureSampleLevel(detail3D,sampDetail,detailDomain,min(detailLod,maxDetailLod)).rgb;
      let grain=dot(detail,vec3<f32>(.42,.34,.24));
      let breakup=smoothstep(.23,.79,grain*.84+detail.g*.16);
      erosion=mix(erosion,breakup*erosionStrength,detailWeight);
@@ -181,7 +235,7 @@ fn computeCloudPlanet(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(loca
     let dense=density>.065;
     let firstDense=dense&&i-lastDenseSample>2;
     let lightingPhase=i;
-    let radial=normalize(p-B.center);
+    let radial=relative/radius;
     let sunElevation=dot(radial,sun);
     let day=smoothstep(-.16,.28,sunElevation);
     if(!continuousLight&&!neptune&&(firstDense||lightingPhase%normalStride==0)){
@@ -224,8 +278,14 @@ fn computeCloudPlanet(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(loca
       let probe=max(baseProbe,min(footprint*.85,h*.17));
       let nearHeight=ph+sunElevation*probe/h;
       let nearSun=planetCloudForm(nearHeight,weather,planetShape(p+sun*probe,lod,weather,nearHeight));
-      let slope=geometry.x-nearSun.x-(erosion-erosionStrength*.46)*skin*select(.35,.76,texturedLight);
-      diffuse=smoothstep(-.085,.13,slope);
+      // Fine erosion already changes the ray's opacity. Only resolved detail
+      // should also affect the lighting, where it would otherwise flicker twice.
+      let detailLighting=1.0-smoothstep(.25,2.25,detailLod);
+      let slope=geometry.x-nearSun.x-(erosion-erosionStrength*.46)*skin*select(.35,.76,texturedLight)*detailLighting;
+      // A longer integration interval spans several slopes. Soften the
+      // lighting response only where those slopes are undersampled.
+      let lightingFootprint=smoothstep(probe,probe*4.0,intervalLength);
+      diffuse=smoothstep(-.085-.045*lightingFootprint,.13+.045*lightingFootprint,slope);
       let nearMass=smoothstep(-.012,.13,nearSun.x)*nearSun.y;
       var opticalDepth=nearMass*probe*1.45;
       if(TUNE.sunSteps>1){
@@ -254,25 +314,80 @@ fn computeCloudPlanet(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(loca
       let bands=0.18+smoothstep(0.25,0.35,diffuse)*0.40+smoothstep(0.65,0.75,diffuse)*0.42;
       light=mix(C.shadowLightColor*0.28,C.frontLightColor,bands*sunlight*day)+C.shadowLightColor*0.06;
     }
-    let forwardScatter=pow(max(dot(rd,sun),0.0),max(8.0,C.silverExponent*6.0));
     let edgeScatter=select(pow(1.0-abs(dot(lightNormal,-rd)),2.0),skin*.68,continuousLight);
     let silverWeight=select(1.0,mix(.45,1.12,skin),detailed);
     light+=C.sunColor*max(C.silverIntensity,0.0)*visibility*day*forwardScatter*(0.08+edgeScatter*1.1)*silverWeight;
     if(detailed){light=light/(vec3<f32>(1.0)+light*0.44);}
-    if(TUNE.formType>=4.5){light*=gasWeatherColor(weather,TUNE.formType);}
-    let alpha=1.0-exp(-density*extinction*segmentLength);
-    color+=tr*alpha*light;tr*=1.0-alpha;
+    if(planetFormType()>=4.5){light*=gasWeatherColor(weather,planetFormType());}
+    let limbRetention=1.0-orbitLimb*mix(.94,.55,smoothstep(.10,.60,density));
+    let absorption=density*extinction*limbRetention;
+    let alpha=1.0-exp(-absorption*segmentLength);
+    let weight=tr*alpha;
+    var hidden=0.0;
+    if(segmentStart+segmentLength>terrainDistance){
+     var foregroundAlpha=0.0;
+     if(terrainDistance>segmentStart){
+      foregroundAlpha=1.0-exp(-absorption*(terrainDistance-segmentStart));
+     }
+     // The covered fraction sees only foreground cloud. The clear fraction
+     // retains the rest of this ray's color and transmittance.
+     hidden=tr*(alpha-foregroundAlpha)*mixedTerrainCoverage;
+    }
+    hiddenAlpha+=hidden;
+    color+=(weight-hidden)*light;
+    tr*=1.0-alpha;
    }
   }
  }
- let alpha=1.0-tr;let feather=smoothstep(0.0,max(TUNE.minOutputAlpha,0.0001),alpha);
+ let alpha=max(0.0,1.0-tr-hiddenAlpha);
+ let feather=smoothstep(0.0,max(TUNE.minOutputAlpha,0.0001),alpha);
  var result=vec4<f32>(color*feather,alpha*feather);
  if(CLOUD_WRITE_RGB==0u){result=vec4<f32>(0,0,0,result.a);}
  storeLayerSample(pix,result,0.0,historyActive);
 }
 
-// The terrain-backed aurora uses the whole visible shell. Sample only within
-// the emitting layer, with the terrain as the far endpoint when it occludes it.
+// Signed angular distance to each curtain. Keeping thickness independent of
+// the ray step prevents distant aurora from turning into wide glowing bands.
+fn auroraCurtainOffsets(local: vec3<f32>, radii: vec2<f32>, angle: f32, flow: f32) -> vec4<f32> {
+  let longitude = atan2(local.z, local.x) + select(0.0, 1.7, local.y < 0.0);
+  let phase = saturate((length(local) - radii.x) / (radii.y - radii.x));
+  let polarAngle = atan2(length(local.xz), abs(local.y));
+  let drift = longitude + flow;
+  let arc = angle * (0.66 + 0.17 * sin(2.0 * longitude + flow) +
+    0.09 * sin(3.0 * longitude - flow * 0.7));
+  let folds = angle * (0.065 * sin(7.0 * longitude - flow * 1.3) +
+    0.033 * sin(13.0 * longitude + flow * 1.8));
+  let lean = angle * phase * (0.14 + 0.10 * sin(3.0 * drift));
+  let centerline = polarAngle - arc - lean;
+  let spread = angle * (0.065 + 0.035 * sin(3.0 * longitude - flow));
+  // Adjacent sheets spread apart and curl back together as the folds travel.
+  return vec4<f32>(
+    centerline - folds,
+    centerline + angle * (0.17 + 0.085 * sin(4.0 * drift)) + folds * 0.65 + lean * 0.20,
+    centerline - folds - spread * (1.0 + phase * 0.75),
+    centerline + folds * 0.2 + spread * (1.0 + phase * 1.10)
+  );
+}
+
+fn auroraSheetIntegral(distance: f32, width: f32) -> f32 {
+  let x = clamp(distance / width, -1.0, 1.0);
+  return width * x * (1.0 - x * x / 3.0);
+}
+
+// Integrate a thin, parabolic sheet across the ray segment, including when
+// both endpoints miss it. Return its mean density and the covered midpoint.
+fn auroraSheetSample(a: f32, b: f32, width: f32) -> vec2<f32> {
+  let delta = b - a;
+  if (abs(delta) < 0.00001) {
+    let x = (a + b) * 0.5 / width;
+    return vec2<f32>(max(0.0, 1.0 - x * x), 0.5);
+  }
+  let coverage = (auroraSheetIntegral(b, width) - auroraSheetIntegral(a, width)) / delta;
+  let bounds = clamp((vec2<f32>(-width, width) - a) / delta, vec2<f32>(0.0), vec2<f32>(1.0));
+  return vec2<f32>(max(coverage, 0.0), (bounds.x + bounds.y) * 0.5);
+}
+
+// Clip the visible aurora shell to terrain before accumulating its emission.
 fn marchSceneAurora(ro: vec3<f32>, rd: vec3<f32>, terrainDistance: f32, clouds:vec3<f32>) -> vec4<f32> {
   let limit = planetOcclusionDistance(ro,rd,max(0.0,terrainDistance-0.0005));
   let intervals = sceneCloudIntervals(ro,rd,limit);
@@ -280,13 +395,18 @@ fn marchSceneAurora(ro: vec3<f32>, rd: vec3<f32>, terrainDistance: f32, clouds:v
   let pathLength = first + max(intervals.w - intervals.z, 0.0);
   if (pathLength <= EPS) { return vec4<f32>(0.0); }
 
-  let minPolarY = shellNominalRadii().x * cos(min(0.5 * PI, auroraCapAngleRad() + auroraCapFeatherRad() * 1.35));
-  let originY = ro.y - B.center.y;
-  // Shell segments wholly below both polar caps cannot emit.
+  let radii = shellNominalRadii();
+  let capAngle = auroraCapAngleRad();
+  let minPolarY = radii.x * cos(min(0.5 * PI, capAngle + auroraCapFeatherRad() * 1.35));
+  let localOrigin = ro - B.center;
+  // Clip each hemisphere independently, including when a ray starts under it.
+  let north = V._c >= 0.0;
+  let south = V._c <= 0.0;
+  let y = localOrigin.y + rd.y * intervals;
   let nearReachesCap = first > EPS &&
-    max(abs(originY + rd.y * intervals.x), abs(originY + rd.y * intervals.y)) >= minPolarY;
+    ((north && max(y.x, y.y) >= minPolarY) || (south && min(y.x, y.y) <= -minPolarY));
   let farReachesCap = intervals.w - intervals.z > EPS &&
-    max(abs(originY + rd.y * intervals.z), abs(originY + rd.y * intervals.w)) >= minPolarY;
+    ((north && max(y.z, y.w) >= minPolarY) || (south && min(y.z, y.w) <= -minPolarY));
   if (!nearReachesCap && !farReachesCap) { return vec4<f32>(0.0); }
 
   var cloudSegments = vec4<f32>(0.0);
@@ -294,46 +414,66 @@ fn marchSceneAurora(ro: vec3<f32>, rd: vec3<f32>, terrainDistance: f32, clouds:v
   let cloudLengths = max(cloudSegments.yw - cloudSegments.xz, vec2<f32>(0.0));
   let cloudLength = cloudLengths.x + cloudLengths.y;
   let cloudOpticalDepth = -log(max(1.0 - clouds.x, 0.0001));
-  let height = max(V.cloudTop - V.cloudBottom, EPS);
+  let height = radii.y - radii.x;
+  let activeLength = select(0.0, first, nearReachesCap) + select(0.0, pathLength - first, farReachesCap);
   let steps = clamp(TUNE.maxSteps, 16, 64);
-  let stride = max(pathLength / f32(steps), height / 40.0);
+  let stride = max(activeLength / f32(steps), height / 40.0);
   let sun = normalize(L.sunDir);
   let weatherScale = max(abs(NTransform.weatherScale), EPS) * axisOrOne3(NTransform.weatherAxisScale).z;
   let pixelScale = 2.0 * tan(V.fovY * 0.5) / f32(frame.fullHeight);
   let scaleBase = max(abs(NTransform.shapeScale) * 22.0, 2.75);
   let shapeTexelsPerUnit = f32(textureDimensions(shape3D).x) * scaleBase /
     max(V.planetRadius * auroraCapAngleRad(), EPS);
-  let flow = NTransform.shapeOffsetWorld.x * 190.0;
-  var path = 0.0;
+  let spin = NTransform.weatherOffsetWorld.x * 2.0 * PI;
+  let shapeFlow = NTransform.shapeOffsetWorld.x * 35.0;
+  let detailFlow = NTransform.detailOffsetWorld.x * 18.0;
+  let sheetWidth = clamp(capAngle * 0.019, 0.003, 0.008);
+  var path = select(first, 0.0, nearReachesCap);
+  let pathEnd = select(first, pathLength, farReachesCap);
   var opticalDepth = 0.0;
   var emission = vec3<f32>(0.0);
   for (var i = 0; i <= steps; i++) {
-    if (path >= pathLength || opticalDepth > 4.0) { break; }
+    if (path >= pathEnd || opticalDepth > 4.0) { break; }
     let farSide = path >= first;
-    let segment = min(stride, select(first, pathLength, farSide) - path);
-    let distance = select(intervals.x + path, intervals.z + path - first, farSide) + segment * 0.5;
+    let segment = min(stride, select(first, pathEnd, farSide) - path);
+    let start = select(intervals.x + path, intervals.z + path - first, farSide);
+    path = min(path + segment, select(first, pathEnd, farSide));
+    let a = localOrigin + rd * start;
+    let b = a + rd * segment;
+    let inNorth = north && max(a.y, b.y) >= minPolarY;
+    let inSouth = south && min(a.y, b.y) <= -minPolarY;
+    if (!inNorth && !inSouth) { continue; }
+
+    let mid = a + rd * (segment * 0.5);
+    let hemispherePhase = select(0.0, 1.7, mid.y < 0.0);
+    let flow = shapeFlow * select(1.0, -0.78, mid.y < 0.0) + spin;
+    let longitude = atan2(mid.z, mid.x) + hemispherePhase;
+    // Open arcs with long quiet gaps. The smaller arcs drift and fade separately.
+    let mainArc = smoothstep(0.01, 0.56, cos(longitude + flow * 0.23 - 0.8));
+    let sideArc = smoothstep(0.40, 0.85, cos(longitude - flow * 0.18 + 1.8));
+    if (max(mainArc, sideArc) < 0.001) { continue; }
+    let offsetsA = auroraCurtainOffsets(a, radii, capAngle, flow);
+    let offsetsB = auroraCurtainOffsets(b, radii, capAngle, flow);
+    let mainSheet = auroraSheetSample(offsetsA.x, offsetsB.x, sheetWidth);
+    let sideSheet = auroraSheetSample(offsetsA.y, offsetsB.y, sheetWidth * 0.72);
+    let outerArc = mainArc * smoothstep(-0.10, 0.72, sin(3.0 * longitude - flow * 1.2));
+    let innerArc = max(mainArc, sideArc) * smoothstep(0.18, 0.84, sin(2.0 * longitude + flow * 1.4));
+    let outerSheet = auroraSheetSample(offsetsA.z, offsetsB.z, sheetWidth * 0.66);
+    let innerSheet = auroraSheetSample(offsetsA.w, offsetsB.w, sheetWidth * 0.54);
+    let weights = vec4<f32>(mainSheet.x, sideSheet.x, outerSheet.x, innerSheet.x) *
+      vec4<f32>(mainArc, sideArc * 0.60, outerArc * 0.52, innerArc * 0.42);
+    let sheets = dot(weights, vec4<f32>(1.0));
+    if (sheets < 0.001) { continue; }
+
+    let centers = vec4<f32>(mainSheet.y, sideSheet.y, outerSheet.y, innerSheet.y);
+    let distance = start + segment * dot(centers, weights) / sheets;
     let p = ro + rd * distance;
+    let local = p - B.center;
     let cap = auroraCapMask(p);
     if (cap > 0.0001) {
-      let phase = shellPhase01FromWorld(p);
-      // Rotate within each polar cap. A global tilt can flip the local
-      // hemisphere basis under a visible curtain and expose a straight seam.
-      let local = p-B.center;
-      let spin = NTransform.weatherOffsetWorld.x*2.0*PI;
-      let xz = rotateXZ(local.xz,spin);
-      let uv = auroraUVFromWorld(B.center+vec3<f32>(xz.x,local.y,xz.y));
-      let longitude = uv.x * 2.0 * PI;
-      let polarAngle = atan2(length(local.xz), abs(local.y));
-      let oval = auroraCapAngleRad() * 0.70 +
-        sin(3.0 * longitude + flow) * 0.037 + sin(7.0 * longitude - 0.7 * flow) * 0.014;
-      let lean = phase * (0.062 + 0.022 * sin(2.0 * longitude - flow));
-      let width = max(0.023, min(0.042, stride * 0.42 / length(local)));
-      let mainSheet = 1.0 - smoothstep(0.005, width, abs(polarAngle - oval - lean));
-      let outerSheet = 1.0 - smoothstep(0.003, width * 0.82,
-        abs(polarAngle - oval - 0.056 - lean * 0.66));
-      let sheets = max(mainSheet, outerSheet * (0.46 + 0.38 * sin(3.0 * longitude - flow)));
-      if (sheets < 0.001) { path += segment; continue; }
-      // Shear broad curtains gently in two directions as they drift.
+      let phase = saturate((length(local) - radii.x) / height);
+      let xz = rotateXZ(local.xz, spin + hemispherePhase);
+      let uv = auroraUVFromWorld(B.center + vec3<f32>(xz.x, local.y, xz.y));
       let warp = vec2<f32>(
         sin(4.0 * longitude + flow + phase * 3.0) * 0.012 +
           sin(9.0 * longitude - flow * 1.6 + uv.y * 12.0) * 0.004,
@@ -345,18 +485,33 @@ fn marchSceneAurora(ro: vec3<f32>, rd: vec3<f32>, terrainDistance: f32, clouds:v
       let lod = clamp(log2(max(distance * pixelScale * shapeTexelsPerUnit, 1.0)), 0.0, wg_maxMipS);
       let uvw = auroraRibbonUVWFromUV(warpedUV, phase, NTransform.shapeOffsetWorld, scaleBase);
       let shape = wrap3D_shape(shape3D, sampShape, uvw, lod);
-      let density = auroraCurtainDensityAtUV(phase, weather, shape, detailProxyFromShape(phase, shape), cap, warpedUV);
+      // Keep the weather field as breakup inside the geometric curtain. A
+      // threshold here can blank an entire pole when the sampled cap is dry.
+      let activity = smoothstep(0.22, 0.75, dot(weather.rg, vec2<f32>(0.62, 0.38)));
+      let breakup = smoothstep(0.16, 0.78, dot(shape.rgb, vec3<f32>(0.25, 0.50, 0.25)));
+      let lowerEdge = smoothstep(0.015, 0.12, phase);
+      let strength = max(C.globalDensity, 0.0) / 980.0 * max(C.globalCoverage, 0.0) / 1.12;
+      let density = cap * lowerEdge * mix(0.48, 1.0, activity) * mix(0.55, 1.0, breakup) * strength;
       if (density > 0.0001) {
-        let night = 1.0-smoothstep(-0.16,0.08,dot(normalize(p-B.center),sun));
-        let weight = density*segment/height*night*sheets*1.65;
+        let night = 1.0 - smoothstep(-0.16, 0.08, dot(normalize(local), sun));
+        let anglePerPixel = distance * pixelScale / max(length(local.xz), EPS);
+        let strands = 0.5 + 0.5 * sin(47.0 * longitude + sin(19.0 * longitude - flow) * 2.1 + detailFlow + phase * 0.6);
+        let fineRays = mix(1.0, mix(0.46, 1.26, strands), 1.0 - smoothstep(0.18, 0.85, anglePerPixel * 47.0));
+        let curtainTop = 0.60 + 0.37 * (0.5 + 0.5 * sin(5.0 * longitude + sin(9.0 * longitude - flow) + flow * 0.6));
+        let heightProfile = (1.0 - smoothstep(0.16, curtainTop, phase)) * (1.2 + phase * 0.5);
+        let weight = density * segment / height * night * sheets * fineRays * heightProfile * 14.0;
         let foreground = clamp(vec2<f32>(distance) - cloudSegments.xz, vec2<f32>(0.0), cloudLengths);
         let fraction = (foreground.x + foreground.y) / max(cloudLength, EPS);
         let transmission = exp(-cloudOpticalDepth * fraction);
-        emission += auroraSpectralColorAtUV(warpedUV,phase)*weight*transmission;
+        let palette = auroraSpectralColorAtUV(warpedUV, phase);
+        let palettePeak = max(palette.r, max(palette.g, palette.b));
+        let spectral = mix(palette, vec3<f32>(0.18, 1.0, 0.56) * palettePeak, 0.40);
+        let warmTop = spectral * vec3<f32>(2.0, 0.36, 0.72);
+        let color = mix(spectral, warmTop, smoothstep(0.30, 0.76, phase) * 0.42);
+        emission += color * weight * transmission;
         opticalDepth += weight;
       }
     }
-    path += segment;
   }
   // Soft additive emission rolls off before reaching flat, clipped white.
   let brightness=max(max(emission.r,emission.g),emission.b);

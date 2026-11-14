@@ -53,7 +53,12 @@ test('history sizing precedes warmup/interleave decisions in the production upda
  assert.ok(allocate<update.indexOf('const historyWarmupActive ='));
  assert.match(update,/cameraIsMoving \|\| auroraAnimating \|\| historyWarmupActive\s*\? 1/);
  assert.match(update,/const temporalBlend = historyWarmupActive \? 0/);
- assert.match(update,/fullWidth: Math.max\(1, Math.ceil\(outW \/ coarseFactor\)\)/);
+ assert.match(update,/const rayWidth = Math.max\(1, Math.ceil\(outW \/ coarseFactor\)\)/);
+ assert.match(update,/const rayHeight = Math.max\(1, Math.ceil\(outH \/ coarseFactor\)\)/);
+ assert.match(update,/fullWidth: rayWidth,\s*fullHeight: rayHeight/);
+ assert.match(update,/const depthWidth = layer.useBootstrapPreview \? outW : rayWidth/);
+ assert.match(update,/const depthHeight = layer.useBootstrapPreview \? outH : rayHeight/);
+ assert.match(update,/terrainDepthView: layer.getTerrainDepth\?\.\(depthWidth, depthHeight\)/);
 });
 
 test('missing motion input is exactly zero, not half a pixel of phantom reprojection',async()=>{

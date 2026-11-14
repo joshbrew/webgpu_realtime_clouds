@@ -22,6 +22,8 @@ export const PLANET_CLOUD_STYLES = Object.freeze([
   {id:'hemisphere',label:'Cloudy hemisphere'},
   {id:'scattered',label:'A few puffy clouds'},
   {id:'satellite_realistic',label:'Realistic satellite weather'},
+  {id:'satellite_sparse_fronts',label:'Sparse satellite fronts'},
+  {id:'satellite_sparse_cirrus',label:'Sparse satellite cirrus'},
   {id:'satellite',label:'Cartoon satellite / weather fronts'},
   {id:'cyclonic',label:'Cartoon satellite / spiral storms'},
   {id:'trade_winds',label:'Cartoon satellite / trade winds'},
@@ -30,10 +32,24 @@ export const PLANET_CLOUD_STYLES = Object.freeze([
   {id:'hail_mary',label:'Hail Mary / green-orange swirls'},
 ]);
 
+// These styles share the satellite volume profile and physical world scaling.
+export const satelliteWeatherModes = Object.freeze({
+  satellite: 4,
+  cyclonic: 5,
+  trade_winds: 6,
+  satellite_realistic: 7,
+  satellite_sparse_fronts: 8,
+  satellite_sparse_cirrus: 9,
+});
+
+export function isSatelliteWeatherStyle(style) {
+  return Object.hasOwn(satelliteWeatherModes, style);
+}
+
 const FINE_CLOUD_STYLES = new Map([
   ['mixed_weather', {
     noiseMode: 11, formType: 2.64, bottom: 0.020, top: 0.115,
-    coverage: 0.79, density: 21, shapeScale: 2.55, detailScale: 2.75, meshOpacity: 0.94,
+    coverage: 0.84, density: 21, shapeScale: 2.55, detailScale: 2.75, meshOpacity: 0.94,
     weatherBias: 0, evolutionSpeed: 0.084,
   }],
   ['broken_cumulus', {
@@ -41,7 +57,7 @@ const FINE_CLOUD_STYLES = new Map([
     coverage: 0.86, density: 22, shapeScale: 2.6, detailScale: 3.25, meshOpacity: 0.99,
   }],
   ['fair_weather_cumulus', {
-    noiseMode: 3, formType: 2.42, bottom: 0.021, top: 0.044,
+    noiseMode: 2, formType: 2.42, bottom: 0.021, top: 0.044,
     coverage: 0.78, density: 16, shapeScale: 2.9, detailScale: 3.7, meshOpacity: 0.92,
   }],
   ['wind_swept_clouds', {
@@ -49,7 +65,7 @@ const FINE_CLOUD_STYLES = new Map([
     coverage: 0.83, density: 7.5, shapeScale: 2.55, detailScale: 3.45, meshOpacity: 0.70, evolutionSpeed: 0.098,
   }],
   ['cotton_towers', {
-    noiseMode: 3, formType: 2.40, bottom: 0.024, top: 0.085,
+    noiseMode: 3, formType: 2.41, bottom: 0.024, top: 0.085,
     coverage: 0.85, density: 27, shapeScale: 3.55, detailScale: 4.0, meshOpacity: 0.99,
   }],
   ['island_cumulus', {
@@ -57,8 +73,8 @@ const FINE_CLOUD_STYLES = new Map([
     coverage: 0.72, density: 24, shapeScale: 3.35, detailScale: 3.6, meshOpacity: 0.96,
   }],
   ['anvil_thunderstorms', {
-    noiseMode: 10, formType: 2.44, bottom: 0.029, top: 0.116,
-    coverage: 0.77, density: 25, shapeScale: 2.90, detailScale: 3.5, meshOpacity: 0.99,
+    noiseMode: 10, formType: 2.44, bottom: 0.025, top: 0.078,
+    coverage: 0.75, density: 17, shapeScale: 3.25, detailScale: 3.65, meshOpacity: 0.96,
     weatherBias: 0, evolutionSpeed: 0.083,
   }],
   ['trade_wind_streets', {
@@ -90,31 +106,36 @@ const FINE_CLOUD_STYLES = new Map([
 ]);
 
 export function planetBillowNoiseMode(style) {
-  return FINE_CLOUD_STYLES.get(style)?.noiseMode ?? ({ detailed_cumulus: 15, cumulus_banks: 14, realistic: 9, diorama: 13, satellite_realistic: 9 }[style] ?? 0);
+  if (isSatelliteWeatherStyle(style)) return satelliteWeatherModes[style] >= 7 ? 9 : 13;
+  return FINE_CLOUD_STYLES.get(style)?.noiseMode ?? ({ detailed_cumulus: 15, cumulus_banks: 14, realistic: 9, diorama: 13 }[style] ?? 0);
 }
 
 export function planetCloudStyleOptions(style, radius = 50) {
   if (style === 'legacy') return {};
   if (!PLANET_CLOUD_STYLES.some(s=>s.id===style)) throw new RangeError(`Unknown planet cloud style: ${style}`);
   const r = Number.isFinite(radius) && radius > 0 ? radius : 50;
-  if (style === 'satellite_realistic') {
+  if (satelliteWeatherModes[style] >= 7) {
+    const sparse = style !== 'satellite_realistic';
+    const cirrus = style === 'satellite_sparse_cirrus';
     const base = planetCloudStyleOptions('realistic', r);
     return {
       ...base, cloudStyle: style, weatherWidth: 1536, weatherHeight: 768,
-      cloudBottom: r * 0.012, cloudTop: r * 0.035, maxHalfHeight: r * 0.0115,
-      params: { ...base.params, globalCoverage: 0.84, globalDensity: 12 },
-      tuning: { ...base.tuning, formType: 1.35, definition: 0.68 },
-      transforms: { ...base.transforms, shapeScale: 2.05, detailScale: 1.8 },
+      cloudBottom: r * (cirrus ? 0.019 : 0.012),
+      cloudTop: r * (cirrus ? 0.038 : sparse ? 0.031 : 0.035),
+      maxHalfHeight: r * (sparse ? 0.0095 : 0.0115),
+      params: { ...base.params, globalCoverage: sparse ? 0.89 : 0.80, globalDensity: cirrus ? 10 : sparse ? 12 : 16 },
+      tuning: { ...base.tuning, formType: cirrus ? 1.41 : sparse ? 1.38 : 1.35, definition: sparse ? 0.76 : 0.68 },
+      transforms: { ...base.transforms, shapeScale: sparse ? 2.9 : 2.55, detailScale: sparse ? 3.5 : 2.75 },
     };
   }
-  if(['satellite','cyclonic','trade_winds'].includes(style)){
+  if(isSatelliteWeatherStyle(style)){
     const base=planetCloudStyleOptions('realistic',r);
     return {...base,cloudStyle:style,weatherWidth:2048,weatherHeight:1024,
       cloudBottom:r*.024,cloudTop:r*.052,maxHalfHeight:r*.014,
       params:{...base.params,globalCoverage:1.0,globalDensity:12,
         frontLightColor:[1.40,1.42,1.44],shadowLightColor:[.42,.48,.58]},
-      tuning:{...base.tuning,formType:1.25},
-      transforms:{...base.transforms,shapeScale:2.3,detailScale:2.2}};
+      tuning:{...base.tuning,formType:1.29},
+      transforms:{...base.transforms,shapeScale:2.7,detailScale:3.1}};
   }
   const fine = FINE_CLOUD_STYLES.get(style);
   if (fine) {
@@ -141,11 +162,11 @@ export function planetCloudStyleOptions(style, radius = 50) {
       cloudStyle: style,
       cloudTop: r * 0.087,
       maxHalfHeight: r * 0.0325,
-      params: { ...base.params, globalCoverage: 0.89, globalDensity: 24,
+      params: { ...base.params, globalCoverage: 0.86, globalDensity: 21,
         frontLightColor: [1.44, 1.49, 1.56], shadowLightColor: [0.44, 0.61, 0.88] },
       tuning: { ...base.tuning, formType: 2.38 },
       evolutionSpeed: 0.087,
-      transforms: { ...base.transforms, shapeScale: 2.65, detailScale: 2.85 },
+      transforms: { ...base.transforms, shapeScale: 3.15, detailScale: 3.40 },
     };
   }
   if (style === 'cumulus_banks') {

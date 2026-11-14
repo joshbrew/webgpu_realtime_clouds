@@ -914,6 +914,7 @@ export const NOISE_PLANET_TEST_CLOUDS = {
     opacity: 1.06,
     alphaPower: 1.16,
     alphaCutoff: 0.02,
+    shadingBlur: 1,
   },
 
   // Flat-lab preview/style knobs kept here as notes/targets for matching lighting/color presets.
@@ -952,14 +953,14 @@ export const NOISE_PLANET_TEST_CLOUDS = {
 export const NOISE_PLANET_TEST_AURORA = mergePlain(NOISE_PLANET_TEST_CLOUDS, {
   enabled: true,
   shell: {
-    cloudBottom: 4.35,
-    cloudTop: 6.65,
+    cloudBottom: 3.8,
+    cloudTop: 5.85,
     maxHalfHeight: 0.25,
   },
   cap: {
     halfAngleDeg: 16.5,
-    featherDeg: 9.0,
-    hemisphere: 'north',
+    featherDeg: 6.0,
+    hemisphere: 'both',
   },
   textures: {
     weatherWidth: 1024,
@@ -1505,7 +1506,7 @@ function makeFullControlReferenceOptions() {
       tuningAcceptedBySetTuning: Object.keys(PLANET_CLOUD_FLAT_LAB_PRESET.tuning),
       reprojectionAcceptedBySetReprojSettings: ['enabled', 'subsample', 'sampleOffset', 'motionIsNormalized', 'temporalBlend', 'depthTest', 'depthTolerance', 'frameIndex', 'fullWidth', 'fullHeight', 'temporalCellRate', 'temporalCellPhase', 'compactInterleave'],
       performanceAcceptedBySetPerfParams: ['lodBiasMul', 'coarseMipBias', 'coarseFactor'],
-      overlayRender: ['worldToUV', 'stepBase', 'stepInc', 'opacity', 'alphaPower', 'alphaCutoff'],
+      overlayRender: ['worldToUV', 'stepBase', 'stepInc', 'opacity', 'alphaPower', 'alphaCutoff', 'shadingBlur'],
     },
   };
 }
@@ -2540,6 +2541,10 @@ function createTweakPanel(options = {}) {
   quickColorPreset.input.addEventListener('change',event=>applyCloudColorLook(event.target.value));
 
   addCloudControl('render.opacity', 'Ray opacity', 'number', '0.01', {min:0,max:1});
+  if (options.terrainControls) {
+    addCloudControl('render.shadingBlur', 'Ray shading blur', 'number', '0.05',
+      {min:0,max:2,fallback:1}).wrap.title = 'Softens grain inside raymarched clouds. 0 keeps edge smoothing only. 1 is the default.';
+  }
   addCloudControl('surface.surfaceOpacity', 'Mesh opacity', 'number', '0.01', {min:0,max:1});
 
   function addQuickCloudColor(path, label) {
@@ -2583,7 +2588,7 @@ function createTweakPanel(options = {}) {
 
 const auroraQuick = makeCompactControlPanel(
   'Aurora quick controls',
-  'Toggle the fake aurora disc and tweak its shell, cap, motion, and loop density shortcuts.',
+  'Choose which poles emit aurora and adjust curtain height, motion, and density.',
 );
 
 function addAuroraControl(path, label, type = 'number', step = 'any', opts = {}) {
@@ -2636,6 +2641,14 @@ addAuroraControl('aurora.reprojection.enabled', 'reproj', 'checkbox');
 addAuroraControl('aurora.reprojection.compactInterleave', 'compact x4', 'checkbox');
 addAuroraControl('aurora.reprojection.temporalCellRate', 'x interleave', 'number', '1', { min: 1, max: 64 });
 addAuroraControl('aurora.reprojection.temporalBlend', 'temporalBlend', 'number', '0.01', { min: 0, max: 1 });
+addAuroraControl('aurora.cap.hemisphere', 'Aurora poles', 'select', 'any', {
+  fallback: 'both',
+  options: [
+    { value: 'both', label: 'North and south' },
+    { value: 'north', label: 'North only' },
+    { value: 'south', label: 'South only' },
+  ],
+});
 addAuroraControl('aurora.cap.halfAngleDeg', 'capDeg', 'number', '0.1');
 addAuroraControl('aurora.cap.featherDeg', 'featherDeg', 'number', '0.1');
 addAuroraControl('aurora.motion.spinSpeed', 'spinSpeed', 'number', '0.0001');
@@ -3599,7 +3612,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
   textureScrollControl.input.id='planet-texture-scroll-speed';
   textureScrollControl.wrap.style.gridColumn='1 / -1';
   addCloudTransformControl('style.weatherSystemScale', 'Satellite system frequency', 'number', '0.1',
-    {fallback:1,min:0.5,max:4}).wrap.title='Realistic satellite only. Higher values make more, smaller weather systems.';
+    {fallback:1,min:0.5,max:4}).wrap.title='Applies to satellite styles. Higher values make more, smaller weather systems.';
   addCloudTransformControl('transforms.weatherScale', 'Weather latitude scale', 'number', '0.01');
   addCloudTransformControl('transforms.shapeScale', 'Billow frequency', 'number', '0.01');
   addCloudTransformControl('transforms.detailScale', 'Fine detail frequency', 'number', '0.01');
@@ -3634,7 +3647,9 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
           cfg.textures={...cfg.textures,weatherWidth:textures.weatherWidth,weatherHeight:textures.weatherHeight};
         }
         const weatherSystemScale = cfg.style?.weatherSystemScale ?? 1;
+        const shadingBlur = cfg.render?.shadingBlur ?? 1;
         Object.assign(cfg,mergePlain(cfg,presetConfig));
+        cfg.render.shadingBlur = shadingBlur;
         Object.assign(cfg.motion,keptMotion);
         cfg.style.weatherSystemScale = weatherSystemScale;
       },{path:'cloudStyle',forceCloudLiveApply:true});
@@ -4456,6 +4471,7 @@ export function buildPlanetCloudConfig(runtime, result, seed, options = {}) {
     opacity: config.render?.opacity,
     alphaPower: config.render?.alphaPower,
     alphaCutoff: config.render?.alphaCutoff,
+    shadingBlur: config.render?.shadingBlur,
   };
 
   return { atmosphereRadius, config, cloudOptions };

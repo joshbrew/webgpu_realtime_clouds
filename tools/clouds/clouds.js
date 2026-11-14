@@ -23,6 +23,7 @@ import { intendedCloudShading } from './cloudLookPresets.js';
 
 const CLOUD_GPU_CACHE = new WeakMap();
 const PROCEDURAL_RAY_GROUP_WIDTH = 16;
+const THIN_PLANET_CLOUD_VARIANT = 1 << 11;
 const INLINE_LAYER_OUTPUT = `fn beginLayerSample(pix: vec2<i32>) {}
 fn storeLayerSample(pix: vec2<i32>, color: vec4<f32>, farHistory: f32, historyActive: bool) {
   resolveCloudColor(pix, color, farHistory, historyActive);
@@ -619,14 +620,16 @@ export class CloudComputeBuilder {
     // Adaptive lighting only adds to this stride, so detailed probes cannot run
     // when it is > 1. Do not compile their large call graph for that case.
     const useFields = mode === 0 && this._dvTuning.getFloat32(240, true) > 0;
-    const planetStyle = mode !== 0 && this._planetStyleMode === true && this._dvTuning.getFloat32(240, true) > 0.5 && (this._dvView?.getFloat32(92,true) ?? 1) <= 1.5;
+    const formType = this._dvTuning.getFloat32(240, true);
+    const planetStyle = mode !== 0 && this._planetStyleMode === true && formType > 0.5 && (this._dvView?.getFloat32(92,true) ?? 1) <= 1.5;
     const sceneAurora = mode !== 0 && this._sceneAuroraMode === true;
     const detailedLighting = !useFields && !planetStyle && !sceneAurora && this._dvTuning.getInt32(8, true) <= 1;
     const divider = Math.max(1, coarseFactor | 0);
     const scratchBytes = Math.max(1, Math.ceil((this.width || 1) / divider)) * Math.max(1, Math.ceil((this.height || 1) / divider)) * Math.max(1, this.layers || 1) * 32;
     const stagedResolve = mode === 0 && scratchBytes <= (this.device.limits?.maxStorageBufferBindingSize ?? 134217728);
     const frozen=useFields && this._frozenPattern?.enabled;
-    return mode | (customPos ? 4 : 0) | (writeRGB ? 8 : 0) | (detailedLighting ? 16 : 0) | (stagedResolve ? 32 : 0) | (useFields ? 64 : 0) | (planetStyle ? 128 : 0) | (frozen ? 256 : 0) | (mode===0 && this._frozenPattern?.axis>0 ? 512 : 0) | (sceneAurora ? 1024 : 0);
+    return mode | (customPos ? 4 : 0) | (writeRGB ? 8 : 0) | (detailedLighting ? 16 : 0) | (stagedResolve ? 32 : 0) | (useFields ? 64 : 0) | (planetStyle ? 128 : 0) | (frozen ? 256 : 0) | (mode===0 && this._frozenPattern?.axis>0 ? 512 : 0) | (sceneAurora ? 1024 : 0)
+      | (planetStyle && !sceneAurora && Math.fround(formType) === 1 ? THIN_PLANET_CLOUD_VARIANT : 0);
   }
 
   _computePipelineDescriptorForKey(key = this._currentComputeVariantKey()) {
@@ -646,6 +649,7 @@ export class CloudComputeBuilder {
           CLOUD_STAGED_RESOLVE: (key & 32) ? 1 : 0,
           CLOUD_USE_FIELDS: (key & 64) ? 1 : 0,
           CLOUD_FROZEN_SLICES:(key & 512)?1:0,
+          ...((key & THIN_PLANET_CLOUD_VARIANT) ? { CLOUD_THIN_PLANET_FORM: 1 } : {}),
           ...((key & 64) ? {CLOUD_FROZEN_PATTERN:(key & 256)?1:0} : {}),
           // Consecutive horizontal rays share more of the long horizon march.
           // Field and planet modules have their own fixed workgroup layouts.
@@ -712,13 +716,13 @@ export class CloudComputeBuilder {
   async _ensureComputePipelineForKeyAsync(key = this._currentComputeVariantKey()) {
     const pipelines = this._computePipelines;
     const pipelinePromises = this._computePipelinePromises;
-    const descriptor = this._computePipelineDescriptorForKey(key);
     const cached = pipelines.get(key);
     if (cached) return cached;
 
     const existing = pipelinePromises.get(key);
     if (existing) return existing;
 
+    const descriptor = this._computePipelineDescriptorForKey(key);
     const create = async () => {
       const async = typeof this.device.createComputePipelineAsync === "function";
       const finish = this._beginComputePipelineTiming(key, async);
@@ -791,7 +795,8 @@ export class CloudComputeBuilder {
     const planetStyle = mode !== 0 && !aurora && planetStyleMode && formType > 0.5;
     const sceneAurora = aurora && this._sceneAuroraMode === true;
     const frozen = fields && this._frozenPattern?.enabled;
-    const key = mode | (useCustomPos ? 4 : 0) | (writeRGB ? 8 : 0) | (!fields && !planetStyle && !sceneAurora && (sunStride | 0) <= 1 ? 16 : 0) | (mode === 0 ? 32 : 0) | (fields ? 64 : 0) | (planetStyle ? 128 : 0) | (frozen ? 256 : 0) | (mode===0 && this._frozenPattern?.axis>0 ? 512 : 0) | (sceneAurora ? 1024 : 0);
+    const key = mode | (useCustomPos ? 4 : 0) | (writeRGB ? 8 : 0) | (!fields && !planetStyle && !sceneAurora && (sunStride | 0) <= 1 ? 16 : 0) | (mode === 0 ? 32 : 0) | (fields ? 64 : 0) | (planetStyle ? 128 : 0) | (frozen ? 256 : 0) | (mode===0 && this._frozenPattern?.axis>0 ? 512 : 0) | (sceneAurora ? 1024 : 0)
+      | (planetStyle && !sceneAurora && Math.fround(formType) === 1 ? THIN_PLANET_CLOUD_VARIANT : 0);
     const [pipeline] = await Promise.all([
       this._ensureComputePipelineForKeyAsync(key),
       (key & 32) ? this._ensureFlatStagePipelineAsync("resolveCloudFlat") : null,
@@ -3134,14 +3139,14 @@ export class CloudComputeBuilder {
     return this.outView;
   }
 
-  async dispatch({ wait = false, coarseFactor = 1 } = {}) {
+  async dispatch({ wait = false, coarseFactor = 1, reconstructAtPresentation = false } = {}) {
     const enc = this.device.createCommandEncoder();
-    const encoded = this.encodeDispatchPasses(enc, { coarseFactor });
+    const encoded = this.encodeDispatchPasses(enc, { coarseFactor, reconstructAtPresentation });
     this.queue.submit([enc.finish()]);
     encoded?.restoreAfterSubmit?.();
     if (wait && typeof this.queue.onSubmittedWorkDone === "function")
       await this.queue.onSubmittedWorkDone();
-    return this.outView;
+    return this._getRenderSourceView();
   }
 
   async dispatchAllLayers({ wait = false } = {}) {

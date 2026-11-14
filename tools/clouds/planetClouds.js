@@ -1,3 +1,5 @@
+import cloudOverlayOpacityShader from './shaders/cloudOverlayOpacity.wgsl';
+import cloudOverlayReconstructionShader from './shaders/cloudOverlayReconstruction.wgsl';
 import { NoiseComputeBuilder } from '../noise/noiseCompute.js';
 import { CloudComputeBuilder } from './clouds.js';
 import { CloudTimingReport } from './cloudTiming.js';
@@ -329,14 +331,18 @@ function estimatePlanetScreenCoverage(camera, outerRadius) {
   return { coverage, pressure, radiusNdcX, radiusNdcY };
 }
 
-function resolveAdaptiveRenderDivider(layer, width, height, screenMetrics) {
+function resolveAdaptiveRenderDivider(layer, width, height, screenMetrics, outsideClouds) {
   const opt = layer.options || {};
   const perf = opt.performance || opt.perf || {};
   const baseDivider = Math.max(1, Math.floor(opt.renderScaleDivider ?? DEFAULT_RENDER_SCALE_DIVIDER));
   const adaptiveEnabled = perf.adaptiveScreenQuality ?? opt.adaptiveScreenQuality ?? true;
+  const orbitDivider = opt.satelliteOrbitRefinement && opt.cloudStyle === 'satellite_realistic' &&
+      baseDivider === 2 && outsideClouds && !layer.useBootstrapPreview
+    ? Math.min(baseDivider, Math.max(1.5, Math.sqrt(width * height / 360000)))
+    : baseDivider;
   if (!adaptiveEnabled) {
-    layer.adaptiveRenderDivider = baseDivider;
-    return baseDivider;
+    layer.adaptiveRenderDivider = orbitDivider;
+    return orbitDivider;
   }
 
   const maxPixels = Math.max(65536, finiteNumber(
@@ -353,7 +359,9 @@ function resolveAdaptiveRenderDivider(layer, width, height, screenMetrics) {
     perf.maxRenderScaleDivider ?? opt.maxRenderScaleDivider,
     8,
   )));
-  const desiredDivider = Math.min(requiredDivider, maxDivider);
+  const desiredDivider = requiredDivider === baseDivider
+    ? Math.max(orbitDivider, Math.sqrt(width * height / pixelBudget))
+    : Math.min(requiredDivider, maxDivider);
 
   const state = layer.adaptiveQualityState || {
     divider: baseDivider,
@@ -865,11 +873,11 @@ async function prewarmPlanetCloudPipeline(layer) {
   } else {
     pipelinePromise = Promise.resolve(cb.ensureComputePipelineReady?.());
   }
-  // Planet presets render coarsely on their first frame, so compile the tiny
-  // reconstruction pass while the loading message is already visible too.
-  cb.ensureUpsamplePipelineReady?.(
-    layer.options.textures?.outputFormat || layer.options.outputFormat || 'rgba16float',
-  );
+  if (!layer.options.reconstructAtPresentation) {
+    cb.ensureUpsamplePipelineReady?.(
+      layer.options.textures?.outputFormat || layer.options.outputFormat || 'rgba16float',
+    );
+  }
   await pipelinePromise;
   return performance.now() - started;
 }
@@ -962,7 +970,7 @@ async function prewarmPlanetNoisePipelines(layer) {
 
   const pending = collectPlanetNoisePipelineEntries(layer.options).map(compileEntry);
   if (!layer.options.auroraMode && layer.options.cloudStyle && layer.options.cloudStyle !== 'legacy') {
-    pending.push(planetStyleNoise(nb).prepare());
+    pending.push(planetStyleNoise(nb).prepare({ weatherStyle: layer.options.cloudStyle }));
   }
   await Promise.all(pending);
   return performance.now() - started;
@@ -993,7 +1001,7 @@ function ensureOverlayRenderer(layer) {
     layer.overlaySampler = cachedOverlay.sampler;
     layer.overlayPipeline = cachedOverlay.pipeline;
     layer.overlayParams = device.createBuffer({
-      size: 16,
+      size: 24,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     return;
@@ -1001,11 +1009,15 @@ function ensureOverlayRenderer(layer) {
 
   const shader = device.createShaderModule({
     code: `
+${cloudOverlayOpacityShader}
+${cloudOverlayReconstructionShader}
 struct OverlayParams {
   opacity: f32,
   alphaPower: f32,
   alphaCutoff: f32,
   terrainComposite: f32,
+  reconstruct: f32,
+  shadingBlur: f32,
 };
 @group(0) @binding(0) var samp: sampler;
 @group(0) @binding(1) var tex: texture_2d_array<f32>;
@@ -1056,7 +1068,19 @@ fn overlayTapWeight(center: vec4<f32>, tap: vec4<f32>, spatialWeight: f32) -> f3
   return spatialWeight * alphaWeight * lumaWeight * thinVisibility;
 }
 
+// Suppress isolated ray noise when opposite neighbors agree. A real
+// silhouette or lighting ramp has a wider range across the same pair.
+fn cloudOverlayOutlier(center: vec4<f32>, a: vec4<f32>, b: vec4<f32>) -> f32 {
+  let c = vec2<f32>(overlayLuma(center.rgb), center.a);
+  let lo = min(vec2<f32>(overlayLuma(a.rgb), a.a), vec2<f32>(overlayLuma(b.rgb), b.a));
+  let hi = max(vec2<f32>(overlayLuma(a.rgb), a.a), vec2<f32>(overlayLuma(b.rgb), b.a));
+  let excess = max(lo - c, c - hi) - (hi - lo) * 0.5;
+  let coverage = smoothstep(0.025, 0.19, max(center.a, min(a.a, b.a)));
+  return coverage * smoothstep(0.012, 0.095, max(excess.x, excess.y));
+}
+
 fn resolveCloudOverlay(uv: vec2<f32>) -> vec4<f32> {
+  if (params.reconstruct > 0.5) { return reconstructCloudOverlay(tex, samp, uv, params.shadingBlur); }
   let center = sampleCloudOverlay(uv);
   let dimsU = textureDimensions(tex, 0);
   let dims = max(vec2<f32>(f32(dimsU.x), f32(dimsU.y)), vec2<f32>(1.0, 1.0));
@@ -1080,16 +1104,19 @@ fn resolveCloudOverlay(uv: vec2<f32>) -> vec4<f32> {
   let edgeBand = smoothstep(0.006, 0.18, a) * (1.0 - smoothstep(0.42, 0.92, a));
   let body = smoothstep(0.18, 0.83, a);
   let resolveAmount = min(0.24 * thinBand + 0.42 * edgeBand + 0.50 * body, 0.58);
-  return mix(center, filtered, resolveAmount);
+  let resolved = mix(center, filtered, resolveAmount);
+  if (params.terrainComposite < 0.5) { return resolved; }
+  let horizontal = cloudOverlayOutlier(center, left, right);
+  let vertical = cloudOverlayOutlier(center, down, up);
+  let pair = select((left + right) * 0.5, (down + up) * 0.5, vertical > horizontal);
+  return mix(resolved, pair, max(horizontal, vertical) * 0.68);
 }
 
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let c = resolveCloudOverlay(in.uv);
   let rawA = clamp(c.a, 0.0, 1.0);
-  let cutoff = clamp(params.alphaCutoff, 0.0, 0.94);
-  let gate = select(1.0, smoothstep(cutoff, min(cutoff + 0.045, 1.0), rawA), cutoff > 0.0001);
-  let a = pow(max(rawA * gate, 0.0), max(params.alphaPower, 0.001)) * clamp(params.opacity, 0.0, 2.0);
+  let a = cloudOverlayOpacity(rawA, params.alphaCutoff, params.alphaPower, params.opacity);
   let liftGate = smoothstep(0.025, 0.24, rawA);
   let premulLift = select(0.0, clamp(a / max(rawA, 0.001), 0.0, 1.55), rawA > 0.00001);
   let premulScale = mix(1.0, premulLift, liftGate);
@@ -1113,7 +1140,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     addressModeV: 'clamp-to-edge',
   });
   layer.overlayParams = device.createBuffer({
-    size: 16,
+    size: 24,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   layer.overlayPipeline = device.createRenderPipeline({
@@ -1141,7 +1168,8 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 }
 
 function renderOverlay(layer) {
-  if (!layer.cloudBuilder?.outView) return;
+  const sourceView = layer.cloudRenderView;
+  if (!sourceView) return;
   ensureOverlayRenderer(layer);
 
   const ctx = layer.canvas.getContext('webgpu');
@@ -1161,10 +1189,14 @@ function renderOverlay(layer) {
   const opacity = finiteNumber(layer.options.opacity, 1.0);
   const alphaPower = finiteNumber(layer.options.alphaPower, 0.82);
   const alphaCutoff = finiteNumber(layer.options.alphaCutoff, 0.0);
-  const data = new Float32Array([opacity, alphaPower, alphaCutoff, Number(!!layer.getTerrainDepth && !layer.options.auroraMode)]);
+  const data = new Float32Array([
+    opacity, alphaPower, alphaCutoff,
+    Number(!!layer.getTerrainDepth && !layer.options.auroraMode),
+    Number(!!layer.options.reconstructAtPresentation),
+    Math.max(0, Math.min(2, finiteNumber(layer.options.shadingBlur ?? 1, 1))),
+  ]);
   layer.device.queue.writeBuffer(layer.overlayParams, 0, data.buffer, data.byteOffset, data.byteLength);
 
-  const sourceView = layer.cloudBuilder.outView;
   if (!layer.overlayBindGroup || layer.overlayBindGroupView !== sourceView) {
     layer.overlayBindGroup = layer.device.createBindGroup({
       layout: layer.overlayPipeline.getBindGroupLayout(0),
@@ -1529,6 +1561,16 @@ async function applyPlanetCloudStyle(layer, style, overrides = {}) {
     resourceNonce:`${base.resourceNonce}-style-${(target._styleRevision=(target._styleRevision||0)+1)}`});
   const seed = Math.floor(overrides.seed ?? target.seed) >>> 0;
   const nextKeys=Object.fromEntries(['weather','shape','detail','blue'].map(kind=>[kind,cloudResourceKey(next,kind,seed)]));
+  // Keep drawing the current clouds while a newly selected form compiles.
+  // Baking replaces the bound textures, so only pause updates after prewarming.
+  const tuning = resolvePlanetCloudTuning(next);
+  await target.cloudBuilder.prewarmComputePipelineVariantAsync?.({
+    spherical: true,
+    planetStyleMode: !!next.cloudStyle && next.cloudStyle !== 'legacy',
+    formType: tuning.formType ?? 0,
+    sunStride: tuning.sunStride ?? 4,
+  });
+  if (layer.disposed || target.disposed) return null;
   target.styleChanging=true;
   const release=keys=>{
     if(!keys)return;
@@ -1832,6 +1874,7 @@ export async function createPlanetCloudLayer({
   getCameraState = makeDefaultCameraState,
   getSunDir = () => [0.65, 0.37, -0.65],
   getTerrainDepth,
+  beforeFirstFrame,
   radius = 50,
   atmosphereRadius = 68,
   options = {},
@@ -1856,6 +1899,7 @@ export async function createPlanetCloudLayer({
       getCameraState,
       getSunDir,
       getTerrainDepth,
+      beforeFirstFrame,
       radius,
       atmosphereRadius,
       options,
@@ -2047,6 +2091,7 @@ export async function createPlanetCloudLayer({
     overlayParams: null,
     overlayBindGroup: null,
     overlayBindGroupView: null,
+    cloudRenderView: null,
     textures: null,
     timings: null,
     loadingMessage,
@@ -2111,25 +2156,23 @@ export async function createPlanetCloudLayer({
       publishStartupTiming(startupTiming.snapshot(), false);
       return elapsedMs;
     });
+    pipelineWarmupPromise.catch(() => {});
     stage = startupTiming.start('noise-pipeline-warmup', undefined, 'pipeline');
     const noisePipelineStage = stage;
-    const noisePipelineWarmupPromise = prewarmPlanetNoisePipelines(layer);
-    stage = startupTiming.start('bootstrap-cloud-pipeline-warmup', undefined, 'pipeline');
-    const bootstrapPipelineStage = stage;
-    const bootstrapPipelineWarmupPromise = prewarmPlanetBootstrapPipeline(layer);
+    const noisePipelineWarmup = prewarmPlanetNoisePipelines(layer).then(elapsed => {
+      startupTiming.end(noisePipelineStage, { noisePipelineWarmupMs: elapsed });
+      return elapsed;
+    });
+    const bootstrapPipelineWarmup = mergedOptions.progressiveStartup === false ? 0 :
+      startupTiming.measure('bootstrap-cloud-pipeline-warmup', () => prewarmPlanetBootstrapPipeline(layer), undefined, 'pipeline');
     const [noisePipelineWarmupMs, bootstrapPipelineWarmupMs] = await Promise.all([
-      noisePipelineWarmupPromise,
-      bootstrapPipelineWarmupPromise,
+      noisePipelineWarmup, bootstrapPipelineWarmup,
     ]);
-    startupTiming.end(noisePipelineStage, { noisePipelineWarmupMs });
-    startupTiming.end(bootstrapPipelineStage, { bootstrapPipelineWarmupMs });
     layer.bootstrapPipelineWarmupMs = bootstrapPipelineWarmupMs;
-    setPlanetCloudLoadingMessage(
-      loadingMessage,
-      mergedOptions.auroraMode ? 'Baking quick aurora preview…' : 'Baking quick cloud preview…',
-    );
+
 
     if (mergedOptions.progressiveStartup !== false) {
+      setPlanetCloudLoadingMessage(loadingMessage, 'Baking quick atmosphere preview…');
       const bootstrapOptions = {
         weatherWidth: Math.max(16, Math.min(mergedOptions.weatherWidth, Math.floor(mergedOptions.bootstrapWeatherWidth || 128))),
         weatherHeight: Math.max(8, Math.min(mergedOptions.weatherHeight, Math.floor(mergedOptions.bootstrapWeatherHeight || 64))),
@@ -2163,6 +2206,7 @@ export async function createPlanetCloudLayer({
       }, 'first-frame');
       publishStartupTiming(startupTiming.snapshot(), false);
       try {
+        if (beforeFirstFrame) await beforeFirstFrame();
         layer.useBootstrapPreview = true;
         await updatePlanetCloudLayer(layer);
         let gpuWaitMs = 0;
@@ -2274,13 +2318,15 @@ export async function createPlanetCloudLayer({
       return layer;
     }
 
-    await pipelineWarmupPromise;
-    await bakePlanetCloudResources(layer, {
+    const fullBake = bakePlanetCloudResources(layer, {
       quality: 'full',
       timingReport: startupTiming,
-      waitForGpu: true,
       onTiming: (snapshot) => publishStartupTiming(snapshot, false),
     });
+    // Let the bake finish publishing resources before disposing on either failure.
+    const results = await Promise.allSettled([pipelineWarmupPromise, fullBake]);
+    for (const result of results) if (result.status === 'rejected') throw result.reason;
+    if (beforeFirstFrame) await beforeFirstFrame();
     layer.timings = {
       ...(layer.timings || {}),
       pipelineWarmupMs,
@@ -2301,7 +2347,7 @@ export async function createPlanetCloudLayer({
   } catch (error) {
     startupTiming.mark('startup-failed', { error: String(error?.message || error) });
     publishStartupTiming(startupTiming.finish({ failed: true }), true);
-    try { canvas.remove?.(); } catch {}
+    disposePlanetCloudLayer(layer);
     throw error;
   } finally {
     try { loadingMessage?.remove?.(); } catch {}
@@ -2325,16 +2371,9 @@ export async function bakePlanetCloudResources(layer, bakeOptions = {}) {
     try { bakeOptions.onTiming(timingReport.snapshot()); } catch {}
   };
 
-  const finishStage = async (stage, detail = {}) => {
-    let gpuWaitMs = 0;
-    if (waitForGpu && typeof layer.queue?.onSubmittedWorkDone === 'function') {
-      const waitStarted = performance.now();
-      await layer.queue.onSubmittedWorkDone();
-      gpuWaitMs = performance.now() - waitStarted;
-    }
-    timingReport?.end(stage, { ...detail, gpuWaitMs });
+  const finishStage = (stage, detail) => {
+    timingReport?.end(stage, detail);
     publishTiming();
-    return gpuWaitMs;
   };
 
   try {
@@ -2365,7 +2404,7 @@ export async function bakePlanetCloudResources(layer, bakeOptions = {}) {
     seed,
     textureKey: resourceKeys.weather,
   });
-  const weatherGpuWaitMs = await finishStage(stage, { resourceKey: resourceKeys.weather });
+  finishStage(stage, { resourceKey: resourceKeys.weather });
 
   const shapeStarted = performance.now();
   stage = timingReport?.start(`${quality}-shape-buffer-and-dispatch`, {
@@ -2376,7 +2415,7 @@ export async function bakePlanetCloudResources(layer, bakeOptions = {}) {
   const shape3DView = styledMaps
     ? (bakeShapeMips ? styledMaps.shapeView : await planetVolumeMips(nb).bake(styledMaps.shapeView,shapeSize,resourceKeys.shape))
     : await bakeShapeVolume(nb, { ...opt, seed, textureId: resourceKeys.shape });
-  const shapeGpuWaitMs = await finishStage(stage, { resourceKey: resourceKeys.shape });
+  finishStage(stage, { resourceKey: resourceKeys.shape });
 
   const detailStarted = performance.now();
   stage = timingReport?.start(`${quality}-detail-buffer-and-dispatch`, {
@@ -2388,7 +2427,7 @@ export async function bakePlanetCloudResources(layer, bakeOptions = {}) {
     seed,
     textureId: resourceKeys.detail,
   });
-  const detailGpuWaitMs = await finishStage(stage, { resourceKey: resourceKeys.detail });
+  finishStage(stage, { resourceKey: resourceKeys.detail });
 
   const blueStarted = performance.now();
   stage = timingReport?.start(`${quality}-blue-buffer-and-dispatch`, {
@@ -2400,7 +2439,17 @@ export async function bakePlanetCloudResources(layer, bakeOptions = {}) {
     seed,
     textureKey: resourceKeys.blue,
   });
-  const blueGpuWaitMs = await finishStage(stage, { resourceKey: resourceKeys.blue });
+  finishStage(stage, { resourceKey: resourceKeys.blue });
+
+  const blueMs = performance.now() - blueStarted;
+  let textureGpuWaitMs = 0;
+  if (waitForGpu && typeof layer.queue?.onSubmittedWorkDone === 'function') {
+    stage = timingReport?.start(quality + '-texture-gpu-wait', undefined, 'gpu-wait');
+    const waitStarted = performance.now();
+    await layer.queue.onSubmittedWorkDone();
+    textureGpuWaitMs = performance.now() - waitStarted;
+    finishStage(stage, { gpuWaitMs: textureGpuWaitMs });
+  }
 
   layer.resourceKeys = resourceKeys;
   layer.textures = { weatherView, shape3DView, detail3DView, blueView };
@@ -2409,11 +2458,8 @@ export async function bakePlanetCloudResources(layer, bakeOptions = {}) {
     weatherMs: shapeStarted - weatherStarted,
     shapeMs: detailStarted - shapeStarted,
     detailMs: blueStarted - detailStarted,
-    blueMs: performance.now() - blueStarted,
-    weatherGpuWaitMs,
-    shapeGpuWaitMs,
-    detailGpuWaitMs,
-    blueGpuWaitMs,
+    blueMs,
+    textureGpuWaitMs,
     totalMs: performance.now() - started,
   };
 
@@ -2546,10 +2592,16 @@ export async function updatePlanetCloudLayer(layer) {
   const cloudTop = finiteNumber(opt.cloudTop, Math.max(cloudBottom + 2.15, (layer.atmosphereRadius - layer.radius) * 0.24));
   const outer = layer.radius + cloudTop + Math.max(2.0, Math.abs(PLANET_CLOUD_FLAT_LAB_PRESET.tuning.anvilLift || 0));
   const screenMetrics = estimatePlanetScreenCoverage({ camPos, fovYDeg, aspect }, outer);
-  const divider = resolveAdaptiveRenderDivider(layer, width, height, screenMetrics);
+  const cameraRadius = Math.hypot(...camPos);
+  // Use a small dead band around the transition so hovering near it keeps
+  // the current render target and temporal history.
+  const orbitMargin = layer.adaptiveRenderDivider < 2 ? 0.06 : 0.10;
+  const outsideClouds = cameraRadius > outer + layer.radius * orbitMargin;
+  const divider = resolveAdaptiveRenderDivider(layer, width, height, screenMetrics, outsideClouds);
   const outW = Math.max(1, Math.ceil(width / divider));
   const outH = Math.max(1, Math.ceil(height / divider));
-  if (outW !== layer.lastOutputWidth || outH !== layer.lastOutputHeight) {
+  const outputResized = outW !== layer.lastOutputWidth || outH !== layer.lastOutputHeight;
+  if (outputResized) {
     layer.cloudBuilder.createOutputTexture(outW, outH, 1, opt.textures?.outputFormat || opt.outputFormat || 'rgba16float');
     layer.lastOutputWidth = outW;
     layer.lastOutputHeight = outH;
@@ -2572,7 +2624,7 @@ export async function updatePlanetCloudLayer(layer) {
       distanceArray3(previousCamera.up, up) > 0 ||
       previousCamera.fovYDeg !== fovYDeg || previousCamera.aspect !== aspect
     : cameraMovedForHistory(previousCamera, cameraHistoryState, layer.radius, opt);
-  if (layer.frame % frameStride !== 0 && layer.cloudBuilder.outView &&
+  if (!outputResized && layer.frame % frameStride !== 0 && layer.cloudBuilder.outView &&
       (!usesSceneDepth || (!cameraIsMoving && previousCamera))) {
     renderOverlay(layer);
     return;
@@ -2595,7 +2647,8 @@ export async function updatePlanetCloudLayer(layer) {
   const baseTransforms = opt.transforms || PLANET_CLOUD_FLAT_LAB_PRESET.transforms;
   const transforms = mergePlain(baseTransforms, {});
   const auroraCap = opt.auroraCap || {};
-  const auroraHemisphere = String(auroraCap.hemisphere || 'north').toLowerCase() === 'south' ? -1.0 : 1.0;
+  const auroraPoles = String(auroraCap.hemisphere ?? 'both').toLowerCase();
+  const auroraHemisphere = auroraPoles === 'north' ? 1 : auroraPoles === 'south' ? -1 : 0;
   const auroraEnabled = !!opt.auroraMode;
 
   const styledMotion = !auroraEnabled && opt.cloudStyle && opt.cloudStyle !== 'legacy';
@@ -2730,6 +2783,22 @@ export async function updatePlanetCloudLayer(layer) {
     half: [outer, shellHalf, outer],
     uvScale: 1.0,
   });
+  const baseCoarseFactor = Math.max(1, Math.floor(opt.performance?.coarseFactor ?? opt.coarseFactor ?? 1));
+  const nearSurfaceCoarseFactor = Math.max(1, Math.floor(
+    opt.performance?.nearSurfaceCoarseFactor ?? opt.nearSurfaceCoarseFactor ?? 3,
+  ));
+  const nearSurfaceActive = nearSurfaceFactor > 0.15;
+  const adaptiveCoarseFactor = nearSurfaceActive ? nearSurfaceCoarseFactor : 1;
+  const movingFullscreenCoarseFactor = cameraIsMoving && screenMetrics.pressure > 0.30
+    ? Math.max(1, Math.floor(
+      opt.performance?.movingFullscreenCoarseFactor ?? opt.movingFullscreenCoarseFactor ?? 2,
+    ))
+    : 1;
+  const coarseFactor = Math.max(baseCoarseFactor, adaptiveCoarseFactor, movingFullscreenCoarseFactor);
+  const rayWidth = Math.max(1, Math.ceil(outW / coarseFactor));
+  const rayHeight = Math.max(1, Math.ceil(outH / coarseFactor));
+  const depthWidth = layer.useBootstrapPreview ? outW : rayWidth;
+  const depthHeight = layer.useBootstrapPreview ? outH : rayHeight;
   layer.cloudBuilder.setViewFromCamera({
     camPos,
     right,
@@ -2747,22 +2816,10 @@ export async function updatePlanetCloudLayer(layer) {
     viewExtraA: finiteNumber(auroraCap.halfAngleDeg, 12.0),
     viewExtraB: finiteNumber(auroraCap.featherDeg, 6.0),
     viewExtraC: auroraHemisphere,
-    terrainDepthView: layer.getTerrainDepth?.(outW, outH),
+    terrainDepthView: layer.getTerrainDepth?.(depthWidth, depthHeight),
   });
   layer.cloudBuilder.setLight({ sunDir, camPos });
 
-  const baseCoarseFactor = Math.max(1, Math.floor(opt.performance?.coarseFactor ?? opt.coarseFactor ?? 1));
-  const nearSurfaceCoarseFactor = Math.max(1, Math.floor(
-    opt.performance?.nearSurfaceCoarseFactor ?? opt.nearSurfaceCoarseFactor ?? 3,
-  ));
-  const nearSurfaceActive = nearSurfaceFactor > 0.15;
-  const adaptiveCoarseFactor = nearSurfaceActive ? nearSurfaceCoarseFactor : 1;
-  const movingFullscreenCoarseFactor = cameraIsMoving && screenMetrics.pressure > 0.30
-    ? Math.max(1, Math.floor(
-      opt.performance?.movingFullscreenCoarseFactor ?? opt.movingFullscreenCoarseFactor ?? 2,
-    ))
-    : 1;
-  const coarseFactor = Math.max(baseCoarseFactor, adaptiveCoarseFactor, movingFullscreenCoarseFactor);
   ensureCloudHistory(layer, outW, outH, coarseFactor);
 
   // Allocating a new history (including a coarse/full-size transition) must
@@ -2808,15 +2865,15 @@ export async function updatePlanetCloudLayer(layer) {
     temporalCellPhase: temporalCellRate > 1 ? frameIndex % temporalCellRate : 0,
     compactInterleave: cameraIsMoving || auroraAnimating ? 0 : (reprojBase.compactInterleave ?? (temporalCellRate > 1 ? 1 : 0)),
     frameIndex,
-    fullWidth: Math.max(1, Math.ceil(outW / coarseFactor)),
-    fullHeight: Math.max(1, Math.ceil(outH / coarseFactor)),
+    fullWidth: rayWidth,
+    fullHeight: rayHeight,
   });
   layer.performanceStats = {
     canvasWidth: width,
     canvasHeight: height,
     outputWidth: outW,
     outputHeight: outH,
-    raymarchPixels: outW * outH,
+    raymarchPixels: depthWidth * depthHeight,
     renderScaleDivider: divider,
     screenCoverage: screenMetrics.coverage,
     screenPressure: screenMetrics.pressure,
@@ -2836,10 +2893,14 @@ export async function updatePlanetCloudLayer(layer) {
     historyWarmupActive,
   };
   if (layer.useBootstrapPreview && typeof layer.cloudBuilder.dispatchBootstrapPreview === 'function') {
-    await layer.cloudBuilder.dispatchBootstrapPreview({ wait: false });
+    layer.cloudRenderView = await layer.cloudBuilder.dispatchBootstrapPreview({ wait: false });
     layer.performanceStats.bootstrapPreviewPipeline = true;
   } else {
-    await layer.cloudBuilder.dispatch({ wait: false, coarseFactor });
+    layer.cloudRenderView = await layer.cloudBuilder.dispatch({
+      wait: false,
+      coarseFactor,
+      reconstructAtPresentation: opt.reconstructAtPresentation,
+    });
     swapCloudHistory(layer);
     if (historyWarmupActive) {
       layer.historyWarmupFrames = Math.max(0, (layer.historyWarmupFrames | 0) - 1);
