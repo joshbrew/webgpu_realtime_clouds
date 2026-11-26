@@ -1,3 +1,4 @@
+import { FLUID_TWILIGHT_GRADE } from '../cloudLookPresets.js';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -112,7 +113,7 @@ test('the donut example restores volume bounds and clears its mask when leaving'
   const controls = new Map(ids.map((id,i)=>[id,{value:values[i]}]));
   const preview = {};
   const valueSource = source.slice(source.indexOf('let savedLayerCamera ='), source.indexOf('async function applyCloudLayerPreset('));
-  const apply = new Function('frozenPatternPreset','frozenPatternControls','$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(frozenPatternPreset,null,
+  const apply = new Function('FLUID_TWILIGHT_GRADE','frozenPatternPreset','frozenPatternControls','$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(FLUID_TWILIGHT_GRADE,frozenPatternPreset,null,
     id=>controls.get(id),(id,value)=>controls.set(id,{value:String(value)}),presets,preview);
   apply('rotating_donut');
   assert.equal(preview.volumeShape, 'torus');
@@ -127,8 +128,8 @@ test('the donut example restores volume bounds and clears its mask when leaving'
 test('main pattern selection installs its layout after its source and captures fresh fields',()=>{
   const controls=new Map(),preview={frozenPattern:{enabled:true,capture:7}},adopted=[];
   const valueSource=source.slice(source.indexOf('let savedLayerCamera ='),source.indexOf('async function applyCloudLayerPreset('));
-  const apply=new Function('frozenPatternPreset','frozenPatternControls','$','setControlValue','CLOUD_LAYER_PRESETS','preview','applyGradePreset',`${valueSource};return applyCloudLayerPresetValues;`)(
-    frozenPatternPreset,{adoptScene(){adopted.push({key:preview.layerPreset,type:controls.get('t-formType').value,pattern:{...preview.frozenPattern}});}},
+  const apply=new Function('FLUID_TWILIGHT_GRADE','frozenPatternPreset','frozenPatternControls','$','setControlValue','CLOUD_LAYER_PRESETS','preview','applyGradePreset',`${valueSource};return applyCloudLayerPresetValues;`)(
+    FLUID_TWILIGHT_GRADE,frozenPatternPreset,{adoptScene(){adopted.push({key:preview.layerPreset,type:controls.get('t-formType').value,pattern:{...preview.frozenPattern}});}},
     id=>controls.get(id),(id,value)=>controls.set(id,{value:String(value)}),presets,preview,()=>{});
   apply('frozen_pattern_decks');
   assert.equal(preview.frozenPattern.enabled,true);assert.equal(preview.frozenPattern.axis,2);assert.equal(preview.frozenPattern.capture,8);
@@ -145,7 +146,7 @@ test('rounded preset framing and AO cannot leak back into Rain Shelf', () => {
   const controls = new Map(cameraIds.map((id, i) => [id, { value: original[i] }]));
   const setControl = (id, value) => controls.set(id, { value: String(value) });
   const valueSource = source.slice(source.indexOf('let savedLayerCamera ='), source.indexOf('async function applyCloudLayerPreset('));
-  const apply = new Function('frozenPatternPreset','frozenPatternControls','$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(frozenPatternPreset,null,
+  const apply = new Function('FLUID_TWILIGHT_GRADE','frozenPatternPreset','frozenPatternControls','$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(FLUID_TWILIGHT_GRADE,frozenPatternPreset,null,
     id => controls.get(id), setControl,
     { tower: {form:{type:2, halfY:3.6, puffScale:5, ao:.6, heightVariation:.28}}, anvil: {form:{type:3, halfY:5.8, puffScale:7, ao:.65, heightVariation:.18}}, rain: {} }, {},
   );
@@ -163,7 +164,7 @@ test('Flowing Shelf stretching restores cleanly without changing grade or ray bu
   const controls = new Map([['v-render-scale-divider',{value:'2'}],['v-temporal-cell-rate',{value:'2'}]]);
   const preview = { gradeStyle:29 };
   const valueSource = source.slice(source.indexOf('let savedLayerCamera ='), source.indexOf('async function applyCloudLayerPreset('));
-  const apply = new Function('frozenPatternPreset','frozenPatternControls','$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(frozenPatternPreset,null,
+  const apply = new Function('FLUID_TWILIGHT_GRADE','frozenPatternPreset','frozenPatternControls','$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(FLUID_TWILIGHT_GRADE,frozenPatternPreset,null,
     id=>controls.get(id),(id,value)=>controls.set(id,{value:String(value)}),presets,preview);
   apply('flowing_shelf');
   assert.equal(controls.get('sh-axis-x').value,'0.28');
@@ -193,7 +194,7 @@ test('vertical ink layers preserve sculpted rendering and restore the original s
   controls.set('v-temporal-cell-rate',{value:'4'});
   const preview = { gradeStyle:38 };
   const valueSource = source.slice(source.indexOf('let savedLayerCamera ='), source.indexOf('async function applyCloudLayerPreset('));
-  const apply = new Function('frozenPatternPreset','frozenPatternControls','$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(frozenPatternPreset,null,
+  const apply = new Function('FLUID_TWILIGHT_GRADE','frozenPatternPreset','frozenPatternControls','$','setControlValue','CLOUD_LAYER_PRESETS','preview', `${valueSource}; return applyCloudLayerPresetValues;`)(FLUID_TWILIGHT_GRADE,frozenPatternPreset,null,
     id=>controls.get(id),(id,value)=>controls.set(id,{value:String(value)}),presets,preview);
   for (const key of ['rising_ink_shelf','billowing_ink_bank','wind_torn_curtains','dense_wind_folded_bank']) {
     apply(key);

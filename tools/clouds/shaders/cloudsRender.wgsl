@@ -10,6 +10,15 @@ const SUN_EDGE_GLOW_RADIUS : f32 = 0.42;
 override PREVIEW_SOFT_VOLUME: u32 = 0u;
 override PREVIEW_PLANET_SHELL: u32 = 0u;
 
+// The local projection has its reference surface at y=0. Expanding the
+// sphere equation around it retains precision when flying near the ground.
+fn previewPlanetBlocksSky(origin: vec3<f32>, ray: vec3<f32>, radius: f32) -> bool {
+  if (radius <= 0.0) { return false; }
+  let halfB = dot(origin.xz, ray.xz) + (radius + origin.y) * ray.y;
+  let c = dot(origin.xz, origin.xz) + origin.y * (2.0 * radius + origin.y);
+  return c < 0.0 || (halfB < 0.0 && halfB * halfB >= c);
+}
+
 // ---------- I/O ----------
 struct RenderParams {
   layerIndex:u32,
@@ -50,7 +59,13 @@ struct RenderParams {
   terrain:vec4<f32>, // terrain enabled, marine cloud perspective, local convection, local anvil
   planetOpacity: vec4<f32>, // alpha cutoff, alpha power, opacity, native shell
   planetGrade: PlanetCloudGrade,
-  ocean: vec4<f32>, // elapsed seconds, wave units per terrain unit
+  sceneSkyTint: vec4<f32>, // RGB and enable flag
+  sceneSolar: vec4<f32>,   // RGB and bloom
+  sceneLighting: vec4<f32>, // direct light, sine/cosine of sky azimuth, sine of sky elevation
+  terrainBody: vec4<f32>, // reference sphere radius, star time, focused constellation, reveal
+  ocean: vec4<f32>, // elapsed seconds, wave scale, region meters per unit, shell lighting weight
+  region: vec4<f32>, // regional terrain half-width, highlight rolloff, display contrast
+  cloudAir: vec4<f32>, // shell datum, cloud base, cloud thickness
 };
 @group(0) @binding(0) var samp : sampler;
 @group(0) @binding(1) var tex  : texture_2d_array<f32>;
@@ -77,6 +92,12 @@ fn vs_main(@builtin(vertex_index) vid:u32)->VSOut {
 }
 
 // ---------- helpers ----------
+fn previewSolarTransmission(aerialFog: f32) -> f32 {
+  // The solar disk is an HDR emitter. Extinction dims it through the same
+  // haze that colors the sky without replacing it with the haze radiance.
+  return exp(-.46 * aerialFog);
+}
+
 fn toneMapFilmic(c:vec3<f32>)->vec3<f32> {
   let a = 2.51;
   let b = 0.03;
@@ -94,17 +115,6 @@ fn luma(c:vec3<f32>)->f32 {
 
 fn hash12(p: vec2<f32>) -> f32 {
   return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453123);
-}
-
-fn weatherStars(direction:vec3<f32>) -> vec3<f32> {
-  // World-direction cells keep stars fixed while flying/turning. One tiny
-  // procedural evaluation in the existing composite, no texture/pass/history.
-  let uv=vec2<f32>(atan2(direction.x,direction.z),asin(clamp(direction.y,-1.0,1.0)))*80.0;
-  let cell=floor(uv);
-  let seed=hash12(cell);
-  let center=vec2<f32>(hash12(cell+31.7),hash12(cell+83.1))*.70+.15;
-  let point=exp(-dot(fract(uv)-center,fract(uv)-center)*900.0);
-  return vec3<f32>(.44,.61,.94)*point*smoothstep(.986,.998,seed)*smoothstep(.03,.30,direction.y);
 }
 
 fn displayTextureDimensions() -> vec2<f32> {
@@ -727,6 +737,37 @@ fn rayDirFromUV(uv:vec2<f32>)->vec3<f32> {
   return normalize(dir);
 }
 
+fn regionalReceiverDepth(uv: vec2<f32>, ray: vec3<f32>, distance: f32) -> f32 {
+  let dims = vec2<f32>(textureDimensions(terrainTexture));
+  if (distance <= 0.0 || !any(displayTextureDimensions() > dims * 1.5)) { return distance; }
+  let pixel = uv * dims - .5;
+  let last = vec2<i32>(dims) - 1;
+  let base = vec2<i32>(floor(pixel));
+  let lo = clamp(base, vec2<i32>(0), last);
+  let hi = clamp(base + 1, vec2<i32>(0), last);
+  let depths = vec4<f32>(
+    textureLoad(terrainTexture, lo, 0).a,
+    textureLoad(terrainTexture, vec2<i32>(hi.x, lo.y), 0).a,
+    textureLoad(terrainTexture, vec2<i32>(lo.x, hi.y), 0).a,
+    textureLoad(terrainTexture, hi, 0).a);
+  let nearest = min(min(depths.x, depths.y), min(depths.z, depths.w));
+  if (nearest <= 0.0) { return distance; }
+  let farthest = max(max(depths.x, depths.y), max(depths.z, depths.w));
+  let confidence = 1.0 - smoothstep(.065, .18, (farthest - nearest) / max(nearest, 1.0));
+  if (confidence <= .001) { return distance; }
+  let scale = 2.0 * tan(.5 * R.fovY) * vec2<f32>(R.aspect, 1.0);
+  let low = ((vec2<f32>(lo) + .5) / dims - .5) * scale;
+  let high = ((vec2<f32>(hi) + .5) / dims - .5) * scale;
+  let x = vec4<f32>(low.x, high.x, low.x, high.x);
+  let y = vec4<f32>(low.y, low.y, high.y, high.y);
+  // Reciprocal view depth is linear across a projected plane. Interpolating
+  // radial distance directly would slide the receiver around on slopes.
+  let invZ = sqrt(1.0 + x * x + y * y) / depths;
+  let f = fract(pixel);
+  let z = 1.0 / mix(mix(invZ.x, invZ.y, f.x), mix(invZ.z, invZ.w, f.x), f.y);
+  return mix(distance, z / max(dot(ray, R.fwd), .001), confidence);
+}
+
 fn previewBoxInterval(ro: vec3<f32>, rd: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> vec2<f32> {
   let safeRd = vec3<f32>(
     select(1e-6, rd.x, abs(rd.x) > 1e-6),
@@ -860,6 +901,56 @@ fn previewCloudAerialDistance(rayDir: vec3<f32>, cloudDisplayA: f32, fogHorizon:
     return max(proxyDepth, min(fromBase, max(half.x, half.z) * 1.45));
   }
   return proxyDepth;
+}
+
+fn previewShellAirDistance(ray: vec3<f32>, receiver: f32, cloudOpacity: f32, fogHorizon: f32) -> f32 {
+  let datum = R.cloudAir.x;
+  let base = R.cloudAir.y;
+  let thickness = max(R.cloudAir.z, .001);
+  let outer = cloudShaftSphere(R.camPos, ray, datum, base + thickness);
+  let entry = max(0.0, outer.x);
+  let chord = max(0.0, outer.y - entry);
+  let estimate = min(receiver, previewCloudAerialDistance(ray, cloudOpacity, fogHorizon));
+  if (chord <= .0001) { return estimate; }
+
+  let inner = cloudShaftSphere(R.camPos, ray, datum, base);
+  let eyeHeight = cloudShaftAltitude(R.camPos, datum);
+  let eyeFromCenter = R.camPos + vec3<f32>(0.0, datum, 0.0);
+  let closest = max(entry, -dot(eyeFromCenter, ray));
+  let heightAtClosest = cloudShaftAltitude(R.camPos + ray * closest, datum);
+  let belowBase = smoothstep(0.0, thickness * .36, base - heightAtClosest);
+  var begin = entry;
+  var end = outer.y;
+  if (inner.x < inner.y) {
+    if (inner.x > entry) {
+      end = mix(end, min(end, inner.x), belowBase);
+    } else if (eyeHeight <= base && inner.y > 0.0) {
+      begin = mix(entry, inner.y, smoothstep(0.0, thickness * .32, base - eyeHeight));
+    }
+  }
+  let distance = min(receiver, begin + min(thickness * .80, max(end - begin, 0.0) * .18));
+  return mix(estimate, distance, smoothstep(0.0, thickness * .75, chord));
+}
+
+fn previewShellAirFog(ray: vec3<f32>, distance: f32, strength: f32, horizon: f32) -> f32 {
+  if (strength <= 0.0 || distance <= 0.0) { return 0.0; }
+  let metersPerUnit = max(R.ocean.z, 1.0);
+  let scaleHeight = mix(1450.0, 3200.0, clamp(horizon * .5, 0.0, 1.0));
+  let radius = select(R.cloudAir.x, R.terrainBody.x, R.terrainBody.x > 0.0);
+  var opticalPath = 0.0;
+  // Bias the intervals toward the eye to cover the denser air in a long
+  // upward ray. Each tap uses radial height along the path to the cloud.
+  let path = min(distance, 140000.0 / metersPerUnit);
+  for (var i = 0u; i < 4u; i++) {
+    let low = f32(i) * .25;
+    let high = low + .25;
+    let start = low * low;
+    let end = high * high;
+    let point = R.camPos + ray * (.5 * (start + end) * path);
+    let height = max(0.0, cloudShaftAltitude(point, radius) * metersPerUnit);
+    opticalPath += (end - start) * exp(-height / scaleHeight);
+  }
+  return min(.97, 1.0 - exp(-strength * opticalPath * path * metersPerUnit / 11500.0));
 }
 
 fn previewCloudBoxImmersion(fogHorizon: f32) -> f32 {
@@ -1103,12 +1194,16 @@ fn filteredGodRayMask(uv:vec2<f32>,layer:i32,lod:f32,along:vec2<f32>,across:vec2
   // mountain silhouette once per step. Four alpha reads replace the previous
   // three-wide-plus-mip mask; terrain coverage is filtered separately.
   var mask=vec2<f32>(0.0);
+  var weight=0.0;
   for(var j=0u;j<2u;j++){for(var k=0u;k<2u;k++){
     let at=uv+along*select(-0.57735,0.57735,j==1u)+across*select(-0.57735,0.57735,k==1u);
     let cloud=clamp(textureSampleLevel(tex,samp,clamp(at,vec2<f32>(0.001),vec2<f32>(0.999)),layer,lod).a,0.0,1.0);
-    mask+=vec2<f32>(cloud,terrainGodRayBlocker(at,receiverDistance))*0.25;
+    let margin=min(at,1.0-at);
+    let visible=smoothstep(0.0,.025,min(margin.x,margin.y));
+    mask+=vec2<f32>(cloud,terrainGodRayBlocker(at,receiverDistance))*visible;
+    weight+=visible;
   }}
-  return mask;
+  return mask/max(1.0,weight);
 }
 
 fn anvilAperture(uv:vec2<f32>, offset:vec2<f32>, layer:i32, lod:f32, center:f32) -> f32 {
@@ -1136,7 +1231,7 @@ fn godRayShaft(
   lowSun: f32
 ) -> vec2<f32> {
   let enabled = clamp(R.godRayControls.x, 0.0, 1.0);
-  let strength = clamp(R.godRayControls.y, 0.0, 3.0) * enabled;
+  let strength = sceneShaftStrength(R.godRayControls.y) * enabled;
   if (strength <= 0.0001 || fwdDot <= -0.08) {
     return vec2<f32>(0.0, 0.0);
   }
@@ -1171,6 +1266,12 @@ fn godRayShaft(
 
   let span = mix(0.52, 1.55, clamp(rayLength * 0.60, 0.0, 1.0));
   let reach = min(dist, span);
+  let toSun = sunHint - uv;
+  let edge = select(uv, 1.0 - uv, toSun > vec2<f32>(0.0));
+  let visibleFraction = min(edge.x / max(abs(toSun.x), .00001), edge.y / max(abs(toSun.y), .00001));
+  let entry = dist * (1.0 - clamp(visibleFraction, 0.0, 1.0));
+  let visibleLength = reach - entry;
+  if (visibleLength <= 0.0) { return vec2<f32>(0.0); }
   let radialX = dist / max(span, 0.001);
   let radialGate = 1.0 / (1.0 + radialX * radialX * mix(1.45, 2.35, clamp(falloff * 0.22, 0.0, 1.0)));
   let angularGate = smoothstep(0.08, 0.88, towardSun) * mix(0.68, 1.22, lowSun);
@@ -1197,7 +1298,7 @@ fn godRayShaft(
   let pixelCell = floor(uv * dims);
   let coarseCell = floor(uv * dims * 0.18);
   let baseRand = mix(hash12(coarseCell + sunHint * 19.1), hash12(pixelCell + sunHint * 7.7), 0.35);
-  let windowPre = radialGate * angularGate * screenGate * fogDensity * strength;
+  let windowPre = radialGate * angularGate * screenGate * fogDensity * strength * smoothstep(0.0, .065, visibleLength);
   if (windowPre <= 0.00001) {
     return vec2<f32>(0.0, 0.0);
   }
@@ -1213,7 +1314,7 @@ fn godRayShaft(
   var prevOcc = clamp(textureSampleLevel(
     tex,
     samp,
-    clamp(sunHint, vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999)),
+    clamp(sunHint + dir * entry, vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999)),
     layer,
     2.5
   ).a, 0.0, 1.0);
@@ -1226,18 +1327,19 @@ fn godRayShaft(
     // Share radial segments across receivers. Stretching every sample pattern
     // to each pixel's distance repeatedly projected the same blocker outline.
     // Only the last segment's integrated length varies with the receiver.
-    let segmentBegin=span*pow(f32(i)/f32(samples),1.35);
+    let segmentBegin=max(entry,span*pow(f32(i)/f32(samples),1.35));
     let segmentEnd=span*pow(f32(i+1u)/f32(samples),1.35);
     if(segmentBegin>=reach){break;}
     let stepLen=min(reach,segmentEnd)-segmentBegin;
-    let segmentLength=select(segmentEnd-segmentBegin,stepLen,stableShaft);
+    if(stepLen<=0.0){continue;}
+    let segmentLength=stepLen;
     // Even quadrature of the visible part of the segment keeps the marine
     // shafts coherent as the cloud breaks move across the ray grid.
     let along=segmentBegin+segmentLength*select(mix(0.5,baseRand,0.12),0.5,stableShaft);
     let t=along/span;
 
     let beamWidth = max(
-      mix(0.0030, 0.016, sqrt(t)) *
+      mix(0.0075, 0.029, sqrt(t)) *
       mix(0.92, 1.34, lowSun) *
       mix(1.00, 1.26, clamp(dist / max(span, 0.001), 0.0, 1.0)),
       pix * mix(2.0, 4.0, sqrt(t))
@@ -1277,7 +1379,7 @@ fn godRayShaft(
       mix(0.62, 0.84, smoothstep(0.015, 0.14, edge)) *
       mix(1.0, 0.86, pow(t, 1.4));
 
-    let weight=stepLen/max(reach,0.0001);
+    let weight=stepLen/max(visibleLength,0.0001);
     if (trackAnvilGaps && cloudOcc < 0.72 && mask.y < 0.84) {
       // Compare the narrow beam to the neighboring directions over the same
       // radial segment. Favor a lit opening and let terrain close the path.
@@ -1355,42 +1457,65 @@ fn sampleAircraftForeground(uv: vec2<f32>, layer: i32, sunDir: vec3<f32>, paint:
   return sum/max(total,.00001);
 }
 
-fn fluidTwilightDisplay(color: vec3<f32>, strength: f32, coverage: f32) -> vec3<f32> {
-  let background = strength * (1.0 - smoothstep(.05, .86, coverage));
-  if (background <= 0.0) { return color; }
-  return pow(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(mix(1.0, .4545, background)));
-}
-
 @fragment
 fn fs_main(in:VSOut)->@location(0) vec4<f32> {
+  let color = resolvePreviewColor(in);
+  return vec4<f32>(sceneDisplayContrast(color.rgb, R.region.z), color.a);
+}
+
+fn resolvePreviewColor(in: VSOut) -> vec4<f32> {
   let layer = i32(R.layerIndex);
+  let shellScene = PREVIEW_PLANET_SHELL != 0u || (PREVIEW_SOFT_VOLUME == 0u && R.planetOpacity.w > .5);
   let rayDir = rayDirFromUV(in.uv);
   let terrainSample = cloudTerrainSample(terrainTexture, in.uv, R.terrain.x);
   let center = sampleCloudRaw(in.uv, layer);
   var depthEdge = vec4<f32>(-1.0);
-  if (R.terrain.x > .5 && R.fieldLighting > .5 && R.cloudShading < 1.5 &&
+  if (R.terrain.x > .5 && (shellScene || (R.fieldLighting > .5 && R.cloudShading < 1.5)) &&
       R.compositeQuality != 0u && center.a > .008) {
     let size = vec2<f32>(textureDimensions(tex));
     if (any(displayTextureDimensions() > size * 1.5) && !cloudFootprintMayHitAircraft(rayDir, size)) {
       depthEdge = reconstructTerrainBoundary(in.uv, layer, size, terrainSample.a);
     }
   }
-  var centerTexel = depthEdge;
-  if (depthEdge.a < 0.0) {
-    centerTexel = sampleCloudResolved(in.uv, layer, rayDir, center);
+  var neighborhood = CloudNeighborhood(center, vec2<f32>(0.0), center.a, vec2<f32>(0.0), 0.0);
+  var texel = center;
+  if (!shellScene) {
+    var centerTexel = depthEdge;
+    if (depthEdge.a < 0.0) {
+      centerTexel = sampleCloudResolved(in.uv, layer, rayDir, center);
+    }
+    neighborhood = sampleCloudNeighborhood(in.uv, layer, centerTexel);
+    texel = select(neighborhood.filtered, depthEdge, depthEdge.a >= 0.0);
   }
-  let neighborhood = sampleCloudNeighborhood(in.uv, layer, centerTexel);
-  let texel = select(neighborhood.filtered, depthEdge, depthEdge.a >= 0.0);
   let alphaGate = alphaFloorGate(texel.a);
   var cloudRGB = texel.rgb * alphaGate;
   var cloudA = clamp(texel.a * alphaGate, 0.0, 1.0);
 
   let sunDir = normalize(R.sunDir);
-  let aircraft=sceneAircraft(R.camPos,rayDir,vec3<f32>(R._p13,R._p14,R._p16),R.right,R.up,R.fwd,R._p4,R._p5,R._p6,R._p17,sunDir);
-  let terrainDistance = select(1000000.0, terrainSample.a, terrainSample.a > 0.0);
+  let aircraftPosition = vec3<f32>(R._p13, R._p14, R._p16);
+  let aircraft=sceneAircraft(R.camPos,rayDir,aircraftPosition,R.right,R.up,R.fwd,R._p4,R._p5,R._p6,R._p17,sunDir);
+  let regionRadius = R.terrainBody.x;
+  let regionExtent = R.region.x;
+  let planetInterval = cloudShaftSphere(R.camPos, rayDir, regionRadius, 0.0);
+  let regionGroundRay = regionExtent > 0.0 && planetInterval.x <= planetInterval.y && planetInterval.y > 0.0;
+  let regionGroundDepth = select(1000000.0, max(0.0, planetInterval.x), regionGroundRay);
+  var terrainDistance = select(1000000.0, terrainSample.a, terrainSample.a > 0.0);
   let terrainRay=terrainDistance<1000000.0;
-  let terrainVisibility=select(0.0,previewTerrainVisibility(terrainDistance),terrainRay);
-  let hullRay=aircraft.distance<1000000.0 && aircraft.distance<terrainDistance;
+  if (terrainRay && regionExtent > 0.0) {
+    terrainDistance = regionalReceiverDepth(in.uv, rayDir, terrainDistance);
+  }
+  let sceneDepth = select(regionGroundDepth, terrainDistance, terrainRay);
+  let hullRay=aircraft.distance<1000000.0 && aircraft.distance<sceneDepth;
+  // Terrain and aircraft depth block celestial bodies even when distance fog
+  // blends their surface colors into the sky.
+  // The mesh ends before the full horizon in some views. Keep the solid
+  // planet opaque beyond its last rendered triangles.
+  let planetBlocksSky = previewPlanetBlocksSky(R.camPos, rayDir, regionRadius);
+  let celestialRay = !terrainRay && !hullRay && !planetBlocksSky;
+  let terrainMetersPerUnit = R.ocean.z;
+  let distantGlow = select(smoothstep(3.0, 70.0, terrainDistance),
+    sceneTerrainGlowVisibility(terrainDistance * terrainMetersPerUnit), terrainMetersPerUnit > 0.0);
+  let foregroundGlow = select(select(1.0, distantGlow, terrainRay), 0.0, hullRay);
   if(PREVIEW_PLANET_SHELL == 0u && hullRay && (PREVIEW_SOFT_VOLUME != 0u || R.planetOpacity.w < .5)){
     let foreground = sampleAircraftForeground(in.uv, layer, sunDir, aircraft.color, false);
     cloudRGB = foreground.rgb;
@@ -1407,7 +1532,6 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   let twilight = bankTwilight(sunDir.y, localBank);
 
   let style = R.gradeStyle;
-  let fluidTwilight = style == 55u;
   var zenithSky = mix(R.sky * 0.98 + vec3<f32>(0.010, 0.018, 0.034), vec3<f32>(0.56, 0.66, 0.86), lowSun * 0.18);
   var horizonSky = mix(R.sky * 0.78 + vec3<f32>(0.040, 0.056, 0.078), vec3<f32>(0.90, 0.84, 0.88), lowSun * 0.22);
   var sunWash = mix(vec3<f32>(1.02, 0.98, 0.94), vec3<f32>(1.06, 0.90, 0.84), lowSun * 0.42);
@@ -1597,10 +1721,10 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
 
   // The authored atmosphere applies equally to cached and procedural clouds.
   // Cached lighting is illumination inside cloud matter, not aerial extinction.
-  let fogDensity = clamp(R.reservedControls.y, 0.0, 2.0);
+  let fogDensity = clamp(R.reservedControls.y, 0.0, 5.28);
   let fogHorizon = clamp(R.reservedControls.z, 0.0, 2.0);
   let fogSun = clamp(R.reservedControls.w, 0.0, 2.0);
-  let sunConeHaze = previewSunConeHaze(towardSunSky, fogDensity, fogSun, lowSun);
+  let sunConeHaze = previewSunConeHaze(towardSunSky, fogDensity, fogSun, lowSun) * foregroundGlow;
   let sunConeHorizon = 0.58 + 0.42 * previewHorizonBand(rayDir, fogHorizon);
 
   var sky = mix(horizonSky, zenithSky, pow(clamp(v, 0.0, 1.0), 1.35));
@@ -1640,11 +1764,14 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   let nearSun = max(dot(rayDir, sunDir), 0.0);
   let sunAboveHorizon = smoothstep(-.13, .035, sunDir.y) * (1.0 - smoothstep(.18, .62, R.nightAmount));
   let sunsetWeight = (1.0 - smoothstep(.12, .55, sunDir.y)) * sunAboveHorizon;
-  let sharedSkyWeight = select(.26 * sunsetWeight, sunAboveHorizon, fluidTwilight);
-  // Fluid applies a display curve after its filmic pass. Use it for this
-  // backdrop as well, with dense clouds retaining their authored finish.
-  let fluidDisplay = select(0.0, .86 * sunAboveHorizon, fluidTwilight);
-  let skyTint = select(mix(vec3<f32>(.82,.90,1.0), R.sky, .24), R.sky, fluidTwilight);
+  let cloudSunVisibility = sceneLocalCloudSun(sunDir.y);
+  let sharedSkyWeight = .26 * sunsetWeight;
+  let cycle = R.skyCycle > .5 && !shellScene;
+  let night = select(sceneNightAmount(sunDir.y), smoothstep(.52, 1.0, R.nightAmount), cycle);
+  let dayWeight = sceneTwilightWeight(sunDir.y) * (1.0 - smoothstep(.5, .92, R.nightAmount));
+  let atmosphereWeight = select(R.sceneSkyTint.w * select(1.0, max(dayWeight, night), cycle), 1.0, shellScene);
+  let pixelAngle = max(length(dpdx(rayDir)), length(dpdy(rayDir)));
+  let skyTint = mix(vec3<f32>(.82,.90,1.0), R.sky, .24);
   let sharedSky = sceneSkyGradient(rayDir.y, nearSun, sunDir.y) * skyTint;
   let sharedHorizon = sceneSkyGradient(0.0, nearSun, sunDir.y) * skyTint;
   let sharedZenith = sceneSkyGradient(1.0, nearSun, sunDir.y) * skyTint;
@@ -1652,18 +1779,82 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   horizonSky = mix(horizonSky, sharedHorizon, sharedSkyWeight);
   zenithSky = mix(zenithSky, sharedZenith, sharedSkyWeight);
   let sharedSolar = sceneSolarColor(sunDir.y) * userSunTint;
-  let angularBloom = R.sunBloom * select(.60 + .52 * sunsetWeight, 1.0 / .18, fluidTwilight);
-  let daylightHalo = sceneSolarHalo(nearSun) * angularBloom * sunAboveHorizon * R.celestialVisibility;
+  let angularBloom = R.sunBloom * (.60 + .52 * sunsetWeight);
+  let solarHaze = sceneSolarHaze(nearSun);
+  let daylightHalo = (solarHaze + select(0.0, sceneSolarGlare(nearSun), celestialRay))
+    * angularBloom * sunAboveHorizon * R.celestialVisibility;
   sky += sharedSolar * daylightHalo;
   sky += vec3<f32>(0.004, 0.006, 0.011) * horizon * twilight.ambient;
   sky += sunWash * pow(towardSunSky, 5.0) * mix(0.020, 0.090, lowSun) * twilight.direct;
   sky += sunWash * sunConeHaze * sunConeHorizon * twilight.direct;
+  let paletteEnabled = R.sceneSkyTint.w > .5;
+  let fluidSkyTint = select(R.sky / vec3<f32>(.50, .59, .74), R.sceneSkyTint.rgb, paletteEnabled);
+  let fluidSolar = sceneSolarColor(sunDir.y) * select(userSunTint, R.sceneSolar.rgb, paletteEnabled);
+  let fluidBloom = select(R.sunBloom, R.sceneSolar.w, paletteEnabled) * R.celestialVisibility;
+  let directLight = select(1.0, R.sceneLighting.x, paletteEnabled);
+  let litHaze = fluidSolar * sceneSunlitHaze(rayDir.y, nearSun, sunDir.y) * directLight * R.celestialVisibility;
+  let aerialStrength = clamp(fogDensity / .22, 0.0, 12.0);
+  let skyFlood = litHaze * (1.0 - exp(-.19 * aerialStrength));
+  sky += skyFlood * (1.0 - night);
+  var fluidBackdrop = vec3<f32>(0.0);
+  var nightStars = vec3<f32>(0.0);
+  if (atmosphereWeight > 0.0) {
+    fluidBackdrop = sceneSkyGradient(rayDir.y, nearSun, sunDir.y) * fluidSkyTint + fluidSolar * (fluidBloom / .18)
+      * (solarHaze + select(0.0, sceneSolarGlare(nearSun) + 4.0 * sceneSolarDisk(nearSun), celestialRay))
+      + skyFlood;
+    if (night > 0.0) {
+      let skyRay = flatNightRay(rayDir, R.sceneLighting.yz, R.sceneLighting.w);
+      var nightSky = sceneNightGradient(skyRay, rayDir.y, fluidSkyTint, celestialRay);
+      if (celestialRay) {
+        nightStars = (sceneNightStars(skyRay, rayDir.y, pixelAngle, R.terrainBody.y)
+          + sceneConstellation(skyRay, pixelAngle, R.terrainBody.yzw)) * night;
+      }
+      if (celestialRay && cycle && R.nightAmount > .5) {
+        let moon = .46 * sceneSolarDisk(nearSun) + .09 * sceneSolarHalo(nearSun);
+        nightSky += vec3<f32>(.64, .76, 1.0) * moon * R.celestialVisibility;
+      }
+      fluidBackdrop = mix(fluidBackdrop, nightSky, night);
+    }
+  }
+  var terrainVisibility = select(0.0, previewTerrainVisibility(terrainDistance), terrainRay);
+  if (regionGroundRay) {
+    let surface = R.camPos + rayDir * regionGroundDepth;
+    let radial = normalize(surface + vec3<f32>(0.0, regionRadius, 0.0));
+    let incidence = clamp(dot(radial, -rayDir), 0.0, 1.0);
+    let diffuse = max(dot(radial, sunDir), 0.0);
+    // Opaque low-detail continuation of the planet beyond the sampled tile.
+    // Keep the directional terminator and soften only the distant limb with air.
+    let base = vec3<f32>(.068, .116, .127) * (.24 + .76 * clamp(directLight, 0.0, 1.7) * diffuse);
+    let planetaryHaze = sceneTerrainFog(regionGroundDepth * R.ocean.z, -incidence, aerialStrength);
+    let haze = sceneSkyGradient(0.0, 0.0, sunDir.y) * fluidSkyTint;
+    let body = mix(base * mix(1.0, .18, night), haze * .77, planetaryHaze * (1.0 - .85 * night));
+    // At tangency the distant surface disappears into the same air as the sky.
+    let limb = smoothstep(0.0, max(.018, pixelAngle * 8.0), incidence);
+    fluidBackdrop = mix(fluidBackdrop, body, limb);
+    sky = mix(sky, body, limb);
+  }
   if (terrainRay) {
-    var terrainColor = terrainSample.rgb;
+    let terrainPoint = R.camPos + rayDir * terrainDistance;
+    if (regionExtent > 0.0) {
+      let tangent = terrainPoint.xz * (regionRadius / max(1.0, regionRadius + terrainPoint.y));
+      let edge = max(abs(tangent.x), abs(tangent.y)) / regionExtent;
+      terrainVisibility = select(1.0, 1.0 - smoothstep(.78, .995, edge), regionGroundRay);
+    }
+    let cloudSun = cloudShaftSurfaceSun(R.camPos, terrainPoint, R.godRayControls.x * R.godRayControls.y
+      * (1.0 - night) * smoothstep(.005, .075, sunDir.y), terrainDistance * pixelAngle, R.shadowDarkness);
+    let shadowFill = mix(vec3<f32>(.27, .40, .55), vec3<f32>(.002), sceneDeepShadowAmount(R.shadowDarkness));
+    var terrainColor = terrainSample.rgb * mix(vec3<f32>(1.0), vec3<f32>(.15, .22, .40), night)
+      * mix(shadowFill, vec3<f32>(1.0), cloudSun);
+    let receiver = cloudTerrainSample(terrainWaterTexture, in.uv, 1.0).rg;
+    let receiverLight = clamp((receiver.y - .25) / .75, 0.0, 1.0);
+    let surfaceShade = 1.0 - receiverLight;
+    let darkness = max(sceneDeepShadowAmount(R.shadowDarkness), R.shadowDarkness * .65 / (R.shadowDarkness + 5.0));
+    if (receiver.y > .12) {
+      terrainColor *= mix(1.0, .003, surfaceShade * darkness);
+    }
     if (R.ocean.y > 0.0) {
-      let water = cloudTerrainSample(terrainWaterTexture, in.uv, 1.0).rg;
-      if (water.x > .02) {
-        let position = (R.camPos + rayDir * terrainDistance).xz * R.ocean.y;
+      if (receiver.x > .02) {
+        let position = terrainPoint.xz * R.ocean.y;
         let pixelSpan = 2.0 * terrainDistance * tan(R.fovY * .5) * R.ocean.y /
           (displayTextureDimensions().y * sqrt(max(.20, abs(rayDir.y))));
         let waves = oceanWaves(position, R.ocean.x, pixelSpan);
@@ -1671,23 +1862,110 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
         let reflected = reflect(rayDir, normal);
         let fresnel = pow(1.0 - max(dot(-rayDir, normal), 0.0), 4.0);
         let reflectedSun = max(dot(reflected, sunDir), 0.0);
-        let reflectedSky = mix(horizonSky, zenithSky, 1.0 - exp(-max(reflected.y, 0.0) * 5.2))
+        var reflectedSky = mix(horizonSky, zenithSky, 1.0 - exp(-max(reflected.y, 0.0) * 5.2))
           + sharedSolar * (sceneSolarHalo(reflectedSun) - sceneSolarGlare(reflectedSun)) * angularBloom * sunAboveHorizon;
         let waterBase = vec3<f32>(.019,.066,.088) * (.76 + .40 * waves.roll);
         let solar = sunColor * twilight.direct * smoothstep(-.02,.13,sunDir.y);
-        let litWater = oceanSurfaceLight(waterBase, reflectedSky, reflectedSun, mix(solar, sharedSolar, sharedSkyWeight), water.y, fresnel);
-        terrainColor = mix(terrainColor, litWater, smoothstep(.02, .96, water.x));
+        var reflectedLight = mix(solar, sharedSolar, sharedSkyWeight);
+        if (atmosphereWeight > 0.0) {
+          var newReflection = sceneSkyRadiance(reflected.y, reflectedSun, sunDir.y, fluidSkyTint, fluidSolar, fluidBloom, 0.0)
+            - fluidSolar * sceneSolarGlare(reflectedSun) * (fluidBloom / .18);
+          if (night > 0.0) {
+            let reflectedSkyRay = flatNightRay(reflected, R.sceneLighting.yz, R.sceneLighting.w);
+            newReflection = mix(newReflection, sceneNightGradient(reflectedSkyRay, reflected.y, fluidSkyTint, false), night);
+          }
+          reflectedSky = mix(reflectedSky, newReflection, atmosphereWeight);
+          let directWaterLight = smoothstep(-.006, .025, sunDir.y);
+          reflectedLight = mix(reflectedLight, fluidSolar * (1.0 - night) * directWaterLight, atmosphereWeight);
+        }
+        let litWater = oceanSurfaceLight(waterBase, reflectedSky, reflectedSun, reflectedLight * (directLight * cloudSun), receiverLight, fresnel);
+        terrainColor = mix(terrainColor, litWater, smoothstep(.02, .96, receiver.x));
       }
     }
     sky = mix(sky, terrainColor * mix(1.0, .22, R.nightAmount) * twilight.ambient, terrainVisibility);
+    if (atmosphereWeight > 0.0) {
+      let hazeDirection = normalize(vec3<f32>(rayDir.x, max(.018, rayDir.y), rayDir.z));
+      let hazeSun = max(dot(hazeDirection, sunDir), 0.0);
+      var haze = sceneSkyGradient(hazeDirection.y, hazeSun * foregroundGlow, sunDir.y) * fluidSkyTint
+        + (fluidSolar * sceneSolarHaze(hazeSun) * (fluidBloom / .18) + litHaze) * foregroundGlow;
+      if (night > 0.0) {
+        let hazeSkyRay = flatNightRay(hazeDirection, R.sceneLighting.yz, R.sceneLighting.w);
+        haze = mix(haze, sceneNightGradient(hazeSkyRay, hazeDirection.y, fluidSkyTint, false), night);
+      }
+      var distanceFog: f32;
+      if (shellScene) {
+        // The shell uses the planet's distance scale. Unbounded local-world
+        // haze washed out whole valleys and swallowed the low cloud banks.
+        let horizonBias = (fogHorizon - .30) * .40 * exp(-abs(rayDir.y) * 8.0);
+        let fogStrength = clamp(aerialStrength * (1.0 + horizonBias), 0.0, 12.0);
+        var fogAngle = rayDir.y;
+        if (regionExtent > 0.0) {
+          let radial = normalize(terrainPoint + vec3<f32>(0.0, regionRadius, 0.0));
+          fogAngle = mix(rayDir.y, min(0.0, dot(rayDir, radial)), smoothstep(144.0, 768.0, terrainDistance));
+        }
+        distanceFog = sceneTerrainFog(terrainDistance * R.ocean.z, fogAngle, fogStrength);
+        let sunHaze = fogSun * pow(towardSunSky, 7.0) * .085 * (1.0 - night) * foregroundGlow;
+        haze = mix(haze, fluidSolar * .28, sunHaze);
+      } else {
+        distanceFog = previewAerialFogAmount(terrainDistance, rayDir, fogDensity, fogHorizon, fogSun, lowSun, towardSunSky, .5);
+      }
+      fluidBackdrop = mix(fluidBackdrop, mix(terrainColor, haze * .83, distanceFog), terrainVisibility);
+    }
   }
-  if(hullRay){sky=aircraft.color*mix(1.0,.22,R.nightAmount);}
+  if(hullRay){sky=aircraft.color*mix(1.0,.22,R.nightAmount);fluidBackdrop=aircraft.color;}
+
+  // Keep the close chase aircraft in front of the atmospheric shaft composite.
+  let shaftReceiver = select(sceneDepth, 0.0, hullRay);
+  let shaftNearFade = select(0.0, 12.0 * length(aircraftPosition - R.camPos), R._p4 > .5);
+  let shaftSun = 1.0 - night;
+  let horizonAir = sceneSkyGradient(max(.015, rayDir.y * .35), nearSun * foregroundGlow, sunDir.y);
+  let ambientAir = mix(horizonAir, sceneHazeAmbient(sunDir.y), .60) * fluidSkyTint;
+  let airSkyRay = flatNightRay(rayDir, R.sceneLighting.yz, R.sceneLighting.w);
+  let nightAir = sceneNightGradient(airSkyRay, max(.06, rayDir.y), fluidSkyTint, false) * .46;
+  let airTint = mix(ambientAir + litHaze * foregroundGlow * .28, nightAir, night);
+
+  if (shellScene) {
+    var shellTexel = depthEdge;
+    if (hullRay) {
+      shellTexel = sampleAircraftForeground(in.uv, layer, sunDir, aircraft.color, true);
+    } else if (depthEdge.a < 0.0) {
+      shellTexel = reconstructCloudOverlay(tex, samp, in.uv, 1.0, 0.0);
+    }
+    let raw = clamp(shellTexel.a, 0.0, 1.0);
+    let coverage = clamp(cloudOverlayOpacity(raw, R.planetOpacity.x, R.planetOpacity.y, R.planetOpacity.z), 0.0, 1.0);
+    let exposure = R.exposure * R.colorLift;
+    let backdrop = sceneDisplayWithRolloff(fluidBackdrop + nightStars * (1.0 - coverage),
+      exposure, R.saturationBoost, R.region.y);
+    var cloud = vec3<f32>(0.0);
+    if (coverage > 0.0) {
+      cloud = planetCloudResolvedDisplay(vec4<f32>(shellTexel.rgb, raw), R.planetGrade, exposure,
+        R.saturationBoost, R.ocean.w, sunDir.y, R.region.y);
+      let airDistance = previewShellAirDistance(rayDir, min(terrainDistance, aircraft.distance), coverage, fogHorizon);
+      let airFog = previewShellAirFog(rayDir, airDistance, aerialStrength, fogHorizon);
+      let airDisplay = sceneDisplayWithRolloff(airTint, exposure, R.saturationBoost, R.region.y);
+      cloud = mix(cloud, airDisplay, airFog);
+    }
+    let scene = mix(backdrop, cloud, coverage);
+    let localShaft = localCloudShafts(R.camPos, rayDir, sunDir, shaftReceiver, R.terrainBody.x,
+      R.godRayControls, aerialStrength, shaftSun, 1.0 - coverage, shaftNearFade);
+    return vec4<f32>(applyLocalCloudShafts(scene, localShaft, fluidSolar, coverage, R.godRayControls.y, R.shadowDarkness), 1.0);
+  }
+
+  let localShaft = localCloudShafts(R.camPos, rayDir, sunDir, shaftReceiver, R.terrainBody.x,
+    R.godRayControls, aerialStrength, shaftSun, 1.0 - cloudA, shaftNearFade);
+  let resolvedCloud = vec4<f32>(cloudRGB, cloudA);
+  var fluidColor = vec3<f32>(0.0);
+  // Preserve the authored cloud finish while using the same clear sky.
+  let stylized = R.cloudShading > 1.5 || illustratedLook(style) || painterlyLook(style) ||
+    style == 48u || style == 49u;
+  let stylizedWeight = 1.0 - smoothstep(.015, .78, cloudA);
+  let fluidWeight = atmosphereWeight * select(1.0, mix(stylizedWeight, 1.0, night), stylized);
 
   var sunGlow = 0.0;
   var sunDisk = 0.0;
   let fwdDot = dot(sunDir, R.fwd);
 
-  if (fwdDot > 0.0 && all(uvSun >= vec2<f32>(-0.25, -0.25)) && all(uvSun <= vec2<f32>(1.25, 1.25))) {
+  if (celestialRay && fwdDot > 0.0 && all(uvSun >= vec2<f32>(-0.25, -0.25)) && all(uvSun <= vec2<f32>(1.25, 1.25))) {
     let d = distance(in.uv, uvSun);
     if (d <= SUN_GLOW_RADIUS) {
       var centerOcc = 0.0;
@@ -1716,60 +1994,48 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
     }
   }
 
-  if (fluidTwilight && sunAboveHorizon > 0.0) {
-    // The disk uses the same angular diameter as Fluid instead of a viewport radius.
-    let pixel = 2.0 * tan(R.fovY * .5) / max(displayTextureDimensions().y, 1.0);
-    let chord = sqrt(max(0.0, 2.0 * (1.0 - nearSun)));
-    let edge = max(.0016, pixel * .65);
-    let disk = 1.0 - smoothstep(max(0.0, .008 - edge), .008 + edge, chord);
-    let transmission = max(1.0 - cloudA, 0.0);
-    sunDisk = mix(sunDisk, disk * transmission * 2.1, sunAboveHorizon);
-    sunGlow *= 1.0 - sunAboveHorizon;
-  }
-  sunDisk*=R.celestialVisibility * twilight.direct;
-  sunGlow*=R.celestialVisibility * twilight.direct;
-  sunDisk*=1.0-terrainVisibility;sunGlow*=1.0-terrainVisibility;
-  if(hullRay){sunDisk=0.0;sunGlow=0.0;}
-  let godRayGate = clamp(R.godRayControls.x, 0.0, 1.0) * clamp(R.godRayControls.y, 0.0, 3.0) * smoothstep(-0.04, 0.20, fwdDot) * smoothstep(0.06, 0.72, towardSunSky) * twilight.direct;
+  sunDisk*=R.celestialVisibility * twilight.direct * cloudSunVisibility;
+  sunGlow*=R.celestialVisibility * twilight.direct * cloudSunVisibility;
+  let godRayGate = clamp(R.godRayControls.x, 0.0, 1.0) * sceneShaftStrength(R.godRayControls.y) * smoothstep(-0.04, 0.20, fwdDot) * smoothstep(0.06, 0.72, towardSunSky) * twilight.direct * cloudSunVisibility;
   var godRayFog = vec2<f32>(0.0, 0.0);
-  if (godRayGate > 0.0001 && !hullRay) {
-    godRayFog = godRayShaft(in.uv, uvSun, layer, fwdDot, towardSunSky, cloudA, lowSun) * twilight.direct;
+  if (!cloudShaftsAvailable() && godRayGate > 0.0001 && !hullRay) {
+    godRayFog = godRayShaft(in.uv, uvSun, layer, fwdDot, towardSunSky, cloudA, lowSun) * twilight.direct * cloudSunVisibility;
     if(terrainRay){
       let foregroundHaze=previewAerialFogAmount(terrainDistance,rayDir,fogDensity,fogHorizon,fogSun,lowSun,towardSunSky,0.5);
-      godRayFog*=mix(1.0,foregroundHaze,terrainVisibility);
+      godRayFog*=mix(1.0,foregroundHaze,terrainVisibility)*foregroundGlow;
     }
   }
-  let godRays = godRayFog.x;
+  let hazeLift = mix(1.30, 1.85, smoothstep(.06, .55, fogDensity));
+  let godRays = godRayFog.x * hazeLift;
   let godRayShadow = godRayFog.y;
   let godRayColor = mix(sunWash, sunColor, 0.72);
+  if (atmosphereWeight > 0.0) {
+    let backdrop = fluidBackdrop * (1.0 - godRayShadow * .34);
+    let transmission = 1.0 - resolvedCloud.a;
+    let stars = nightStars * transmission * transmission;
+    let shafts = fluidSolar * godRays * (.40 + .86 * lowSun) * (1.0 - night)
+      * mix(.16, 1.0, transmission);
+    let cloudShade = sceneCloudShadowGain(resolvedCloud.rgb / max(resolvedCloud.a, .001), R.shadowDarkness);
+    var cloudRadiance = resolvedCloud.rgb * cloudShade;
+    if (resolvedCloud.a > .001) {
+      let airDistance = min(previewCloudAerialDistance(rayDir, resolvedCloud.a, fogHorizon), min(sceneDepth, aircraft.distance));
+      let airFog = previewAerialFogAmount(airDistance, rayDir, fogDensity, fogHorizon, fogSun, lowSun, towardSunSky, .5);
+      cloudRadiance = mix(cloudRadiance, airTint * resolvedCloud.a, airFog);
+    }
+    fluidColor = sceneDisplayWithRolloff(cloudRadiance + backdrop * transmission + stars + shafts,
+      R.exposure * R.colorLift, R.saturationBoost, R.region.y);
+    if (fluidWeight >= 1.0) { return vec4<f32>(applyLocalCloudShafts(fluidColor, localShaft, fluidSolar, cloudA, R.godRayControls.y, R.shadowDarkness), 1.0); }
+  }
   // Cached-volume clouds already carry resolved ray jitter. Their inexpensive
   // smooth aerial veil needs a deterministic midpoint, not another correlated
   // sin-hash dither visibly stamped across bright puffs at coarse resolution.
   let fogJitter = select(previewFogJitter(in.uv), 0.5, R.fieldLighting > 0.5);
 
-  if (PREVIEW_PLANET_SHELL != 0u || (PREVIEW_SOFT_VOLUME == 0u && R.planetOpacity.w > .5)) {
-    let distance = previewBackgroundDistance(rayDir, fogHorizon, min(terrainDistance, aircraft.distance), terrainVisibility, hullRay);
-    let haze = previewAerialFogAmount(distance, rayDir, fogDensity, fogHorizon, fogSun, lowSun, towardSunSky, fogJitter);
-    let fog = previewAerialFogColor(horizonSky, zenithSky, sunWash, shadowCool, rayDir, towardSunSky, fogHorizon, fogSun, lowSun);
-    let clear = sky * (1.0 - godRayShadow * (.16 + .34 * lowSun))
-      + sunColor * (1.18 * sunDisk + .22 * sunGlow) + godRayColor * godRays * (.40 + .86 * lowSun);
-    let backdrop = mix(clear, fog, haze)
-      + select(sunWash * sunConeHaze * (.34 + .18 * R.sunBloom) * (1.0 - haze * .42), vec3<f32>(0.0), hullRay);
-    let ground = fluidTwilightDisplay(applyStyleGrade(toneMapFilmic(backdrop * max(R.exposure * .80, 0.0)), style, 0.0), fluidDisplay, 0.0);
-    var shellTexel=texel;
-    if(hullRay){shellTexel=sampleAircraftForeground(in.uv,layer,sunDir,aircraft.color,true);}
-    let raw = clamp(shellTexel.a, 0.0, 1.0);
-    let coverage = clamp(cloudOverlayOpacity(raw, R.planetOpacity.x, R.planetOpacity.y, R.planetOpacity.z), 0.0, 1.0);
-    if (coverage == 0.0) { return vec4<f32>(ground, 1.0); }
-    let cloud = planetCloudDisplay(gradePlanetCloud(shellTexel.rgb / max(raw, .001), raw, R.planetGrade), R.planetGrade);
-    return vec4<f32>(mix(ground, cloud, coverage), 1.0);
-  }
-
   // Optical thickness, rather than front-facing light, gates the backlit rim.
   // Opaque bodies and empty sky stay dark; thin silhouettes near the sun glow.
   // This uses the resolved alpha and adds no neighboring texture probes.
   let silverShoulder=smoothstep(0.045,0.16,cloudA)*(1.0-smoothstep(0.24,0.64,cloudA));
-  let backlitSilver=max(renderSilverControl(),0.0)*silverShoulder
+  let backlitSilver=max(renderSilverControl(),0.0)*silverShoulder*cloudSunVisibility
     *pow(max(dot(rayDir,sunDir),0.0),max(12.0,R.silverControls.y*5.0))*1.25;
 
   let softVolumeFinish = PREVIEW_SOFT_VOLUME != 0u || R.cloudShading == 1.0 ||
@@ -1780,7 +2046,7 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
     // that flattened the puffs and outlined their soft edges in every grade.
     let skyDistance = previewBackgroundDistance(rayDir,fogHorizon,min(terrainDistance,aircraft.distance),terrainVisibility,hullRay);
     let skyFog = previewAerialFogAmount(skyDistance, rayDir, fogDensity, fogHorizon, fogSun, lowSun, towardSunSky, fogJitter);
-    let fogColor = previewAerialFogColor(horizonSky, zenithSky, sunWash, shadowCool, rayDir, towardSunSky, fogHorizon, fogSun, lowSun);
+    let fogColor = previewAerialFogColor(horizonSky, zenithSky, sunWash, shadowCool, rayDir, towardSunSky, fogHorizon, fogSun * foregroundGlow, lowSun);
     let clearSky = mix(sky, fogColor, skyFog) * (1.0-godRayShadow*(0.16+0.34*lowSun));
     var cloudRadiance = vec3<f32>(0.0);
     // Empty cloud samples still receive the full sky, terrain and shaft lighting.
@@ -1790,7 +2056,7 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
       let contrast = mix(1.0, 1.35, clamp(R.shadowStrength / 5.0, 0.0, 1.0));
       // Daylight contrast must not crush low moonlit radiance into black. Keep
       // the existing preview pivot outside the opt-in cycle, and adapt smoothly.
-      let contrastPivot = select(0.22, mix(0.22, 0.015, R.nightAmount), R.skyCycle > 0.5);
+      let contrastPivot = mix(0.22, 0.015, night);
       let contrastedCloud = max((cloudRGB - cloudA * contrastPivot) * contrast + cloudA * contrastPivot, vec3<f32>(0.0));
       let volumeLum = luma(cloudRGB) / max(cloudA, 0.0001);
       let volumeTint = mix(userShadowTint, userLightTint, smoothstep(0.18, 0.70, volumeLum));
@@ -1843,10 +2109,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
       litCloud += sunColor * backlitSilver * cloudA * silverFinish * twilight.direct;
       cloudRadiance = mix(litCloud, fogColor * cloudA, cloudFog);
     }
+    cloudRadiance *= sceneDeepShadowGain(cloudRGB / max(cloudA, .001), R.shadowDarkness);
     var linear = cloudRadiance + clearSky * (1.0 - cloudA);
-    if(R.skyCycle>0.5 && R.nightAmount>.35 && !hullRay) {
-      linear+=weatherStars(rayDir)*smoothstep(.35,.90,R.nightAmount)*(1.0-cloudA);
-    }
     linear += sunColor * (1.18 * sunDisk + 0.22 * sunGlow);
     if ((R.terrain.y > 0.5 || marineGrade || localBank) && !hullRay && !terrainRay && fwdDot > 0.0) {
       // Broad forward scatter through gaps and thin shoulders, using the
@@ -1870,25 +2134,26 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
       linear += mix(sunWash, sunColor, 0.58) * spill * airLight;
     }
     linear += godRayColor * godRays * (0.40 + 0.86 * lowSun) * (1.0 - cloudA);
-    let mapped = toneMapFilmic(linear * max(R.exposure * 0.80, 0.0));
-    return vec4<f32>(fluidTwilightDisplay(applyStyleGrade(mapped, style, cloudA), fluidDisplay, cloudA), 1.0);
+    let mapped = toneMapFilmic(sceneHighlightRolloff(linear * max(R.exposure * 0.80, 0.0), R.region.y));
+    let display = mix(applyStyleGrade(mapped, style, cloudA), fluidColor, fluidWeight);
+    return vec4<f32>(applyLocalCloudShafts(display, localShaft, fluidSolar, cloudA, R.godRayControls.y, R.shadowDarkness), 1.0);
   }
 
   if (cloudA < 0.003) {
-    var clearLinear =
-      sky * (1.0 - godRayShadow * (0.16 + 0.34 * lowSun)) +
-      sunColor * (1.18 * sunDisk + 0.22 * sunGlow) +
-      godRayColor * godRays * (0.40 + 0.86 * lowSun);
+    var clearLinear = sky * (1.0 - godRayShadow * (0.16 + 0.34 * lowSun));
 
     let skyFogDistance = previewBackgroundDistance(rayDir,fogHorizon,min(terrainDistance,aircraft.distance),terrainVisibility,hullRay);
     let skyFogAmount = previewAerialFogAmount(skyFogDistance, rayDir, fogDensity, fogHorizon, fogSun, lowSun, towardSunSky, fogJitter);
-    let skyFogColor = previewAerialFogColor(horizonSky, zenithSky, sunWash, shadowCool, rayDir, towardSunSky, fogHorizon, fogSun, lowSun);
-    clearLinear = mix(clearLinear, skyFogColor, skyFogAmount);
+    let skyFogColor = previewAerialFogColor(horizonSky, zenithSky, sunWash, shadowCool, rayDir, towardSunSky, fogHorizon, fogSun * foregroundGlow, lowSun);
+    clearLinear = mix(clearLinear, skyFogColor, skyFogAmount)
+      + godRayColor * godRays * (.40 + .86 * lowSun)
+      + sunColor * (1.18 * sunDisk + .22 * sunGlow) * previewSolarTransmission(skyFogAmount);
     clearLinear += sunWash * sunConeHaze * (0.34 + 0.18 * R.sunBloom) * (1.0 - skyFogAmount * 0.42);
 
-    let clearMapped = toneMapFilmic(clearLinear * max(R.exposure * 0.80, 0.0));
+    let clearMapped = toneMapFilmic(sceneHighlightRolloff(clearLinear * max(R.exposure * 0.80, 0.0), R.region.y));
     let clearStyled = applyStyleGrade(clearMapped, style, 0.0);
-    return vec4<f32>(fluidTwilightDisplay(pow(clearStyled, vec3<f32>(0.99, 0.995, 1.0)), fluidDisplay, 0.0), 1.0);
+    let display = mix(pow(clearStyled, vec3<f32>(0.99, 0.995, 1.0)), fluidColor, fluidWeight);
+    return vec4<f32>(applyLocalCloudShafts(display, localShaft, fluidSolar, cloudA, R.godRayControls.y, R.shadowDarkness), 1.0);
   }
   let cloudColorA = alphaColorResponse(cloudA);
   let cloudColorLift = max(cloudColorA - cloudA, 0.0);
@@ -2514,29 +2779,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
 
   let skyFogDistance = previewBackgroundDistance(rayDir,fogHorizon,min(terrainDistance,aircraft.distance),terrainVisibility,hullRay);
   let skyFogAmount = previewAerialFogAmount(skyFogDistance, rayDir, fogDensity, fogHorizon, fogSun, lowSun, towardSunSky, fogJitter);
-  let fogColor = previewAerialFogColor(horizonSky, zenithSky, sunWash, shadowCool, rayDir, towardSunSky, fogHorizon, fogSun, lowSun);
+  let fogColor = previewAerialFogColor(horizonSky, zenithSky, sunWash, shadowCool, rayDir, towardSunSky, fogHorizon, fogSun * foregroundGlow, lowSun);
   let foggedSky = mix(sky, fogColor, skyFogAmount);
 
   var linear =
     foggedSky * skyMask * (1.0 - godRayShadow * (0.13 + 0.30 * lowSun) * skyFogMask) +
-    cloudShaded;
-  if (R.skyCycle > 0.5 && R.nightAmount > 0.35 && !hullRay) {
-    linear += weatherStars(rayDir) * smoothstep(0.35, 0.90, R.nightAmount) * lightingSkyMask;
-  }
+    cloudShaded * sceneDeepShadowGain(cloudRGB / max(cloudA, .001), R.shadowDarkness);
   linear += sunWash * sunConeHaze * skyMask * skyFogMask * (0.32 + 0.22 * R.sunBloom);
 
   linear += sunColor * (
-    1.04 * sunDisk +
-    (0.24 + 0.22 * R.sunBloom) * sunGlow * bleedGain +
     (0.28 + 0.14 * R.sunBloom) * (rimBand + silverBand * silverBrightMode) * sunLeak * shadowedEdgeSuppression * mix(0.64, 1.0, thinHaloSuppress)
   );
-
-  linear +=
-    godRayColor *
-    godRays *
-    (0.32 + 0.68 * lowSun) *
-    lightingSkyFogMask *
-    rayBodyMask;
 
   let cloudFogDistance = previewCloudAerialDistance(rayDir, cloudDisplayA, fogHorizon);
   let aerialFogRaw = previewAerialFogAmount(cloudFogDistance, rayDir, fogDensity, fogHorizon, fogSun, lowSun, towardSunSky, fogJitter);
@@ -2552,19 +2805,24 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
     (1.0 - 0.42 * bodyCore) *
     (0.70 + 0.30 * skyBehindMix);
   let fogAmount = clamp(aerialFogRaw * cloudMatterResponse * edgeMistLift * matterFogGate + immersedFog, 0.0, 0.82);
-  linear = mix(linear, fogColor, fogAmount);
+  linear = mix(linear, fogColor, fogAmount)
+    + godRayColor * godRays * (.32 + .68 * lowSun) * lightingSkyFogMask * rayBodyMask
+    + sunColor * (1.04 * sunDisk + (.24 + .22 * R.sunBloom) * sunGlow * bleedGain)
+      * previewSolarTransmission(max(skyFogAmount, fogAmount));
 
-  let mapped = toneMapFilmic(linear * max(R.exposure * 0.82, 0.0));
+  let mapped = toneMapFilmic(sceneHighlightRolloff(linear * max(R.exposure * 0.82, 0.0), R.region.y));
   let styled = applyStyleGrade(mapped, style, clamp(cloudA * 1.15 + bodyCore * 0.35, 0.0, 1.0));
   var graded = pow(styled, vec3<f32>(0.99, 0.995, 1.0));
   if(cloudA<0.025){
-    var clearLinear=sky*(1.0-godRayShadow*(0.16+0.34*lowSun))
-      +sunColor*(1.18*sunDisk+0.22*sunGlow)+godRayColor*godRays*(0.40+0.86*lowSun);
-    clearLinear=mix(clearLinear,fogColor,skyFogAmount);
+    var clearLinear=sky*(1.0-godRayShadow*(0.16+0.34*lowSun));
+    clearLinear=mix(clearLinear,fogColor,skyFogAmount)
+      +godRayColor*godRays*(.40+.86*lowSun)
+      +sunColor*(1.18*sunDisk+.22*sunGlow)*previewSolarTransmission(skyFogAmount);
     clearLinear+=sunWash*sunConeHaze*(0.34+0.18*R.sunBloom)*(1.0-skyFogAmount*0.42);
-    let clearMapped=toneMapFilmic(clearLinear*max(R.exposure*0.80,0.0));
+    let clearMapped=toneMapFilmic(sceneHighlightRolloff(clearLinear * max(R.exposure * 0.80, 0.0), R.region.y));
     let clearStyled=pow(applyStyleGrade(clearMapped,style,0.0),vec3<f32>(0.99,0.995,1.0));
     graded=mix(clearStyled,graded,smoothstep(0.003,0.025,cloudA));
   }
-  return vec4<f32>(fluidTwilightDisplay(graded, fluidDisplay, cloudA), 1.0);
+  let display = mix(graded, fluidColor, fluidWeight);
+  return vec4<f32>(applyLocalCloudShafts(display, localShaft, fluidSolar, cloudA, R.godRayControls.y, R.shadowDarkness), 1.0);
 }

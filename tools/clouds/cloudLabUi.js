@@ -1,3 +1,5 @@
+import { MAX_SCENE_HAZE, MAX_SCENE_SHAFT_STRENGTH, MAX_SCENE_SHADOW_DARKNESS } from './cloudLookPresets.js';
+
 // Cloud Lab UI: the shared look and the artist "Studio" card for both the
 // flat and planet cloud demos. Tokens mirror the Cloud Lab design system
 // (night theme). Everything is scoped to .cl-root so the renderers' own
@@ -143,12 +145,14 @@ body.cl-clean-view .cl-switch--floating, body.cl-clean-view #busyOverlay { visib
 
 .cl-preset { display:grid; gap:var(--space-5); padding:var(--space-5); border:1px solid var(--line-strong); border-radius:var(--radius-lg); background:var(--surface); }
 .cl-preset__grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:var(--space-5) var(--space-4); align-items:end; }
+.cl-lighting-grid .cl-field { grid-template-columns:minmax(0,1fr); }
+.cl-lighting-grid input[type="range"] { width:100%; min-width:0; }
 .cl-preset__sliders { grid-column:1/-1; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--space-4); align-items:end; }
 .cl-preset__sliders .cl-field__label { display:grid; gap:0; }
 .cl-preset__sliders .cl-field__label > span:first-child { overflow:visible; white-space:normal; }
 .cl-export { display:grid; gap:var(--space-4); padding-top:var(--space-5); border-top:1px solid var(--line); }
 .cl-export__grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:var(--space-4); }
-.cl-export__status:empty { display:none; }
+.cl-export [hidden], .cl-export__status:empty { display:none; }
 .cl-export__status[data-state="error"] { color:var(--storm); }
 
 .cl-disclosure { border:1px solid var(--line); border-radius:var(--radius-md); background:var(--surface); min-width:0; }
@@ -462,6 +466,7 @@ export function createStudioCard({ presetFields = [], lookFields = [], actions =
 
   if (look) {
     const saveBtn = el('button', { class: 'cl-btn cl-btn--primary cl-btn--block', type: 'button', text: 'Save image' });
+    const imageLink = el('a', { class: 'cl-btn cl-btn--block', text: 'Download PNG', hidden: '' });
     const copyBtn = el('button', { class: 'cl-btn cl-btn--sm', type: 'button', text: 'Copy look' });
     const pasteBtn = el('button', { class: 'cl-btn cl-btn--sm', type: 'button', text: 'Paste look' });
     const downloadBtn = el('button', { class: 'cl-btn cl-btn--sm', type: 'button', text: 'Download .json' });
@@ -488,8 +493,12 @@ export function createStudioCard({ presetFields = [], lookFields = [], actions =
       const blob = await look.saveImage();
       if (!blob) throw new Error('Nothing to save yet. Wait for the first render.');
       const name = timestampName(slugify(look.name?.(), 'clouds'), 'png');
-      downloadBlob(blob, name);
-      setStatus(`Saved ${name}`);
+      if (imageLink.href) URL.revokeObjectURL(imageLink.href);
+      imageLink.href = URL.createObjectURL(blob);
+      imageLink.download = name;
+      imageLink.hidden = false;
+      imageLink.click();
+      setStatus(`PNG ready · ${name}`);
     }));
     copyBtn.addEventListener('click', () => busy(copyBtn, 'Copying…', async () => {
       const text = lookJson();
@@ -521,7 +530,7 @@ export function createStudioCard({ presetFields = [], lookFields = [], actions =
     });
 
     card.append(el('div', { class: 'cl-export' },
-      saveBtn,
+      saveBtn, imageLink,
       el('div', { class: 'cl-export__grid' }, copyBtn, pasteBtn, downloadBtn, openBtn),
       fileInput,
       status));
@@ -529,6 +538,50 @@ export function createStudioCard({ presetFields = [], lookFields = [], actions =
     card.append(status);
   }
   return { element: card, setStatus };
+}
+
+const LIGHTING_SLIDERS = [
+  ['exposure', 'Exposure', 'exposure', 0, 3, .01],
+  ['direct', 'Direct light', 'directLightBoost', 0, 2.2, .01],
+  ['shafts', 'Light shafts', 'godRayStrength', 0, MAX_SCENE_SHAFT_STRENGTH, .01],
+  ['haze', 'Haze', 'haze', 0, MAX_SCENE_HAZE, .05],
+  ['shadow-darkness', 'Shadow darkness', 'styleShadowDarkness', 0, MAX_SCENE_SHADOW_DARKNESS, .01],
+];
+
+export function createLightingSliders(prefix, onInput, { toneControls = false } = {}) {
+  const grid = el('div', { class: 'cl-preset__grid cl-lighting-grid' });
+  const fields = toneControls ? [LIGHTING_SLIDERS[0],
+    ['contrast', 'Contrast', 'displayContrast', .50, 2, .01],
+    ['highlights', 'Highlight rolloff', 'highlightRolloff', 0, 1, .01], ...LIGHTING_SLIDERS.slice(1)]
+    : LIGHTING_SLIDERS;
+  const sliders = fields.map(([id, label, key, min, max, step]) => {
+    const name = `${prefix}-${id}`;
+    const input = el('input', { id: name, type: 'range', min, max, step, 'aria-label': label });
+    if (id === 'highlights') input.title = 'Compress bright sunlight and bloom while keeping the midtones.';
+    const value = el('output', { class: 'cl-value', for: name });
+    const fullWidth = id === 'shadow-darkness';
+    const field = el('label', { class: fullWidth ? 'cl-field cl-field--full' : 'cl-field', for: name },
+      el('span', { class: 'cl-field__label' }, el('span', { text: label }), value), input);
+    input.classList.add('cl-slider');
+    const update = () => { value.value = Number(input.value).toFixed(2); };
+    input.addEventListener('input', () => {
+      update();
+      onInput(key, Number(input.value));
+    });
+    syncSliderFill(input);
+    grid.append(field);
+    return { input, key, update };
+  });
+  return {
+    element: createDisclosure('Lighting controls', [grid]),
+    sync(values) {
+      for (const { input, key, update } of sliders) {
+        input.value = String(values[key]);
+        syncSliderFill(input);
+        update();
+      }
+    },
+  };
 }
 
 /** Wrap nodes in a closed Cloud Lab disclosure. */

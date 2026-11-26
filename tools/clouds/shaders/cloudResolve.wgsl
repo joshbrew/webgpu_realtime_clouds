@@ -1,6 +1,32 @@
 // Temporal resolve has its own pipeline. The regular raymarch writes f32
 // radiance into scratch so this split does not quantize before history blending.
 fn resolveCloudColor(pixI: vec2<i32>, newCol: vec4<f32>, rayFarHistoryF: f32, temporalHistoryActive: bool) {
+  if (reproj.shadowHistory != 0u) {
+    var resolved = newCol;
+    if (reproj.frameIndex > 0u && newCol.a > .035) {
+      // The worker only uses same-pixel light history for an unchanged view.
+      // Keep today's opacity and clip history when a cloud edge has moved.
+      let previous = textureLoad(historyPrev, pixI, frame.layerIndex, 0);
+      let flatVolume = !sphericalCloudMode();
+      let sharedAlpha = min(newCol.a, previous.a);
+      let alphaDelta = abs(newCol.a - previous.a);
+      // Soft, overlapping folds can remain translucent for their entire
+      // lifetime. Judge their stability by relative coverage change so those
+      // folds can accumulate light while newly exposed edges clear history.
+      let coverage = smoothstep(.035, select(.42, .18, flatVolume), sharedAlpha);
+      let agreement = 1.0 - select(smoothstep(.025, .20, alphaDelta),
+        smoothstep(.04, .25, alphaDelta / max(sharedAlpha, .08)), flatVolume);
+      let weight = reproj.temporalBlend * coverage * agreement;
+      let relit = previous.rgb * (newCol.a / max(previous.a, .035));
+      let light = clamp_luma_to(relit, newCol.rgb, select(.44, .28, flatVolume),
+        select(.055, .06 * newCol.a, flatVolume));
+      resolved = vec4<f32>(mix(newCol.rgb, light, weight), newCol.a);
+    }
+    textureStore(outTex, pixI, frame.layerIndex, resolved);
+    store_history_full_res_if_owner(pixI, frame.layerIndex, resolved);
+    return;
+  }
+
   // TAA with variance clamp
   let temporalActive = reproj.temporalBlend > 0.0001;
   if (temporalActive) {

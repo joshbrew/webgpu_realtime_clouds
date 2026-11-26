@@ -1,6 +1,6 @@
 import { cloudDemoUrl, mountCloudDemoNavigation } from './cloudDemoNavigation.js';
 import { createRailHead } from './cloudLabUi.js';
-import { GRADE_PRESETS, FLUID_TWILIGHT_GRADE } from './cloudLookPresets.js';
+import { GRADE_PRESETS, FLUID_TWILIGHT_GRADE, MAX_SCENE_HAZE, MAX_SCENE_SHAFT_STRENGTH, MAX_SCENE_SHADOW_DARKNESS } from './cloudLookPresets.js';
 import { cameraBasis, flyCamera } from './cloudNavigation.js';
 import { createFluidCloudRenderer, createFluidCloudSimulation, DOMAIN_WIDTH, GRID_SIZE } from './fluidCloudGpu.js';
 import { prepareFluidPlanetTerrain } from './fluidPlanetTerrain.js';
@@ -14,7 +14,8 @@ const STEP = 1 / 60;
 const TARGET = [0, 0.26, 0];
 const DEFAULT_DISTANCE = 23.5;
 const DEFAULT_WATERLINE_HEIGHT = 2.16;
-const {sunAzimuth: SUN_AZIMUTH, sunElevation: DEFAULT_SUN_ELEVATION} = GRADE_PRESETS[FLUID_TWILIGHT_GRADE];
+const {sunAzimuth: SUN_AZIMUTH} = GRADE_PRESETS[FLUID_TWILIGHT_GRADE];
+const DEFAULT_SUN_ELEVATION = 5;
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(x, hi));
 const radians = Math.PI / 180;
 const initialObjects = [
@@ -55,10 +56,6 @@ stage.innerHTML = `
           <span class="cl-field__label">Terrain drag <output class="cl-value" id="fluid-drag-value">100%</output></span>
           <input id="fluid-drag" type="range" min="0" max="200" step="5" value="100">
         </label>
-        <label class="cl-field" for="fluid-condensation">
-          <span class="cl-field__label">Cloud buildup <output class="cl-value" id="fluid-condensation-value">100%</output></span>
-          <input id="fluid-condensation" type="range" min="0" max="200" step="5" value="100" title="How quickly vapor turns into cloud in rising or turbulent air.">
-        </label>
         <label class="cl-field" for="fluid-heading">
           <span class="cl-field__label">Wind heading <output class="cl-value" id="fluid-heading-value">90°</output></span>
           <input id="fluid-heading" type="range" min="0" max="359" step="1" value="90" title="Direction the wind blows toward. 0° is north.">
@@ -81,9 +78,26 @@ stage.innerHTML = `
         <span class="cl-field__label">Wind <output class="cl-value" id="fluid-wind-value" for="fluid-wind"></output></span>
         <input id="fluid-wind" type="range" min="0" max="2.8" value="1.2" step="0.1">
       </label>
+      <label class="cl-field" for="fluid-formation">
+        <span class="cl-field__label">Cloud formation</span>
+        <select class="cl-input" id="fluid-formation" aria-describedby="fluid-formation-hint">
+          <option value="0">Turbulence</option>
+          <option value="1">Stable air (inversion)</option>
+          <option value="2">Fog blanket</option>
+        </select>
+      </label>
+      <p id="fluid-formation-hint" class="cl-hint" aria-live="polite"></p>
+      <label class="cl-field" for="fluid-condensation">
+        <span class="cl-field__label">Cloud buildup <output class="cl-value" id="fluid-condensation-value">100%</output></span>
+        <input id="fluid-condensation" type="range" min="0" max="200" step="5" value="100" title="How quickly vapor condenses in the selected formation mode.">
+      </label>
       <label class="cl-field" for="fluid-thickness">
         <span class="cl-field__label">Cloud thickness <output class="cl-value" id="fluid-thickness-value" for="fluid-thickness"></output></span>
         <input id="fluid-thickness" type="range" min="0.18" max="1.10" value="0.52" step="0.02">
+      </label>
+      <label class="cl-field" for="fluid-breakup">
+        <span class="cl-field__label">Cloud breakup <output class="cl-value" id="fluid-breakup-value">0%</output></span>
+        <input id="fluid-breakup" type="range" min="0" max="100" step="5" value="0" title="Adds fine cloud erosion that moves with the wind and wakes.">
       </label>
       <label class="cl-field" id="fluid-camera-height-field" for="fluid-camera-height" hidden>
         <span class="cl-field__label"><span id="fluid-camera-height-label">Height above water</span> <output class="cl-value" id="fluid-camera-height-value" for="fluid-camera-height">${DEFAULT_WATERLINE_HEIGHT.toFixed(2)}</output></span>
@@ -100,7 +114,7 @@ stage.innerHTML = `
         </label>
         <label class="cl-field" for="fluid-sun">
           <span class="cl-field__label">Sun elevation <output class="cl-value" id="fluid-sun-value" for="fluid-sun">${DEFAULT_SUN_ELEVATION}°</output></span>
-          <input id="fluid-sun" type="range" min="-10" max="90" value="${DEFAULT_SUN_ELEVATION}" step="1">
+          <input id="fluid-sun" type="range" min="0" max="90" value="${DEFAULT_SUN_ELEVATION}" step="1">
         </label>
         <label class="cl-field" for="fluid-sun-azimuth">
           <span class="cl-field__label">Sun azimuth <output class="cl-value" id="fluid-sun-azimuth-value"></output></span>
@@ -108,7 +122,7 @@ stage.innerHTML = `
         </label>
         <label class="cl-field" for="fluid-exposure">
           <span class="cl-field__label">Exposure <output class="cl-value" id="fluid-exposure-value"></output></span>
-          <input id="fluid-exposure" type="range" min=".20" max="3" value="1.16" step=".01">
+          <input id="fluid-exposure" type="range" min="0" max="3" value="1.16" step=".01">
         </label>
         <label class="cl-field" for="fluid-light-strength">
           <span class="cl-field__label">Direct light <output class="cl-value" id="fluid-light-strength-value"></output></span>
@@ -116,11 +130,15 @@ stage.innerHTML = `
         </label>
         <label class="cl-field" for="fluid-light-shafts">
           <span class="cl-field__label">Light shafts <output class="cl-value" id="fluid-light-shafts-value"></output></span>
-          <input id="fluid-light-shafts" type="range" min="0" max="3" value=".12" step=".01">
+          <input id="fluid-light-shafts" type="range" min="0" max="${MAX_SCENE_SHAFT_STRENGTH}" value=".12" step=".01">
         </label>
         <label class="cl-field" for="fluid-haze">
           <span class="cl-field__label">Haze <output class="cl-value" id="fluid-haze-value"></output></span>
-          <input id="fluid-haze" type="range" min="0" max="3" value="1" step=".05">
+          <input id="fluid-haze" type="range" min="0" max="${MAX_SCENE_HAZE}" value="1" step=".05">
+        </label>
+        <label class="cl-field cl-field--full" for="fluid-shadow-darkness">
+          <span class="cl-field__label">Shadow darkness <output class="cl-value" id="fluid-shadow-darkness-value"></output></span>
+          <input id="fluid-shadow-darkness" type="range" min="0" max="${MAX_SCENE_SHADOW_DARKNESS}" value="0" step=".01">
         </label>
       </div>
       <label class="cl-field fluid-wake-detail" id="fluid-wake-field" for="fluid-wake">
@@ -378,6 +396,8 @@ async function start() {
   const heading = get('heading');
   const drag = get('drag');
   const condensation = get('condensation');
+  const formation = get('formation');
+  const breakup = get('breakup');
   function syncCutoffLimits() {
     cutoff.min = String(Math.floor(terrain.minCutoff));
     cutoff.max = String(Math.ceil(terrain.maxCutoff));
@@ -407,11 +427,15 @@ async function start() {
   }
   let activeMap = map.value;
   const terrainActive = () => activeMap === 'terrain';
-  const terrainSettings = () => terrainActive() ? {
-    active:true, cutoff:terrain.normalizedCutoff(Number(cutoff.value)),
-    drag:Number(drag.value) / 100, condensation:Number(condensation.value) / 100, heading:Number(heading.value),
-    layer:terrain.layerHeight(Number(cutoff.value)),
-  } : {};
+  const cloudSettings = () => ({
+    formation: Number(formation.value), condensation: Number(condensation.value) / 100,
+    breakup: Number(breakup.value) / 100,
+    ...(terrainActive() ? {
+      active: true, cutoff: terrain.normalizedCutoff(Number(cutoff.value)),
+      drag: Number(drag.value) / 100, heading: Number(heading.value),
+      layer: terrain.layerHeight(Number(cutoff.value)),
+    } : {}),
+  });
   let objects = newObjects();
   const orbit = {yawDeg:208, pitchDeg:-38, distance:DEFAULT_DISTANCE};
   const waterline = {yawDeg:228, pitchDeg:-1.8, distance:12.8, height:DEFAULT_WATERLINE_HEIGHT};
@@ -433,6 +457,7 @@ async function start() {
   const lightStrength = get('light-strength');
   const lightShafts = get('light-shafts');
   const haze = get('haze');
+  const shadowDarkness = get('shadow-darkness');
   let sunDirection;
   function syncLighting() {
     sunDirection = cameraBasis({yawDeg:Number(sunAzimuth.value), pitchDeg:Number(sun.value)}).forward;
@@ -440,6 +465,7 @@ async function start() {
     get('sun-azimuth-value').textContent = sunAzimuth.value + '°';
     get('exposure-value').textContent = Number(exposure.value).toFixed(2);
     get('haze-value').textContent = Number(haze.value).toFixed(2);
+    get('shadow-darkness-value').textContent = Number(shadowDarkness.value).toFixed(2);
     get('light-strength-value').textContent = Number(lightStrength.value).toFixed(2);
     get('light-shafts-value').textContent = Number(lightShafts.value).toFixed(2);
     dirty = true;
@@ -471,12 +497,24 @@ async function start() {
     windTravel = [0, 0];
     geometryDirty = false;
     accumulator = 0;
-    const config = terrainSettings();
+    const config = cloudSettings();
     simulation.reset(Number(wind.value), objects, config);
     simulation.step(STEP, time, Number(wind.value), objects, config);
     dirty = true;
   }
+  function syncFormation() {
+    const mode = Number(formation.value);
+    condensation.disabled = !terrainActive() && mode === 0;
+    get('formation-hint').textContent = [
+      terrainActive() ? 'Clouds gather in rising or turbulent air over terrain.' : 'Clouds stream around the obstacles.',
+      'Clouds build in calm air and thin in turbulent wakes.',
+      'Moist air feeds a low layer across the map. Wakes thin and stir the fog.',
+    ][mode];
+    dirty = true;
+  }
+
   function syncMapControls() {
+    syncFormation();
     const active = terrainActive();
     get('terrain-fields').hidden = !active;
     get('flight').hidden = !active;
@@ -493,7 +531,7 @@ async function start() {
       'Volumetric fluid clouds. Drag an obstacle, or use the arrow keys to move the selected obstacle.');
     if (active) get('cutoff-value').textContent = Math.round(Number(cutoff.value)).toLocaleString() + ' m';
     sun.value = String(active && Number.isFinite(region.sun?.elDeg)
-      ? Math.round(clamp(region.sun.elDeg, -10, 90)) : DEFAULT_SUN_ELEVATION);
+      ? Math.round(clamp(region.sun.elDeg, DEFAULT_SUN_ELEVATION, 90)) : DEFAULT_SUN_ELEVATION);
     const azimuth = active ? region.sun?.azDeg : undefined;
     sunAzimuth.value = String(Number.isFinite(azimuth) ? (Math.round(azimuth) % 360 + 360) % 360 : SUN_AZIMUTH);
     syncLighting();
@@ -557,6 +595,11 @@ async function start() {
     reset();
   }
   map.addEventListener('change', changeMap);
+  formation.addEventListener('change', syncFormation);
+  breakup.addEventListener('input', () => {
+    get('breakup-value').textContent = breakup.value + '%';
+    dirty = true;
+  });
   for (const [control, suffix] of [[cutoff, ' m'], [drag, '%'], [condensation, '%'], [heading, '°']]) {
     control.addEventListener('input', () => {
       get(control.id.slice(6)+'-value').textContent = Math.round(Number(control.value)).toLocaleString() + suffix;
@@ -583,16 +626,17 @@ async function start() {
     get('camera-height-value').textContent = waterline.height.toFixed(2);
     dirty = true;
   });
-  for (const slider of [sun, sunAzimuth, exposure, haze, lightStrength, lightShafts]) slider.addEventListener('input', syncLighting);
+  for (const slider of [sun, sunAzimuth, exposure, haze, lightStrength, lightShafts, shadowDarkness]) slider.addEventListener('input', syncLighting);
   lighting.addEventListener('change', () => {
     const id = Number(lighting.value);
     const preset = GRADE_PRESETS[id];
     if (preset.sunAzimuth !== undefined) sunAzimuth.value = String(preset.sunAzimuth);
-    if (preset.sunElevation !== undefined) sun.value = String(preset.sunElevation);
+    if (preset.sunElevation !== undefined) sun.value = String(Math.max(0, preset.sunElevation));
     exposure.value = String(preset.exposure ?? 1.16);
     lightStrength.value = String(id === FLUID_TWILIGHT_GRADE ? .65 : preset.directLightBoost ?? .65);
     lightShafts.value = String(id === FLUID_TWILIGHT_GRADE ? .12 : preset.godRaysEnabled ? preset.godRayStrength ?? .12 : 0);
     haze.value = String(id === FLUID_TWILIGHT_GRADE ? 1 : (preset.fogDensity ?? .22) / .22);
+    shadowDarkness.value = String(id === FLUID_TWILIGHT_GRADE ? 0 : preset.styleShadowDarkness ?? 0);
     syncLighting();
   });
   wake.addEventListener('input', () => {
@@ -639,7 +683,7 @@ async function start() {
   function setView(next) {
     if (next === 'flight' && !terrainActive()) return;
     if (next === 'flight' && !flight) {
-      const config = terrainSettings();
+      const config = cloudSettings();
       const {forward} = cameraBasis({yawDeg:orbit.yawDeg, pitchDeg:0});
       const x = -forward[0] * 5.5, z = -forward[2] * 5.5;
       const y = Math.max(config.layer + 1.35, terrain.surfaceHeightAt(x, z) + 1.10);
@@ -659,7 +703,7 @@ async function start() {
   }
   for (const button of viewButtons) button.addEventListener('click', () => setView(button.dataset.view));
 
-  function viewFor(aspect, config = terrainSettings()) {
+  function viewFor(aspect, config = cloudSettings()) {
     if (mode === 'flight') {
       return {...cameraBasis(flight), position:[flight.x,flight.y,flight.z],
         halfFovTan:Math.tan(27 * radians), orthoHalfHeight:0};
@@ -817,7 +861,7 @@ async function start() {
       canvas.height = renderHeight;
       dirty = true;
     }
-    const config = terrainSettings();
+    const config = cloudSettings();
     const measuring = !paused && mode !== 'flow' && !document.hidden;
     const frameStarted = measuring ? performance.now() : 0;
     if (geometryDirty && paused) {
@@ -847,7 +891,8 @@ async function start() {
       viewFor(renderWidth/renderHeight, config), objects, Number(selection.value),
       simulation.index, Number(wake.value) / 100, windTravel, sunDirection, config,
       {grade:Number(lighting.value), exposure:Number(exposure.value), haze:Number(haze.value),
-        direct:Number(lightStrength.value), shafts:Number(lightShafts.value), inspection});
+        direct:Number(lightStrength.value), shafts:Number(lightShafts.value),
+        shadowDarkness:Number(shadowDarkness.value), inspection});
     renderedInspection = inspection;
     inFlight = true;
     device.queue.onSubmittedWorkDone().then(() => {

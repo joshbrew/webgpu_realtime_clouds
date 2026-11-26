@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {bakePlanetRegion, LOCAL_REGION_UNITS} from '../../planet/planetRegion.js';
+import {bakePlanetRegion, LOCAL_REGION_UNITS, planetRegionFrame, planetRegionOutline,
+  projectPlanetRegionSurfacePoint} from '../../planet/planetRegion.js';
 import {createPlanetRegionMesh} from '../cloudTerrainMesh.js';
 import {planetRegionShapeJob, preparePlanetRegionShape} from '../../planet/planetRegionGpu.js';
 
@@ -15,6 +16,33 @@ test('the local grid descriptor uses the Planet sampler job layout', () => {
   assert.equal(u32[7], 1025);
   assert.deepEqual(Array.from(f32.slice(8, 11)), frame.south);
   assert.equal(f32[11], 0.0625);
+});
+
+test('the picker boundary follows the baked width on small and large worlds', () => {
+  const frame = planetRegionFrame([1, 0, 0]);
+  for (const radius of [98304, 262144, 1966080]) {
+    for (const span of [4000, 12000, 32000, 80000, 160000]) {
+      const outline = planetRegionOutline(frame, span, radius, () => 1234);
+      for (const point of outline) {
+        assert.ok(Math.abs(Math.hypot(...point) - radius - 1234) < 1e-8);
+        // Invert the gnomonic projection to compare with the grid baked by the GPU.
+        const [up, south, east] = point;
+        assert.ok(Math.abs(Math.max(Math.abs(east), Math.abs(south)) * radius / up - span / 2) < 1e-8);
+      }
+    }
+  }
+});
+
+test('a close camera clips hidden boundary points without resizing the visible footprint', () => {
+  const radius = 262144;
+  const half = 16000;
+  const frame = planetRegionFrame([1, 0, 0]);
+  const outline = planetRegionOutline(frame, half * 2, radius, () => 0);
+  const above = {position: [radius + half * 4, 0, 0], forward: [-1, 0, 0],
+    right: frame.east, up: frame.south, near: 1, tanX: 1, tanY: 1};
+  const low = {...above, position: [radius + 5, 0, 0]};
+  assert.ok(outline.every(point => projectPlanetRegionSurfacePoint(above, point, radius)));
+  assert.ok(outline.every(point => projectPlanetRegionSurfacePoint(low, point, radius) === null));
 });
 
 test('two region grids can share the startup guide without upgrading the orbit', async () => {

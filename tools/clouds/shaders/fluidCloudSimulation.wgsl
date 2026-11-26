@@ -4,6 +4,7 @@ struct Simulation {
   motion: array<vec4<f32>, 3>, // translation in cells/sec
   axes: array<vec4<f32>, 3>, // cosine, sine, angular speed in radians/sec
   terrain: vec4<f32>, // active, cutoff, drag, condensation rate
+  weather: vec4<f32>, // formation mode
 };
 
 @group(0) @binding(0) var<uniform> settings: Simulation;
@@ -131,6 +132,10 @@ fn initialize(@builtin(global_invocation_id) id: vec3<u32>) {
   var initial = select(vec2<f32>(seeded, 0.0), vec2<f32>(seeded * .56, .39 + seeded * .39), terrain);
   let planetWeather = initialMoisture[i];
   if (terrain && planetWeather.y > 0.0) { initial = planetWeather; }
+  if (settings.weather.x >= 2.0) {
+    initial.x = max(initial.x, .35 + .07 * seeded);
+    initial.y = max(initial.y, .36);
+  }
   waterOut[i] = select(initial, vec2<f32>(0.0), terrain && solid[i].z > 0.5);
 }
 
@@ -406,6 +411,29 @@ fn terrainAirflow(p: vec2<i32>, ground: vec2<f32>, cross: vec2<f32>) -> TerrainA
     turbulence, strain / max(.001, magnitude));
 }
 
+fn disturbedAir(p: vec2<i32>) -> f32 {
+  let positive = velocityIn[index(p)];
+  let negative = vec2<f32>(velocityIn[index(p - east)].x, velocityIn[index(p - north)].y);
+  let stretch = positive - negative;
+  let cross = crossDerivatives(p);
+  let shear = smoothstep(.055, .72, length(vec2<f32>(stretch.x - stretch.y, cross.x + cross.y)));
+  let spin = smoothstep(.12, 1.12, abs(cross.x - cross.y));
+  return max(shear, spin * .74);
+}
+
+fn condensationWeather(water: vec2<f32>, disturbance: f32, dt: f32) -> vec2<f32> {
+  let churn = smoothstep(.045, .72, disturbance);
+  let fog = settings.weather.x >= 2.0;
+  // The surrounding moist air replenishes vapor. Condensation and evaporation
+  // then transfer water between phases, including inside moving wakes.
+  let humidity = select(.61, .77, fog);
+  let supply = max(0.0, humidity - water.x - water.y) * (1.0 - exp(-dt * select(.53, 1.28, fog)));
+  let saturation = select(mix(.34, .91, churn), mix(.22, .46, churn), fog);
+  let growth = select(mix(1.95, .22, churn), mix(1.75, 1.34, churn), fog) * settings.terrain.w;
+  let drying = select(mix(.32, 2.9, churn), mix(.38, 2.15, churn), fog);
+  return exchangeWater(water + vec2<f32>(0.0, supply), saturation, growth, drying, dt);
+}
+
 fn terrainMoisture(p: vec2<i32>, uv: vec2<f32>, water: vec2<f32>, dt: f32) -> vec2<f32> {
   if (dt <= 0.0) { return water; }
   let wind = settings.flow.yw;
@@ -431,8 +459,14 @@ fn terrainMoisture(p: vec2<i32>, uv: vec2<f32>, water: vec2<f32>, dt: f32) -> ve
   let saturation = clamp(.76 - .38 * uplift - .26 * turbulence - altitudeCooling + .24 * descent, .21, .98);
   let growth = (.085 + 1.83 * uplift + 1.08 * turbulence) * settings.terrain.w;
   let drying = (.31 + 1.36 * descent) * (1.0 - .44 * turbulence);
+  let inletWeight = 1.0 - exp(-dt * inflow * 6.6);
+  if (settings.weather.x >= 1.0) {
+    let churn = max(turbulence, .76 * max(uplift, descent));
+    let inlet = select(fresh, vec2<f32>(.40 + .08 * ribbon, .37), settings.weather.x >= 2.0);
+    return mix(condensationWeather(water, churn, dt), inlet, inletWeight);
+  }
   let weather = exchangeWater(water, saturation, growth, drying, dt);
-  return mix(weather, fresh, 1.0 - exp(-dt * inflow * 6.6));
+  return mix(weather, fresh, inletWeight);
 }
 
 @compute @workgroup_size(8, 8)
@@ -457,6 +491,10 @@ fn correctCloud(@builtin(global_invocation_id) id: vec3<u32>) {
   let uv = p / f32(GRID);
   if (terrain) {
     waterOut[i] = terrainMoisture(vec2<i32>(id.xy), uv, water, dt);
+    return;
+  }
+  if (settings.weather.x >= 1.0) {
+    waterOut[i] = condensationWeather(water, disturbedAir(vec2<i32>(id.xy)), dt);
     return;
   }
   let inflow = 0.12 + 0.88 * pow(0.5 + 0.5 * cos(tau * (uv.x - 0.11)), 10.0);

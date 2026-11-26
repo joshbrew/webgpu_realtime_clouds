@@ -50,6 +50,7 @@ export function sampleWeatherCycle(seconds, options = {}) {
   const mapIndex=Math.floor(mapPosition),mapBlend=smooth(mapPosition-mapIndex);
   const hour = wrap(config.startHour+elapsed/config.daySeconds*24,24);
   const solar = Math.sin((hour-6)/24*Math.PI*2);
+  const nightSkySun = {azDeg:hour*15, elDeg:Math.asin(solar*.90)*180/Math.PI};
   const day = smooth((solar+.12)/.32);
   const dusk = Math.exp(-Math.pow(solar/.22,2));
   const moon = solar < 0;
@@ -66,7 +67,9 @@ export function sampleWeatherCycle(seconds, options = {}) {
   return {
     index,next,blend,mapIndex,mapBlend,weather,hour,moon,day,dusk,visibility,
     label:`${a.name} → ${b.name}`,
-    sun:{azDeg:wrap(90+(hour-6)*15+(moon?180:0),360),elDeg:Math.asin(Math.abs(solar)*.90)*180/Math.PI,bloom:moon?.03:.22},
+    // Keep the true solar angles for the stars when direct lighting switches to the moon.
+    nightSkySun,
+    sun:{azDeg:wrap(nightSkySun.azDeg+(moon?180:0),360),elDeg:Math.abs(nightSkySun.elDeg),bloom:moon?.03:.22},
     sky:weatherSky.map(v=>v*stormShade),
     lightColor:light.map(v=>v*intensity),lightTint:light,
     lightIntensity:intensity,
@@ -84,7 +87,7 @@ export function sampleWeatherCycle(seconds, options = {}) {
 export function cyclePreview(base, state, timeOfDay) {
   const preview={...base,weatherCycle:true,volumeShape:'box',box:{center:[base.box?.center?.[0]||0,ANVIL_FORM.halfY-.3+(base.terrainEnabled?FLAT_TERRAIN_CLOUD_LIFT:0),base.box?.center?.[2]||0],half:[base.box?.half?.[0]||18,ANVIL_FORM.halfY,base.box?.half?.[2]||18],uvScale:base.box?.uvScale||1}};
   if(timeOfDay) Object.assign(preview,{
-    sun:state.sun,sky:state.sky,gradeStyle:0,skyCycle:true,nightAmount:1-state.day,
+    sun:state.sun,nightSkySun:state.nightSkySun,sky:state.sky,gradeStyle:0,skyCycle:true,nightAmount:1-state.day,
     celestialVisibility:state.visibility,sunTint:state.celestialColor,
     cloudLitTint:[1,1,1],cloudShadowTint:[.70,.80,1],edgeTint:[1,1,1],
     exposure:mix(2.2,1.1,state.day),fogDensity:.10,fogSun:.10,styleShadowStrength:.75,styleShadowDarkness:0,

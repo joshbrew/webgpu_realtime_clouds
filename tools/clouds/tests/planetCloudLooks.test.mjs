@@ -1,16 +1,67 @@
 import test from 'node:test';
+import { atmosphereColors, planetNightRotation, sunDirection } from '../../planet/planet-approach.esm.js';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {REFERENCE_LOOK_PRESETS,SCULPTED_LOOK_IDS} from '../cloudLookPresets.js';
+import {GRADE_PRESETS,REFERENCE_LOOK_PRESETS,SCULPTED_LOOK_IDS,FLUID_TWILIGHT_GRADE,resolveScenePalette} from '../cloudLookPresets.js';
 import { resolvePlanetCloudGradient } from '../planetCloudGradients.js';
-import { applyPlanetLightSwatches, PLANET_CLOUD_GRADE_FLOATS, writePlanetCloudGrade } from '../planetCloudGrade.js';
+import { applyPlanetLightSwatches, PLANET_CLOUD_GRADE_FLOATS, resolvePlanetSceneLighting, writePlanetCloudGrade } from '../planetCloudGrade.js';
 
 // Exercise the planet's actual palette converter without initializing terrain
 // or Babylon. Applying a look must preserve cloud anatomy and sampling budget.
 const source=await (Promise.all(['planetStudioPanel.js','noisePlanetTest.js'].map(file => readFile(new URL('../../noise/' + file,import.meta.url),'utf8'))).then(parts => parts.join('\n')));
 const registry=source.slice(source.indexOf('export const CLOUD_LIGHTING_COLOR_PRESETS'),source.indexOf('function makeFullNoiseLayer')).replaceAll('export const','const');
 const converter=source.slice(source.indexOf('function colorVec3FromPreset'),source.indexOf('function makeNoiseLayerFromMode'));
-const convert=new Function('REFERENCE_LOOK_PRESETS','SCULPTED_LOOK_IDS','resolvePlanetCloudGradient',registry+converter+'return cloudColorPresetToConfigPatch;')(REFERENCE_LOOK_PRESETS,SCULPTED_LOOK_IDS,resolvePlanetCloudGradient);
+const convert=new Function('REFERENCE_LOOK_PRESETS','SCULPTED_LOOK_IDS','resolvePlanetCloudGradient','FLUID_TWILIGHT_GRADE',registry+converter+'return cloudColorPresetToConfigPatch;')(REFERENCE_LOOK_PRESETS,SCULPTED_LOOK_IDS,resolvePlanetCloudGradient,FLUID_TWILIGHT_GRADE);
+
+test('the night sky uses the Planet solar orbit axis across a complete turn', () => {
+  const cross = (a, b) => [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+  const reference = sunDirection(0);
+  const axis = cross(reference, sunDirection(.25));
+  for (const phase of [0, .125, .25, .5, .75, .99999, 1]) {
+    const rotation = planetNightRotation(phase);
+    const unrotate = ray => {
+      const tangent = cross(rotation, ray).map(value => value * 2);
+      const remainder = cross(rotation, tangent);
+      return ray.map((value, i) => value + rotation[3] * tangent[i] + remainder[i]);
+    };
+    for (const [actual, expected] of [
+      [unrotate(sunDirection(phase)), reference],
+      [unrotate(axis), axis],
+    ]) {
+      assert.ok(actual.every((value, i) => Math.abs(value - expected[i]) < 1e-12));
+    }
+  }
+});
+
+test('the planet seed varies preset atmosphere density while explicit atmospheres stay fixed', () => {
+  const defaultAir = atmosphereColors('lakeshore', 'preset');
+  const densities = Array.from({length: 64}, (_, seed) => {
+    const atmosphere = atmosphereColors('lakeshore', 'preset', seed);
+    assert.deepEqual(atmosphere.slice(0, 2), defaultAir.slice(0, 2));
+    assert.equal(atmosphereColors('lakeshore', 'preset', seed), atmosphere);
+    assert.deepEqual(atmosphereColors('lakeshore', 'thin', seed), atmosphereColors('lakeshore', 'thin'));
+    assert.ok(atmosphereColors('ceres', 'preset', seed)[2] < .03);
+    return atmosphere[2];
+  });
+  assert.ok(Math.min(...densities) < defaultAir[2] * .50);
+  assert.ok(Math.max(...densities) > defaultAir[2] * 1.50);
+  assert.equal(atmosphereColors('lakeshore', 'preset', 0)[2], densities[0]);
+});
+
+test('planet cloud lighting depends on atmospheric density and stays consistent across camera altitudes', () => {
+  const options = { cloudStyle: 'wind_swept_clouds', style: {} };
+  const dense = { atmosphere: [[], [], 0.86] };
+  const orbit = resolvePlanetSceneLighting(options, { ...dense, sceneAir: 0.002 });
+  const nearSurface = resolvePlanetSceneLighting(options, { ...dense, sceneAir: 0.99 });
+  const thin = resolvePlanetSceneLighting(options, { atmosphere: [[], [], 0.16] });
+  assert.deepEqual(orbit, nearSurface);
+  assert.ok(thin.weight < nearSurface.weight);
+  assert.ok(nearSurface.weight > 0.5);
+});
 
 test('planet reference looks transfer lighting without changing cloud shapes or performance',()=>{
  for(const [id,look] of Object.entries(REFERENCE_LOOK_PRESETS)){
@@ -75,4 +126,27 @@ test('calibrated grades have separate midtones and preserve hand-edited swatches
   assert.deepEqual(refreshed.cloudLitTint, saved.cloudLitTint);
   assert.notDeepEqual(refreshed.cloudShadowTint, saved.cloudShadowTint);
   assert.equal(resolvePlanetCloudGradient(refreshed), refreshed);
+});
+
+test('every Planet preset uses the Fluid sky colors and display response', () => {
+  for (const id of Object.keys(GRADE_PRESETS)) {
+    const fluid = resolveScenePalette(id);
+    const { params, style } = convert(id);
+    const planet = resolveScenePalette(id, { ...style, sunBloom: params.sunBloom });
+    for (const channel of ['sky', 'sun', 'exposure', 'colorLift', 'saturation', 'bloom']) {
+      assert.deepEqual(planet[channel], fluid[channel], `palette ${id} ${channel}`);
+    }
+  }
+  const twilight = resolveScenePalette(FLUID_TWILIGHT_GRADE);
+  assert.deepEqual(twilight.sky, [1, 1, 1]);
+  const edited = resolveScenePalette(FLUID_TWILIGHT_GRADE, { sky: [.48, .23, .175] });
+  assert.deepEqual(edited.sky, [2, 1, .5]);
+});
+
+test("Fluid Twilight transfers the shared reference light without a second sun tint",()=>{
+  const look=REFERENCE_LOOK_PRESETS[FLUID_TWILIGHT_GRADE];
+  const patch=convert(FLUID_TWILIGHT_GRADE);
+  assert.deepEqual(patch.params.frontLightColor,look.frontLightTint.map((value,i)=>value*look.sunTint[i]));
+  assert.deepEqual(patch.params.sunColor,look.transmissiveLightTint.map((value,i)=>value*look.sunTint[i]));
+  assert.equal(patch.params.sunBloom,.18);
 });

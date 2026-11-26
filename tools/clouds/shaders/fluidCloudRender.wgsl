@@ -14,7 +14,7 @@ struct Scene {
   rockEast: vec4<f32>, // east, horizontal metres per scene unit
   rockSouth: vec4<f32>, // south, vertical metres per scene unit
   rock: RegionRockAnchor,
-  wind: vec4<f32>, // horizontal wind direction in xy
+  wind: vec4<f32>, // horizontal direction, formation mode, breakup
   terrainLOD: vec4<f32>, // grid spacing in metres, sea radius in scene units
   lookSky: vec4<f32>, // sky tint, bloom
   lookSun: vec4<f32>, // sun tint, direct boost
@@ -92,10 +92,24 @@ fn solarColor(sun: vec3<f32>) -> vec3<f32> {
   return sceneSolarColor(sun.y) * scene.lookSun.rgb;
 }
 
-fn sky(dir: vec3<f32>, sun: vec3<f32>, solar: vec3<f32>) -> vec3<f32> {
+// Direct illumination and cast-shadow contrast fade together near the horizon.
+fn fluidDirectSun(elevation: f32) -> f32 {
+  return smoothstep(0.0, .06, elevation);
+}
+
+fn sky(dir: vec3<f32>, sun: vec3<f32>, solar: vec3<f32>, night: f32, detail: bool) -> vec3<f32> {
   let nearSun = max(dot(dir, sun), 0.0);
-  let glow = (sceneSolarHalo(nearSun) + 4.0 * sceneSolarDisk(nearSun)) * solar;
-  return sceneSkyGradient(dir.y, nearSun, sun.y) * scene.lookSky.rgb + glow * (scene.lookSky.w / .18);
+  if (night >= 1.0) { return sceneNightGradient(dir, dir.y, scene.lookSky.rgb, detail); }
+  // Terrain haze and reflections carry the same sunset gradient and broad glow.
+  // Reserve the visible disk and its tight glare for direct views into the sky.
+  var glow = sceneSolarHaze(nearSun);
+  if (detail) {
+    let disk = select(smoothstep(-.008, .008, dir.y), 1.0, fluidTerrainActive());
+    glow += (sceneSolarGlare(nearSun) + 4.0 * sceneSolarDisk(nearSun)) * disk;
+  }
+  let day = sceneSkyGradient(dir.y, nearSun, sun.y) * scene.lookSky.rgb + solar * glow * (scene.lookSky.w / .18);
+  if (night <= 0.0) { return day; }
+  return mix(day, sceneNightGradient(dir, dir.y, scene.lookSky.rgb, detail), night);
 }
 
 fn ocean(p: vec3<f32>, ray: vec3<f32>, distance: f32, sun: vec3<f32>, solar: vec3<f32>) -> vec3<f32> {
@@ -109,10 +123,12 @@ fn ocean(p: vec3<f32>, ray: vec3<f32>, distance: f32, sun: vec3<f32>, solar: vec
   let clear = sunlightThroughCloud(p, sun, scene.sizeTime.w, true);
   let deep = vec3<f32>(0.009, 0.037, 0.055) * (0.76 + waves.roll * 0.40);
   // The direct glint uses the same cloud transmittance as the volume.
-  let reflectedSky = sky(reflection, sun, solar) - solar * (sceneSolarGlare(reflectionSun) + 4.0 * sceneSolarDisk(reflectionSun));
-  let waterLight = oceanSurfaceLight(deep, reflectedSky, reflectionSun, solar, clear, fresnel);
+  let night = sceneNightAmount(sun.y);
+  let sunlight = solar * fluidDirectSun(sun.y);
+  let reflectedSky = sky(reflection, sun, solar, night, false);
+  let waterLight = oceanSurfaceLight(deep * mix(1.0, .30, night), reflectedSky, reflectionSun, sunlight, clear, fresnel);
   let horizon = normalize(vec3<f32>(ray.x, 0.0, ray.z) + vec3<f32>(0.000001, 0.0, 0.0));
-  return mix(waterLight, sky(horizon, sun, solar) * 0.97, 1.0 - exp(-distance * 0.012));
+  return mix(waterLight, sky(horizon, sun, solar, night, false) * 0.97, 1.0 - exp(-distance * 0.012));
 }
 
 fn heightInterval(originY: f32, rayY: f32, top: f32) -> vec2<f32> {
@@ -191,7 +207,7 @@ fn buoyColor(id: u32) -> vec3<f32> {
   return marks[id];
 }
 
-fn objectLight(p: vec3<f32>, ray: vec3<f32>, normal: vec3<f32>, object: vec4<f32>, id: u32, sun: vec3<f32>, solar: vec3<f32>) -> vec3<f32> {
+fn objectLight(p: vec3<f32>, ray: vec3<f32>, normal: vec3<f32>, object: vec4<f32>, id: u32, sun: vec3<f32>, solar: vec3<f32>, directSun: f32) -> vec3<f32> {
   let radius = length(p.xz - object.xy) / object.z;
   let color = buoyColor(id);
   let isTop = normal.y > 0.5;
@@ -216,17 +232,22 @@ fn objectLight(p: vec3<f32>, ray: vec3<f32>, normal: vec3<f32>, object: vec4<f32
   let panel = mix(metal, color * 0.64, ring + sideBand * 0.44);
   let diffuse = 0.32 + 0.70 * max(dot(sun, normal), 0.0);
   let specular = pow(max(dot(reflect(ray, normal), sun), 0.0), 44.0);
-  let direct = sunlightThroughCloud(p, sun, scene.sizeTime.w, true);
+  let direct = sunlightThroughCloud(p, sun, scene.sizeTime.w, true) * directSun;
   return panel * (0.32 + (diffuse - 0.32) * direct)
     + solar * (0.15 * specular * direct) + color * (ring * 0.39 + sideBand * 0.15);
 }
 
 const terrainSpillDepth = .24;
 
+fn fogBlanketActive() -> bool {
+  return scene.wind.z >= 2.0;
+}
+
 fn cloudVerticalRange() -> vec2<f32> {
   // Include the shifted profile and the soft, noise-eroded edges.
   let terrainRange = vec2<f32>(-.68 + TERRAIN_LOFT_MIN - terrainSpillDepth, .87 + TERRAIN_LOFT_MAX + .29 * TERRAIN_BILLOW_MAX);
-  return select(vec2<f32>(-.5, .5), terrainRange, fluidTerrainActive());
+  let range = select(vec2<f32>(-.5, .5), terrainRange, fluidTerrainActive());
+  return range - vec2<f32>(select(0.0, .14, fogBlanketActive()), 0.0);
 }
 
 fn layerBounds(origin: vec3<f32>, ray: vec3<f32>, heights: vec2<f32>) -> vec2<f32> {
@@ -269,8 +290,15 @@ fn cloudLayer(world: vec2<f32>, column: vec4<f32>) -> CloudLayer {
   let billow = select(0.0, column.z, terrain);
   let lift = column.w * scene.material.x * 0.13 + loft;
   let wakeGrowth = select(-.085, .035, terrain);
-  return CloudLayer(moisture, mix(-0.27, -0.34, coverage) + lift + 0.017 * core - .06 * billow,
-    mix(-0.12, 0.36, coverage) + lift + wakeGrowth * core + .29 * billow, condensation, loft);
+  var base = mix(-0.27, -0.34, coverage) + lift + 0.017 * core - .06 * billow;
+  var crest = mix(-0.12, 0.36, coverage) + lift + wakeGrowth * core + .29 * billow;
+  if (fogBlanketActive()) {
+    // Keep a shallow body near the foot of the cloud layer. The history
+    // still lifts and curls the exposed top where terrain disturbs the wind.
+    base -= .13;
+    crest = mix(crest, base + .46 + .15 * billow, .52);
+  }
+  return CloudLayer(moisture, base, crest, condensation, loft);
 }
 
 fn layerProfile(height: f32, base: f32, crest: f32) -> f32 {
@@ -358,7 +386,7 @@ fn cloudDensity(p: vec3<f32>, thickness: f32, stepSize: f32, resolvedDetail: f32
   let contact = smoothstep(0.0, .11, height - ground);
   let depth = max(.18, layer.crest - layer.base);
   let spread = clamp(depth / max(.18, layer.crest - floor), .72, 1.0);
-  let profile = layerProfile(height, base, crest) * contact * spread;
+  var profile = layerProfile(height, base, crest) * contact * spread;
   if (profile <= 0.0) { return 0.0; }
   // Erode exposed edges on several scales. Low-lying vapor can stay
   // connected beneath a torn crest, and dense interiors keep their body.
@@ -374,7 +402,32 @@ fn cloudDensity(p: vec3<f32>, thickness: f32, stepSize: f32, resolvedDetail: f32
   }
   let support = smoothstep(layer.condensation * 0.65, 0.24, layer.moisture);
   let openings = (roll - .5) * rollWeight * .23 * max(fringe, crestEdge);
-  let vapor = layer.moisture + support * (erosion * (broad * .17 + fine * .185 + grain * .11) + openings);
+  var vapor = layer.moisture + support * (erosion * (broad * .17 + fine * .185 + grain * .11) + openings);
+  let breakup = scene.wind.w;
+  if (breakup > 0.0) {
+    let edgeWeight = max(fringe, crestEdge) * support;
+    let crestSupport = smoothstep(-.38, .015, height - crest) * support;
+    let coarseWeight = 1.0 - smoothstep(.10, .37, stepSize);
+    if (coarseWeight * max(edgeWeight, crestSupport) > .005) {
+      // Warp a finer octave with the existing flowing billows. The same
+      // material coordinates feed the visible cloud and cached terrain light.
+      let q = vec3<f32>(fold.x + fine * .17, loftHeight + broad * .54, fold.y - fine * .20);
+      let cells = oceanNoise3(q * vec3<f32>(5.8, 4.4, 8.1) + vec3<f32>(13.0, 25.0, 6.0));
+      var breakupShape = smoothstep(.26, .68, cells) - .62;
+      let fineWeight = coarseWeight * resolvedDetail;
+      if (fineWeight > .015) {
+        let flecks = oceanNoise3(q * vec3<f32>(11.8, 8.6, 15.1) + 3.2 * cells);
+        breakupShape += (flecks - .5) * .46 * fineWeight;
+      }
+      let strength = breakup * coarseWeight;
+      vapor += breakupShape * strength * edgeWeight * mix(.30, .48, max(response, eddy));
+      // Carve the top profile as well as its vapor. A dense blanket can
+      // saturate the moisture response but still has a visible silhouette.
+      let crestErosion = (1.0 - smoothstep(.25, .65, cells)) * strength * crestSupport
+        * mix(.26, .39, response);
+      profile = layerProfile(height, base, crest - crestErosion) * contact * spread;
+    }
+  }
   return smoothstep(layer.condensation, 0.77, vapor) * profile * 5.05;
 }
 
@@ -412,24 +465,13 @@ fn sunlightThroughCloud(p: vec3<f32>, sun: vec3<f32>, thickness: f32, outside: b
     }
     return textureSampleLevel(terrainCloudLight, materialSampler, terrainVolumeUV(entry, thickness), 0.0).r;
   }
-  // Clip along the actual direction of the sun, including side exits.
-  // Nearby samples carry more weight when the sun is grazing the layer.
-  var start = 0.0;
-  var end = max(0.0, (cloudCenter() + thickness * cloudVerticalRange().y - p.y) / sun.y);
-  if (outside) {
-    let interval = cloudBounds(p, sun, thickness);
-    start = interval.x;
-    end = interval.y;
-  } else {
-    let direction = sign(sun.xz);
-    let sides = (DOMAIN * 0.5 - p.xz * direction) / max(abs(sun.xz), vec2<f32>(0.000001));
-    end = min(end, min(sides.x, sides.y));
-  }
-  let length = end - start;
+  // Grazing rays can leave through a side or either cap.
+  let interval = cloudBounds(p, sun, thickness);
+  let length = interval.y - interval.x;
   if (length <= 0.001) { return 1.0; }
   let step = min(0.45, length * 0.24);
   let remainder = length - step;
-  let base = p + sun * start;
+  let base = p + sun * interval.x;
   let nearDepth = lightExtinction(base + sun * (step * 0.56), thickness) * step;
   let depth = nearDepth + (lightExtinction(base + sun * (step + remainder * 0.22), thickness) * 0.50
     + lightExtinction(base + sun * (step + remainder * 0.69), thickness) * 0.50) * remainder;
@@ -561,15 +603,17 @@ struct TerrainHaze {
   extinction: f32,
 }
 
-fn terrainHaze(thickness: f32, sun: vec3<f32>, solar: vec3<f32>, ray: vec3<f32>) -> TerrainHaze {
+fn terrainHaze(thickness: f32, sun: vec3<f32>, solar: vec3<f32>, ray: vec3<f32>, directSun: f32) -> TerrainHaze {
   let heights = vec2<f32>(cloudCenter()) + cloudVerticalRange() * thickness + vec2<f32>(-.78, .58);
   let dusk = 1.0 - smoothstep(.085, .50, sun.y);
   let forward = max(dot(ray, sun), 0.0);
-  let phase = .085 + .42 * pow(forward, 7.0) + 1.32 * pow(forward, 26.0);
-  let ambient = mix(vec3<f32>(.21, .29, .40), vec3<f32>(.12, .17, .27), dusk);
+  let phase = .085 + sceneAirScatterPhase(forward);
+  let ambient = sceneHazeAmbient(sun.y);
   let haze = scene.lookPost.w * (.82 + .60 * scene.lookFog.x);
   let shafts = .76 + scene.lookFog.y + scene.lookFog.z;
-  return TerrainHaze(heights, ambient * scene.lookSky.rgb, solar * phase * shafts, mix(.039, .078, dusk) * haze);
+  let night = sceneNightAmount(sun.y);
+  return TerrainHaze(heights, ambient * scene.lookSky.rgb * mix(vec3<f32>(1.0), vec3<f32>(.045, .076, .14), night),
+    solar * phase * shafts * directSun, mix(.039, .078, dusk) * haze);
 }
 
 fn hazeExtinction(haze: TerrainHaze, p: vec3<f32>) -> f32 {
@@ -611,11 +655,7 @@ fn marchClearHaze(origin: vec3<f32>, ray: vec3<f32>, sun: vec3<f32>, thickness: 
 }
 
 fn tonemap(color: vec3<f32>) -> vec3<f32> {
-  let luma = dot(color, vec3<f32>(.2126, .7152, .0722));
-  let graded = mix(vec3<f32>(luma), color, scene.lookPost.y);
-  let x = max(graded, vec3<f32>(0.0)) * (scene.lookPost.x * scene.lookPost.z);
-  let mapped = x * (2.51 * x + 0.03) / (x * (2.43 * x + 0.59) + 0.14);
-  return pow(clamp(mapped, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.4545));
+  return sceneDisplay(color, scene.lookPost.x * scene.lookPost.z, scene.lookPost.y);
 }
 
 // Discrete circulation at a staggered-grid vertex. The projected faces
@@ -779,7 +819,7 @@ struct TerrainRaster {
     return TerrainRaster(vec4<f32>(0.0, 0.0, 0.0, distance), waterCoverage);
   }
   let sun = scene.sunlight.xyz;
-  let direct = landSunVisibility(v.world, v.normal);
+  let direct = landSunVisibility(v.world, v.normal) * fluidDirectSun(sun.y);
   var color = v.albedo * (vec3<f32>(.36, .41, .47) + solarColor(sun) * max(dot(v.normal, sun), 0.0) * (.79 * direct));
   if (scene.rockUp.w > 0.0 && waterCoverage < opaqueTerrainWater) {
     let baseHeight = v.baseHeight - seaLevel;
@@ -841,9 +881,12 @@ fn fragmentMain(@builtin(position) pixel: vec4<f32>) -> @location(0) vec4<f32> {
   let ray = view.direction;
   let sun = scene.sunlight.xyz;
   let solar = solarColor(sun);
+  let directSun = fluidDirectSun(sun.y);
   let terrainMode = fluidTerrainActive();
   var nearest = farDistance;
-  var surface = sky(ray, sun, solar);
+  let night = sceneNightAmount(sun.y);
+  let pixelAngle = max(length(dpdx(ray)), length(dpdy(ray)));
+  var surface = sky(ray, sun, solar, night, true);
   if (terrainMode) {
     let cell = vec2<i32>(pixel.xy);
     let terrain = textureLoad(terrainSurface, cell, 0);
@@ -854,12 +897,13 @@ fn fragmentMain(@builtin(position) pixel: vec4<f32>) -> @location(0) vec4<f32> {
       let water = smoothstep(.02, opaqueTerrainWater, textureLoad(terrainWater, cell, 0).r);
       if (water > 0.0) { surface = ocean(position, ray, distance, sun, solar); }
       if (water < 1.0) {
-        let shade = sunlightThroughCloud(position, sun, scene.sizeTime.w, true);
+        let shade = mix(1.0, sunlightThroughCloud(position, sun, scene.sizeTime.w, true), directSun);
         let hazeDirection = normalize(vec3<f32>(ray.x, .13, ray.z));
         let distanceFog = 1.0 - exp(-distance * .006 * scene.lookPost.w);
         let gradeTint = mix(scene.lookSky.rgb, scene.lookSun.rgb, clamp(shade, .35, .90));
-        let land = mix(terrain.rgb * (.65 + .35 * shade) * gradeTint,
-          sky(hazeDirection, sun, solar) * .83, distanceFog);
+        let nightLight = mix(vec3<f32>(1.0), vec3<f32>(.12, .20, .37), night);
+        let land = mix(terrain.rgb * (.65 + .35 * shade) * gradeTint * nightLight,
+          sky(hazeDirection, sun, solar, night, false) * .83, distanceFog);
         surface = mix(land, surface, water);
       }
     } else {
@@ -879,9 +923,15 @@ fn fragmentMain(@builtin(position) pixel: vec4<f32>) -> @location(0) vec4<f32> {
       let hit = obstacleHit(origin, ray, object, scene.axes[i].xy, obstacleTop(i));
       if (hit.w < nearest) {
         nearest = hit.w;
-        surface = objectLight(origin + ray * nearest, ray, hit.xyz, object, i, sun, solar);
+        surface = objectLight(origin + ray * nearest, ray, hit.xyz, object, i, sun, solar, directSun)
+          * mix(vec3<f32>(1.0), vec3<f32>(.12, .20, .37), night);
       }
     }
+  }
+
+  var stars = vec3<f32>(0.0);
+  if (night > 0.0 && nearest >= farDistance && scene.view.y <= 0.0) {
+    stars = sceneNightStars(ray, ray.y, pixelAngle, scene.sizeTime.z) * night;
   }
 
   let thickness = scene.sizeTime.w;
@@ -893,13 +943,15 @@ fn fragmentMain(@builtin(position) pixel: vec4<f32>) -> @location(0) vec4<f32> {
   var hazeSpan = vec2<f32>(0.0);
   var front = vec4<f32>(0.0, 0.0, 0.0, 1.0);
   if (terrainMode) {
-    haze = terrainHaze(thickness, sun, solar, ray);
+    haze = terrainHaze(thickness, sun, solar, ray, directSun);
     let bounds = layerBounds(origin, ray, haze.heights);
     hazeSpan = vec2<f32>(bounds.x, min(bounds.y, nearest));
     let frontEnd = select(hazeSpan.y, min(hazeSpan.y, span.x), visibleCloud);
     front = marchClearHaze(origin, ray, sun, thickness, vec2<f32>(hazeSpan.x, frontEnd), jitter, haze);
   }
-  if (!visibleCloud) { return vec4<f32>(tonemap(front.rgb + surface * front.a), 1.0); }
+  if (!visibleCloud) {
+    return vec4<f32>(tonemap(front.rgb + (surface + stars * front.a) * front.a), 1.0);
+  }
   let length = end - span.x;
   let liveCount = u32(clamp(ceil(length / .073), 12.0, 92.0));
   let count = liveCount * u32(max(1.0, scene.lookFog.w));
@@ -909,13 +961,9 @@ fn fragmentMain(@builtin(position) pixel: vec4<f32>) -> @location(0) vec4<f32> {
   let detailStep = length / f32(liveCount);
   let resolvedDetail = 1.0 - smoothstep(0.11, 0.25, detailStep);
   let sunward = max(dot(ray, sun), 0.0);
-  let phase = 0.16 + 0.32 * pow(sunward, 7.0) + 0.74 * pow(sunward, 42.0);
-  let directPhase = phase * .91 * (scene.lookSun.w / .65) * (scene.lookFront.w / .85);
-  let transmissionPhase = pow(sunward, 16.0);
-  let shadowFill = 1.0 / max(.75, scene.lookShadow.w / 1.5);
-  let dusk = 1.0 - smoothstep(0.075, 0.50, sun.y);
-  let shade = mix(vec3<f32>(0.17, 0.218, 0.267), vec3<f32>(0.086, 0.108, 0.140), dusk);
-  let skyLight = mix(vec3<f32>(0.355, 0.423, 0.502), vec3<f32>(0.202, 0.233, 0.278), dusk);
+  let light = sceneCloudLighting(sun.y, sunward);
+  let response = vec3<f32>((scene.lookSun.w / .65) * (scene.lookFront.w / .85),
+    1.0 / max(.75, scene.lookShadow.w / 1.5), .9 + scene.lookTransmission.w);
   var transmittance = front.a;
   var radiance = front.rgb;
 
@@ -939,22 +987,13 @@ fn fragmentMain(@builtin(position) pixel: vec4<f32>) -> @location(0) vec4<f32> {
       illumination = sunlightThroughCloud(p, sun, thickness, false);
     }
     if (density >= .012) {
-      let scatteredSun = sqrt(illumination);
       let height = (p.y - cloudCenter()) / thickness;
-      let skyExposure = smoothstep(-.29, .36, height);
-      let skyFill = select(
-        mix(shade, skyLight, .26 + .60 * skyExposure + .14 * scatteredSun),
-        mix(shade * .74, skyLight, .13 + .72 * skyVisibility + .15 * scatteredSun), terrainMode);
+      let exposure = select(smoothstep(-.29, .36, height), skyVisibility, terrainMode);
       let edge = 1.0 - smoothstep(.10, .72, density / 5.05);
-      // Keep diffuse fill in dense folds while direct light retains detail.
-      let diffuse = solar * scene.lookFront.rgb * (.11 * scatteredSun);
-      let ambientTint = mix(scene.lookShadow.rgb, scene.lookFront.rgb, scatteredSun);
-      let ambientGain = mix(shadowFill, 1.0, scatteredSun);
-      let beam = solar * illumination;
-      let lit = skyFill * ambientTint * ambientGain + diffuse
-        + beam * scene.lookFront.rgb * directPhase
-        + beam * scene.lookTransmission.rgb * (edge * .23 * transmissionPhase * (.9 + scene.lookTransmission.w));
-      emitted += lit * density;
+      let lit = sceneCloudRadiance(light, solar, illumination * directSun, exposure, edge, terrainMode,
+        scene.lookFront.rgb, scene.lookShadow.rgb, scene.lookTransmission.rgb, response);
+      let nightFill = vec3<f32>(.009, .018, .038) * mix(.57, 1.28, exposure);
+      emitted += mix(lit, nightFill, night) * density;
     }
     let alpha = 1.0 - exp(-extinction * stepSize);
     radiance += emitted * (alpha * transmittance / extinction);
@@ -966,5 +1005,5 @@ fn fragmentMain(@builtin(position) pixel: vec4<f32>) -> @location(0) vec4<f32> {
     radiance += tail.rgb * transmittance;
     transmittance *= tail.a;
   }
-  return vec4<f32>(tonemap(radiance + surface * transmittance), 1.0);
+  return vec4<f32>(tonemap(radiance + (surface + stars * transmittance) * transmittance), 1.0);
 }

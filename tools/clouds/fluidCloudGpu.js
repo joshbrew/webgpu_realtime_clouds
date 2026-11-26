@@ -4,13 +4,14 @@ import regionNoise from '../planet/planetRegionTerrainNoise.wgsl';
 import refinement from './shaders/planetRegionTerrainRefinement.wgsl';
 import regionMaterial from './shaders/planetRegionTerrainMaterial.wgsl';
 import regionSkylight from './shaders/planetRegionSkylight.wgsl';
-import { GRADE_PRESETS, FLUID_TWILIGHT_GRADE } from './cloudLookPresets.js';
+import { resolveScenePalette } from './cloudLookPresets.js';
 import {regionDetailDrawRanges, regionDrawBounds, selectRegionDetail, visibleRegionDrawRanges} from './cloudTerrainMesh.js';
 import {createRegionTerrainMarch, regionTerrainMarchWGSL} from './planetRegionTerrainMarch.js';
 import { LOCAL_REGION_UNITS, REGION_CONTEXT_SCALE, writePlanetRegionRockAnchor } from '../planet/planetRegion.js';
 import renderSource from './shaders/fluidCloudRender.wgsl';
 import oceanWavesSource from './shaders/oceanWaves.wgsl';
 import sceneSkyLightingSource from './shaders/sceneSkyLighting.wgsl';
+import sceneNightSkySource from './shaders/sceneNightSky.wgsl';
 import { FLUID_DOMAIN_WIDTH, FLUID_MAP_FRACTION } from './fluidPlanetTerrain.js';
 import { SEA_LEVEL, fluidObstacleGeometryWGSL } from './fluidCloudShapes.js';
 
@@ -59,7 +60,7 @@ export async function createFluidCloudSimulation(device) {
     usage:GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
   });
   const settings = device.createBuffer({
-    label:'Fluid simulation settings', size:176, usage:GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    label:'Fluid simulation settings', size:192, usage:GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   const velocity = [makeField('Fluid projected velocity', 2), makeField('Fluid advected velocity', 2)];
   const pressure = [makeField('Fluid pressure', 1), makeField('Fluid pressure scratch', 1)];
@@ -153,12 +154,13 @@ export async function createFluidCloudSimulation(device) {
   }
 
   function upload(dt, time, wind, objects, options = {}) {
-    const {active = false, cutoff = 1, drag = 1, condensation = 1, heading = 90} = options;
+    const {active = false, cutoff = 1, drag = 1, condensation = 1, heading = 90, formation = 0} = options;
     const angle = heading * Math.PI / 180;
     const east = active ? Math.sin(angle) : 1;
     const south = active ? -Math.cos(angle) : 0;
     parameters.set([dt, wind * cellsPerUnit * east, time, wind * cellsPerUnit * south]);
     parameters.set([active ? 1 : 0, Math.max(.03, cutoff), drag, condensation], 40);
+    parameters[44] = formation;
     for (let i = 0; i < objects.length; i++) {
       const {x,z,radius,vx,vz,kind = 0,angle = 0,angularSpeed = 0} = objects[i];
       parameters.set([toGrid(x), toGrid(z), radius * cellsPerUnit, kind], 4 + i * 4);
@@ -408,7 +410,7 @@ function createTerrainCloudLighting(device, settings, {material, detail, materia
 }
 
 export async function createFluidCloudRenderer(device, context, format, simulationReady, initialTerrainReady) {
-  const module = await shaderModule(device, 'Fluid cloud rendering', [rockSource, regionNoise, regionMaterial, oceanWavesSource, sceneSkyLightingSource, renderSource, refinement, regionTerrainMarchWGSL].join('\n'));
+  const module = await shaderModule(device, 'Fluid cloud rendering', [rockSource, regionNoise, regionMaterial, oceanWavesSource, sceneSkyLightingSource, sceneNightSkySource, renderSource, refinement, regionTerrainMarchWGSL].join('\n'));
   const settings = device.createBuffer({
     label:'Fluid scene settings', size:464, usage:GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
@@ -510,23 +512,23 @@ export async function createFluidCloudRenderer(device, context, format, simulati
     parameters.set(sunDirection, 52);
     parameters.set([Number(Boolean(region.active)), region.layer ?? .26, region.cutoff ?? 1, terrain?.waterLevel ?? -1e6], 56);
     const heading = (region.heading ?? 90) * Math.PI / 180;
-    parameters.set([Math.sin(heading), -Math.cos(heading)], 80);
-    const preset = look.grade === FLUID_TWILIGHT_GRADE ? null : GRADE_PRESETS[look.grade];
-    const neutral = [1, 1, 1];
-    const sky = preset ? preset.sky.map((value, i) => value / [.50, .59, .74][i]) : neutral;
-    const color = (a, b) => (a ?? neutral).map((value, i) => value * (b?.[i] ?? 1));
-    parameters.set([...sky, preset?.sunBloom ?? .18], 88);
-    parameters.set([...(preset?.sunTint ?? neutral), look.direct ?? preset?.directLightBoost ?? .65], 92);
-    parameters.set([...color(preset?.frontLightTint, preset?.cloudLitTint), preset?.directLightBlend ?? .85], 96);
-    parameters.set([...color(preset?.volumeShadowTint, preset?.cloudShadowTint), preset?.styleShadowStrength ?? 1.5], 100);
-    parameters.set([...color(preset?.transmissiveLightTint, preset?.edgeTint), preset?.styleRimStrength ?? .1], 104);
-    parameters.set([look.exposure ?? 1.16, preset?.styleSaturation ?? 1, preset?.styleColorLift ?? 1, look.haze ?? 1], 108);
-    parameters.set([preset?.fogHorizon ?? .30, preset?.fogSun ?? .12, look.shafts ?? .12, look.inspection ? 2 : 1], 112);
+    const formation = region.formation ?? 0;
+    const breakup = region.breakup ?? 0;
+    parameters.set([Math.sin(heading), -Math.cos(heading), formation, breakup], 80);
+    const palette = resolveScenePalette(look.grade);
+    parameters.set([...palette.sky, palette.bloom], 88);
+    parameters.set([...palette.sun, look.direct ?? palette.direct], 92);
+    parameters.set([...palette.front, palette.directBlend], 96);
+    const shadowGain = 1 / (1 + .85 * (look.shadowDarkness ?? 0));
+    parameters.set([...palette.shadow.map(channel => channel * shadowGain), palette.shadowStrength], 100);
+    parameters.set([...palette.transmission, palette.rim], 104);
+    parameters.set([look.exposure ?? palette.exposure, palette.saturation, palette.colorLift, look.haze ?? 1], 108);
+    parameters.set([palette.fogHorizon, palette.fogSun, look.shafts ?? .12, look.inspection ? 2 : 1], 112);
     device.queue.writeBuffer(settings, 0, parameters);
     const encoder = device.createCommandEncoder();
     let groups = defaultGroups;
     if (prepared.key === 'terrain') {
-      const densityKey = [simulation.revision, thickness, region.layer, wakeDetail, heading].join(',');
+      const densityKey = [simulation.revision, thickness, region.layer, wakeDetail, heading, formation, breakup].join(',');
       lighting.encode(encoder, index, densityKey, sunDirection.join(','));
       if (!target || target.width !== width || target.height !== height) {
         target?.color.destroy();

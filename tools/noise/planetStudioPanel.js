@@ -2,12 +2,12 @@ import { PlanetPresets } from '../planet/studioPresets.js';
 import { PLANET_GRADIENTS } from '../planet/planetGradientChoices.js';
 import { PLANET_CLOUD_FLAT_LAB_PRESET, PLANET_CLOUD_NOISE } from '../clouds/planetClouds.js';
 import { planetDisclosure } from '../clouds/planetPanelUi.js';
-import { adoptField, createStudioCard } from '../clouds/cloudLabUi.js';
+import { adoptField, createStudioCard, createLightingSliders } from '../clouds/cloudLabUi.js';
 import { randomizePlanetCloudConfig, randomizePlanetSceneConfig } from '../clouds/planetCloudRandomize.js';
 import { PLANET_CLOUD_STYLES, planetCloudSimStylePatch } from '../clouds/planetCloudSimStyles.js';
 import { resolvePlanetCloudGradient } from '../clouds/planetCloudGradients.js';
 import { applyPlanetLightSwatches } from '../clouds/planetCloudGrade.js';
-import { REFERENCE_LOOK_PRESETS, SCULPTED_LOOK_IDS } from '../clouds/cloudLookPresets.js';
+import { FLUID_TWILIGHT_GRADE, REFERENCE_LOOK_PRESETS, SCULPTED_LOOK_IDS, SCENE_HAZE_DENSITY, MAX_SCENE_SHAFT_STRENGTH, sceneLightingValues } from '../clouds/cloudLookPresets.js';
 import { cloudColorStrength, cloudColorHex, cloudColorFromHex, scaleCloudColor } from '../clouds/planetCloudColors.js';
 
 const DEFAULT_SEGMENTS = 1000;
@@ -1862,7 +1862,7 @@ function cloudColorPresetToConfigPatch(presetId) {
     14: [0.96, 0.98, 1.02],
     15: [1.34, 0.10, 0.08],
   };
-  const baseSun = sunColorByPreset[Number(id)] || [1.0, 0.95, 0.87];
+  const baseSun = Number(id) === FLUID_TWILIGHT_GRADE ? [1, 1, 1] : sunColorByPreset[Number(id)] || [1.0, 0.95, 0.87];
   const sunTint = colorVec3FromPreset(preset.sunTint, [1, 1, 1]);
   const litTint = colorVec3FromPreset(preset.cloudLitTint, [1, 1, 1]);
   const shadowTint = colorVec3FromPreset(preset.cloudShadowTint, [0.62, 0.68, 0.78]);
@@ -1892,7 +1892,7 @@ function cloudColorPresetToConfigPatch(presetId) {
       colorPresetId: Number(id),
       colorPresetLabel: CLOUD_COLOR_PRESET_LABELS[id] || `Preset ${id}`,
       colorPresetSource: 'flat-cloud-test-v-grade',
-      exposure: preset.exposure ?? 1.18,
+      exposure: preset.exposure ?? 1.16,
       sky: colorVec3FromPreset(preset.sky, [0.56, 0.72, 1.02]),
       sunTint,
       transmissiveLightTint: transmissiveTint,
@@ -1910,7 +1910,7 @@ function cloudColorPresetToConfigPatch(presetId) {
       styleShadowDarkness: preset.styleShadowDarkness ?? 0.5,
       styleColorLift: preset.styleColorLift ?? 1.0,
       styleSaturation: preset.styleSaturation ?? 1.0,
-      styleRimStrength: preset.styleRimStrength ?? 1.0,
+      styleRimStrength: preset.styleRimStrength ?? .1,
       styleSunBleed: preset.styleSunBleed ?? 0.85,
       styleMidLift: preset.styleMidLift ?? 1.0,
       alphaFloor: preset.alphaFloor ?? 0.0,
@@ -2001,6 +2001,7 @@ function makeNoiseLayerFromMode(mode, overrides = {}) {
 
 
 function createTweakPanel(options = {}) {
+  let sceneLightingSliders;
   const terrainControls = options.terrainControls;
   const panel = document.createElement('section');
   panel.id = 'noise-planet-tweak-panel';
@@ -2251,6 +2252,7 @@ function createTweakPanel(options = {}) {
     } else if (!path) {
       for (const key of map.keys()) syncOne(key);
     }
+    if (editor === clouds) sceneLightingSliders?.sync(sceneLightingValues(value.style));
     if (editor === clouds && (!path || ['cloudStyle', 'cloudRenderMode', 'tuning.definition', 'tuning.formType'].includes(path))) {
       refreshCloudTextureControls();
     }
@@ -2601,7 +2603,7 @@ function createTweakPanel(options = {}) {
       cfg.params=mergePlain(cfg.params||{},patch.params);
       cfg.tuning=mergePlain(cfg.tuning||{},patch.tuning);
       cfg.style=mergePlain(cfg.style||{},patch.style);
-    },{forceCloudLiveApply:true});
+    },{path:'style.colorPresetId',forceCloudLiveApply:true});
     syncCloudLookInputs();
   }
   const quickColorPreset = addCloudControl('style.colorPresetId','Lighting preset','select','any',{
@@ -3274,7 +3276,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
       cfg.params = mergePlain(cfg.params || {}, patch.params);
       cfg.tuning = mergePlain(cfg.tuning || {}, patch.tuning);
       cfg.style = mergePlain(cfg.style || {}, patch.style);
-    }, { forceCloudLiveApply: true });
+    }, { path: 'style.colorPresetId', forceCloudLiveApply: true });
     syncCloudLookInputs();
     status.textContent = 'Cloud lighting applied. Cloud shape and planet terrain are unchanged.';
   });
@@ -3301,7 +3303,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
   addCloudLookControl('style.fogHorizon', 'fogHorizon', 'number', '0.01');
   addCloudLookControl('style.fogSun', 'fogSun', 'number', '0.01');
   addCloudLookControl('style.godRaysEnabled', 'Sun shafts', 'checkbox');
-  addCloudLookControl('style.godRayStrength', 'Shaft strength', 'number', '0.01', { min: 0, max: 3 });
+  addCloudLookControl('style.godRayStrength', 'Shaft strength', 'number', '0.01', { min: 0, max: MAX_SCENE_SHAFT_STRENGTH });
   addCloudLookControl('style.godRayLength', 'Shaft length', 'number', '0.01', { min: 0.1, max: 2 });
   addCloudLookControl('style.godRayFalloff', 'Shaft falloff', 'number', '0.01', { min: 0.3, max: 4 });
 
@@ -3798,10 +3800,27 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
   };
   auroraPoles.input.id = 'planet-aurora-poles';
   auroraCurtains.input.id = 'planet-aurora-curtains';
+  if (options.terrainControls) {
+    sceneLightingSliders = createLightingSliders('planet-lighting', (key, value) => {
+      updateEditorValue(clouds, 'Lighting', (cfg) => {
+        cfg.style ??= {};
+        if (key === 'haze') cfg.style.fogDensity = value * SCENE_HAZE_DENSITY;
+        else cfg.style[key] = value;
+        if (key === 'godRayStrength') cfg.style.godRaysEnabled = value > 0;
+        if (key === 'directLightBoost') {
+          cfg.tuning ??= {};
+          cfg.tuning.directLightBoost = value;
+        }
+      }, { path: 'style.' + key, forceCloudLiveApply: true });
+      syncEditorPathInputs(clouds);
+    }, { toneControls: true });
+    sceneLightingSliders.sync(sceneLightingValues(clouds.value.style));
+  }
   const studio = createStudioCard({
     presetFields: [
       adoptField(planetCloudStyleSelect.wrap, { text: 'Cloud shape' }),
       adoptField(quickColorPreset.wrap, { text: 'Lighting' }),
+      sceneLightingSliders?.element,
       ...(options.terrainControls ? [adoptField(auroraToggle.wrap, { text: 'Show aurora' })] : []),
       ...(options.viewAurora ? [
         adoptField(auroraPoles.wrap, { text: 'Aurora poles' }),

@@ -596,6 +596,20 @@ fn computeCloudPlanet(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(loca
      if(sceneLighting){light*=planetCloudHighlightGain(light,compression);}
      else{light=light/(vec3<f32>(1.0)+light*compression);}
     }
+    if(L.sceneWeight > 0.0 && !CLOUD_GAS_PLANET_FORM && !emberstorm && !fissures){
+     let sceneLight=sceneCloudLighting(sunElevation,max(viewSun,0.0));
+     let edge=1.0-smoothstep(.10,.72,density);
+     let reference=sceneCloudRadiance(sceneLight,sceneSolarColor(sunElevation)*L.sceneSun.rgb,
+       sunlight*sunGate,skyExposure,edge,true,L.sceneFront.rgb,L.sceneShadow.rgb,
+       L.sceneTransmission.rgb,L.sceneResponse.rgb);
+     light=mix(light,reference,L.sceneWeight*scenePlanetCloudWeight(sunElevation));
+    }
+    if (localShell && !CLOUD_GAS_PLANET_FORM && !emberstorm && !fissures) {
+     // On the local shell, high cloud tops can keep direct twilight while
+     // the lower layers have already lost their sun path.
+     let nightFill = sceneLocalCloudNightWeight(sunElevation) * (1.0 - sunGate);
+     light = mix(light, sceneLocalCloudNightFill(skyExposure), nightFill);
+    }
     if(fissures){
      let facets=.41+.59*smoothstep(.25,.73,s.r);
      let exposed=smoothstep(.14,.60,ph);

@@ -4,6 +4,23 @@ import {readFile} from 'node:fs/promises';
 import {normalizeWeatherCycle, sampleWeatherCycle, cyclePreview, WEATHER_STATES, WEATHER_MAP_COUNT} from '../weather/cloudWeatherCycle.js';
 import {ANVIL_FORM,ANVIL_PARAMS,ANVIL_TUNING} from '../weather/cloudAnvilLook.js';
 
+test('the celestial frame is continuous at both light handoffs and midnight', () => {
+  const options = { daySeconds: 240, startHour: 0 };
+  for (const second of [60, 180, 240]) {
+    const before = sampleWeatherCycle(second - .001, options);
+    const after = sampleWeatherCycle(second + .001, options);
+    const { nightSkySun: a } = cyclePreview({}, before, true);
+    const { nightSkySun: b } = cyclePreview({}, after, true);
+    assert.ok(Math.abs((b.azDeg - a.azDeg + 540) % 360 - 180) < .01);
+    assert.ok(Math.abs(a.elDeg - b.elDeg) < .01);
+    for (const frame of [before, after]) {
+      const offset = (frame.sun.azDeg - frame.nightSkySun.azDeg + 360) % 360;
+      assert.ok(Math.abs(offset - (frame.moon ? 180 : 0)) < 1e-8);
+    }
+  }
+  assert.equal(cyclePreview({}, sampleWeatherCycle(30, options), false).nightSkySun, undefined);
+});
+
 test('mature cycling anvils use the standalone anatomy, optical thickness and occlusion',()=>{
   const phase=WEATHER_STATES.findIndex(s=>s.name==='Anvil storms');
   const state=sampleWeatherCycle(phase*420/WEATHER_STATES.length);
@@ -89,7 +106,7 @@ test('local maps retain dawn and twilight angles from the saved tile', async () 
   const ui = await readFile(new URL('../cloudTestThreaded.js', import.meta.url), 'utf8');
   const start = ui.indexOf('  const sourcePreset = region &&');
   const end = ui.indexOf('  const sourceWeather =', start);
-  const restoreSun = new Function('region', 'key', 'localPlanetCloudPreset', 'setFieldValue', ui.slice(start, end));
+  const restoreSun = new Function('region', 'key', 'localPlanetCloudPreset', 'setFieldValue', 'keepFluidLighting', ui.slice(start, end));
   const preset = style => style && 'planet_' + style;
   for (const elDeg of [2.5, 0, -2.5, 48]) {
     const controls = {};
@@ -102,6 +119,8 @@ test('local maps retain dawn and twilight angles from the saved tile', async () 
   }
   restoreSun({cloudStyle: 'detailed_cumulus', sun: {azDeg: 196, elDeg: 2}},
     'planet_broken_cumulus', preset, () => assert.fail('Other presets should keep their own sun'));
+  restoreSun({cloudStyle: 'detailed_cumulus', sun: {azDeg: 196, elDeg: 2}},
+    'planet_detailed_cumulus', preset, () => assert.fail('Keep the selected Fluid Twilight sun'), true);
 });
 
 test('weather controls sanitize invalid periods and wrap the start hour',()=>{

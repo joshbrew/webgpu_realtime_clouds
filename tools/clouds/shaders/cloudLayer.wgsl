@@ -343,6 +343,8 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
 
   // lighting setup. rayRd points from camera into the volume, matching the blog-style phase convention.
   let sunDir = normalize(select(L.sunDir, planetShellDirection(L.sunDir), localPlanetShellMode()));
+  let flatNight = sceneLocalCloudNightWeight(sunDir.y);
+  let flatDaylight = min(1.0 - flatNight, sceneLocalCloudSun(sunDir.y));
   let cosVS = dot(rayRd, sunDir);
 
   // sun shadowing samples should cover neighboring cloud volume, not only the vertical slab thickness.
@@ -1021,10 +1023,21 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
       let shadowLift = vec3<f32>(0.045, 0.050, 0.058) * shadowInterior;
       lightCol = lightCol + shadowLift * lightingAlpha;
 
+      if (L.sceneWeight > 0.0 && !sphericalCloudMode()) {
+        let referenceLight = sceneCloudLighting(sunDir.y, max(dot(rayRd, sunDir), 0.0));
+        let viewEdge = 1.0 - smoothstep(.10, .72, lightingAlpha);
+        let reference = sceneCloudRadiance(referenceLight, sceneSolarColor(sunDir.y) * L.sceneSun.rgb,
+          clamp(TsunSmoothed, 0.0, 1.0), clamp(upperExposure_cached, 0.0, 1.0), viewEdge, true,
+          L.sceneFront.rgb, L.sceneShadow.rgb, L.sceneTransmission.rgb, L.sceneResponse.rgb);
+        lightCol = mix(lightCol, reference, L.sceneWeight * sceneTwilightWeight(sunDir.y));
+      }
       if (TUNE.paintedLayers > 0.0 && TUNE.formType < 0.5 && !sphericalCloudMode()) {
         lightCol *= mix_f(1.0, paintedLayerValue(ph_coarse, s), TUNE.paintedLayers);
       }
-
+      if (!sphericalCloudMode() && flatDaylight < 1.0) {
+        let skyAccess = smoothstep(-.65, .85, lightN_cached.y) * (1.0 - .65 * shadowInterior);
+        lightCol = mix(sceneLocalCloudNightFill(skyAccess), lightCol, flatDaylight);
+      }
       let lNow = luminance(lightCol);
       let meanL = select(lNow, runMeanL / max(runN, 1.0), runN > 0.0);
       let allow = max(meanL * (1.0 + TUNE.fflyRelClamp), TUNE.fflyAbsFloor);

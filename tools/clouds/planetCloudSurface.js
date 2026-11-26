@@ -9,14 +9,24 @@ import regionWeatherWGSL from './shaders/planetRegionWeather.wgsl';
 import { readPlanetWeatherProjection } from './planetRegionWeather.js';
 import planetCloudSurfaceRenderWGSL from './shaders/planetCloudSurfaceRender.wgsl';
 import planetCloudGradeWGSL from './shaders/planetCloudGrade.wgsl';
-import { PLANET_CLOUD_GRADE_FLOATS, writePlanetCloudGrade } from './planetCloudGrade.js';
+import { PLANET_CLOUD_GRADE_FLOATS, resolvePlanetSceneLighting, writePlanetCloudGrade } from './planetCloudGrade.js';
 import planetSunlightWGSL from './shaders/planetCloudSunlight.wgsl';
 import gasAppearanceWGSL from './shaders/planetGasAppearance.wgsl';
 import planetCloudBaseFormWGSL from './shaders/planetCloudBaseForm.wgsl';
 import gasFlowWGSL from './shaders/planetGasFlow.wgsl';
+import sceneSkyLightingWGSL from './shaders/sceneSkyLighting.wgsl';
+import planetAerialPerspectiveWGSL from './shaders/planetAerialPerspective.wgsl';
+import { MAX_SCENE_HAZE, sceneLightingValues } from './cloudLookPresets.js';
+import planetSunShaftsWGSL from './shaders/planetSunShafts.wgsl';
+import planetSurfaceShaftsWGSL from './shaders/planetSurfaceShafts.wgsl';
+import { resolvePlanetShafts } from './planetShafts.js';
+import { CloudComputeBuilder } from './clouds.js';
+import cloudShaftFrameWGSL from './shaders/cloudShaftFrame.wgsl';
+import cloudShaftScatterWGSL from './shaders/cloudShaftScatter.wgsl';
 
 const RENDER_LIGHTING_BYTES = 192;
-const RENDER_PARAMS_BYTES = RENDER_LIGHTING_BYTES + Float32Array.BYTES_PER_ELEMENT * PLANET_CLOUD_GRADE_FLOATS;
+const RENDER_SCENE_OFFSET = RENDER_LIGHTING_BYTES + Float32Array.BYTES_PER_ELEMENT * PLANET_CLOUD_GRADE_FLOATS;
+const RENDER_PARAMS_BYTES = RENDER_SCENE_OFFSET + 112;
 const DEFAULT_ANGULAR_CELLS = 96;
 const DEFAULT_RADIAL_CELLS = 11;
 const OVERCAST_ANGULAR_CELLS = 64;
@@ -122,14 +132,20 @@ async function getPipelines(device, colorFormat, sampleCount = 1) {
       label: 'Planet cloud MC33 shell shader',
     });
     const renderModule = device.createShaderModule({
-      code: planetCloudBaseFormWGSL+'\n'+gasFlowWGSL+'\n'+gasAppearanceWGSL+'\n'+planetSunlightWGSL+'\n'+planetCloudGradeWGSL+'\n'+planetCloudSurfaceRenderWGSL,
+      code: planetCloudBaseFormWGSL+'\n'+gasFlowWGSL+'\n'+gasAppearanceWGSL+'\n'+planetSunlightWGSL+'\n'+planetCloudGradeWGSL+'\n'+sceneSkyLightingWGSL+'\n'+planetAerialPerspectiveWGSL+'\n'+planetCloudSurfaceRenderWGSL,
       label: 'Planet cloud surface render shader',
     });
     await Promise.all([
       assertShaderModuleValid(computeModule, 'Planet cloud MC33 shell'),
       assertShaderModuleValid(renderModule, 'Planet cloud MC33 surface render'),
     ]);
+    const shaftModule = device.createShaderModule({
+      code: [sceneSkyLightingWGSL, planetSunlightWGSL, cloudShaftFrameWGSL, cloudShaftScatterWGSL,
+        planetSunShaftsWGSL, planetSurfaceShaftsWGSL].join('\n'),
+      label: 'Planet cloud surface shafts',
+    });
     const [
+      shaftPipeline,
       tilePipeline,
       fieldPipeline,
       classifyPipeline,
@@ -139,6 +155,22 @@ async function getPipelines(device, colorFormat, sampleCount = 1) {
       indirectPipeline,
       renderPipeline,
     ] = await Promise.all([
+      device.createRenderPipelineAsync({
+        label: 'Planet cloud surface shafts',
+        layout: 'auto',
+        vertex: { module: shaftModule, entryPoint: 'vs_main' },
+        fragment: {
+          module: shaftModule,
+          entryPoint: 'fs_main',
+          targets: [{
+            format: colorFormat,
+            blend: {
+              color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
+              alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
+            },
+          }],
+        },
+      }),
       device.createComputePipelineAsync({
         label: 'Planet cloud visible occupied-tile classification',
         layout: 'auto',
@@ -200,6 +232,7 @@ async function getPipelines(device, colorFormat, sampleCount = 1) {
     ]);
     return {
       computeModule,
+      shaftPipeline,
       tilePipeline,
       fieldPipeline,
       classifyPipeline,
@@ -507,7 +540,7 @@ function writeComputeParams(layer, camera, elapsedSeconds, fieldBlend) {
   return { cameraPosition, cameraRight, cameraUp, cameraForward, fovY, aspect };
 }
 
-function writeRenderParams(layer, cameraValues, sunDirection, elapsedSeconds, atmosphere) {
+function writeRenderParams(layer, cameraValues, sunDirection, elapsedSeconds, camera) {
   const options = layer.options;
   const buffer = layer.renderParamsData ??= new ArrayBuffer(RENDER_PARAMS_BYTES);
   const view = new DataView(buffer);
@@ -543,6 +576,7 @@ function writeRenderParams(layer, cameraValues, sunDirection, elapsedSeconds, at
   view.setFloat32(148,warp.warpAmount,true);
   view.setFloat32(152,warp.warpPhase,true);
   view.setFloat32(156, Number(!!layer.terrainDepthView), true);
+  const { atmosphere } = camera;
   const [sky, dusk, density] = atmosphere ?? [];
   writeVec3(view, 160, sky);
   view.setFloat32(172, density ?? 0, true);
@@ -550,6 +584,21 @@ function writeRenderParams(layer, cameraValues, sunDirection, elapsedSeconds, at
   view.setFloat32(188, Number(Boolean(atmosphere)), true);
   const grade = layer.renderGradeData ??= new Float32Array(buffer, RENDER_LIGHTING_BYTES);
   writePlanetCloudGrade(grade, 0, options);
+  const { palette, weight } = resolvePlanetSceneLighting(options, camera);
+  const display = layer.renderSceneData ??= new Float32Array(buffer, RENDER_SCENE_OFFSET);
+  display[3] = weight;
+  if (palette && weight > 0) {
+    display.set(palette.sun, 0);
+    display.set([...palette.front, palette.exposure * palette.colorLift], 4);
+    display.set([...palette.shadow, palette.saturation], 8);
+    display.set(palette.transmission, 12);
+    display.set(palette.response, 16);
+  }
+  display[20] = options.style?.displayContrast ?? 1;
+  display[21] = options.style?.highlightRolloff ?? 0;
+  display[22] = clamp(sceneLightingValues(options.style).haze, 0, MAX_SCENE_HAZE);
+  display.set(palette?.sky ?? [1, 1, 1], 24);
+  display[27] = finiteNumber(options.godRayAirHeight, layer.radius * .08);
   layer.queue.writeBuffer(layer.renderParamsBuffer, 0, buffer);
 }
 
@@ -785,7 +834,104 @@ function encodeSurfaceCompute(layer, encoder, {
   }
 }
 
-function encodeRenderSurface(layer, encoder) {
+async function prepareSurfaceShafts(layer, camera, cameraValues, sun, time) {
+  const { radius, options } = layer;
+  const formType = finiteNumber(options.tuning?.formType, 2);
+  const camPos = cameraValues.cameraPosition;
+  const cloudBottom = finiteNumber(options.cloudBottom, 1.6);
+  const cloudTop = finiteNumber(options.cloudTop, 6);
+  const sunDir = normalize3(sun, [.65, .37, -.65]);
+  const light = !options.auroraMode && formType > .5 && formType < 4.5
+    ? resolvePlanetShafts(options.style, radius, finiteNumber(options.godRayAirHeight, radius * .08),
+      camPos, sunDir, camera.atmosphere, cloudBottom, cloudTop) : null;
+  if (!light) return null;
+
+  if (!layer.shaftBuilder) {
+    layer.shaftBuilder = new CloudComputeBuilder(layer.device, layer.queue);
+    layer.shaftBuilder.createOutputTexture(1, 1, 1);
+  }
+  const baker = layer.shaftBuilder;
+  const wind = finiteNumber(options.spinSpeed, .00065);
+  const warp = planetCloudWarp(options, time);
+  baker.setOptions({ sphericalMode: true, planetStyleMode: true, writeRGB: true, r1: 0 });
+  baker.setInputMaps({ weatherView: layer.textures.weatherView,
+    shape3DView: layer.textures.shapeView, detail3DView: layer.textures.detailView });
+  baker.setParams(options.params);
+  baker.setTuning({ ...options.tuning, formType });
+  baker.setViewFromCamera({ camPos, planetRadius: radius, cloudBottom, cloudTop, volumeLayers: 1,
+    worldToUV: finiteNumber(options.worldToUV, 2.4 / radius) });
+  baker.setNoiseTransforms({
+    weatherOffsetWorld: [time * finiteNumber(options.surfaceWeatherSpeed, wind * 2 * Math.PI) / (2 * Math.PI), 0, 0],
+    shapeOffsetWorld: [time * finiteNumber(options.surfaceShapeSpeed, wind * 2 * Math.PI) / (2 * Math.PI),
+      time * Math.max(0, finiteNumber(options.evolutionSpeed, .03)), 0],
+    shapeScale: finiteNumber(options.transforms?.shapeScale, .44),
+    planetWarpAmount: warp.warpAmount,
+    planetWarpPhase: warp.warpPhase,
+  });
+  baker.setLight({ sunDir, camPos, atmosphere: camera.atmosphere });
+  await baker.prepareLocalCloudShafts({
+    ...light,
+    animated: !camera.animation?.paused && options.animate !== false,
+  }).catch(error => baker.disableLocalCloudShafts(error));
+  return light;
+}
+
+function encodeSurfaceShafts(layer, encoder, target, light, cameraValues) {
+  if (!light || !layer.terrainDepthView) return;
+  const { terrainDepthView, opacityView, options, shaftBuilder, device, pipelines: { shaftPipeline } } = layer;
+  const { cameraPosition, cameraRight, cameraUp, cameraForward, fovY, aspect } = cameraValues;
+  const sources = shaftBuilder.cloudShaftResources();
+  const data = layer.shaftData ??= new Float32Array(40);
+  const params = layer.shaftParams ??= device.createBuffer({
+    label: 'Planet surface shaft settings',
+    size: data.byteLength,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+  data.set([...light.sun, light.elevation, light.strength, light.length, light.decay, light.clearance]);
+  data.set([light.airHeight, light.haze, light.visibility, options.style?.displayContrast ?? 1], 8);
+  const [sky, dusk, density] = light.atmosphere ?? [[0, 0, 0], [0, 0, 0], 0];
+  data.set(sky, 12);
+  data[15] = density;
+  data.set(dusk, 16);
+  data[19] = Number(Boolean(light.atmosphere));
+  data.set(options.params?.sunColor ?? [1, 1, 1], 20);
+  data[23] = options.style?.highlightRolloff ?? 0;
+  const tanHalf = Math.tan(fovY * .5);
+  data.set(cameraPosition, 24);
+  data.set(cameraRight.map(axis => axis * tanHalf * aspect), 28);
+  data.set(cameraUp.map(axis => axis * tanHalf), 32);
+  data.set(cameraForward, 36);
+  data[39] = light.darkness;
+  device.queue.writeBuffer(params, 0, data);
+
+  if (layer.shaftBindOpacity !== opacityView || layer.shaftBindTerrain !== terrainDepthView ||
+      layer.shaftBindMask !== sources.view) {
+    layer.shaftBindMask = sources.view;
+    layer.shaftBindOpacity = opacityView;
+    layer.shaftBindTerrain = terrainDepthView;
+    layer.shaftBindGroup = device.createBindGroup({
+      layout: shaftPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: layer.sampler },
+        { binding: 1, resource: opacityView },
+        { binding: 2, resource: terrainDepthView },
+        { binding: 3, resource: { buffer: params } },
+        { binding: 4, resource: sources.view },
+        { binding: 5, resource: { buffer: sources.buffer } },
+      ],
+    });
+  }
+  const pass = encoder.beginRenderPass({
+    label: 'Planet surface shafts',
+    colorAttachments: [{ view: target, loadOp: 'load', storeOp: 'store' }],
+  });
+  pass.setPipeline(shaftPipeline);
+  pass.setBindGroup(0, layer.shaftBindGroup);
+  pass.draw(3);
+  pass.end();
+}
+
+function encodeRenderSurface(layer, encoder, shaftLight, cameraValues) {
   const currentTexture = layer.context.getCurrentTexture();
   const currentView = currentTexture.createView();
   const pass = encoder.beginRenderPass({
@@ -811,6 +957,7 @@ function encodeRenderSurface(layer, encoder) {
   if (layer.opacityTexture) {
     encoder.copyTextureToTexture({ texture: currentTexture }, { texture: layer.opacityTexture },
       [layer.contextWidth, layer.contextHeight]);
+    encodeSurfaceShafts(layer, encoder, currentView, shaftLight, cameraValues);
   }
 }
 
@@ -1262,12 +1409,16 @@ export async function updatePlanetCloudSurfaceLayer(layer, { forceExtract = fals
     : 1.0;
 
   const cameraValues = writeComputeParams(layer, camera, elapsedSeconds, fieldBlend);
+  const sun = layer.getSunDir?.() || [0.65, 0.37, -0.65];
+  const shaftLight = layer.getTerrainDepth && layer.opacityView
+    ? await prepareSurfaceShafts(layer, camera, cameraValues, sun, elapsedSeconds) : null;
+  if (layer.disposed || layer.styleChanging) return;
   const terrainDepthView = layer.getTerrainDepth?.(layer.contextWidth, layer.contextHeight);
   if (layer.terrainDepthView !== terrainDepthView) {
     layer.terrainDepthView = terrainDepthView;
     buildRenderBindGroup(layer);
   }
-  writeRenderParams(layer, cameraValues, layer.getSunDir?.() || [0.65, 0.37, -0.65], elapsedSeconds, camera.atmosphere);
+  writeRenderParams(layer, cameraValues, sun, elapsedSeconds, camera);
 
   const destinationFieldIndex = updateField ? (layer.currentFieldIndex + 1) % 3 : layer.currentFieldIndex;
   const destinationTileIndex = updateField ? 1 - layer.currentTileIndex : layer.currentTileIndex;
@@ -1284,6 +1435,7 @@ export async function updatePlanetCloudSurfaceLayer(layer, { forceExtract = fals
   }
 
   const encoder = layer.device.createCommandEncoder({ label: 'Planet cloud MC33 shell frame encoder' });
+  if (shaftLight) layer.shaftBuilder.encodeWorldCloudShafts(encoder);
   encodeSurfaceCompute(layer, encoder, {
     updateField,
     updateMesh,
@@ -1293,7 +1445,7 @@ export async function updatePlanetCloudSurfaceLayer(layer, { forceExtract = fals
     candidateCells,
     projectVertices,
   });
-  encodeRenderSurface(layer, encoder);
+  encodeRenderSurface(layer, encoder, shaftLight, cameraValues);
   // Tiny, asynchronous diagnostic readback. Never wait for the GPU inside
   // the animation loop, and never read the full vertex/voxel buffers.
   let readback=null;
@@ -1413,5 +1565,8 @@ export function disposePlanetCloudSurfaceLayer(layer) {
   try { layer.msaaTexture?.destroy?.(); } catch {}
   layer.emptyTerrainDepth?.destroy();
   layer.opacityTexture?.destroy();
+  layer.shaftParams?.destroy();
+  layer.shaftBuilder?.disposeCloudShafts();
+  layer.shaftBuilder?.outTexture?.destroy();
   try { layer.canvas?.remove?.(); } catch {}
 }

@@ -215,7 +215,7 @@ struct ReprojSettings {
   temporalCellRate: u32,
   temporalCellPhase: u32,
   compactInterleave: u32,
-  _reprojPad0: u32,
+  shadowHistory: u32,
   _reprojPad1: u32,
   _reprojPad2: u32
 };
@@ -243,8 +243,10 @@ struct PerfParams {
 @group(1) @binding(7) var sampDetail: sampler;
 
 struct LightInputs {
-  sunDir: vec3<f32>, _0: f32, camPos: vec3<f32>, _1: f32,
+  sunDir: vec3<f32>, sceneWeight: f32, camPos: vec3<f32>, _1: f32,
   sky: vec4<f32>, dusk: vec4<f32>,
+  sceneSun: vec4<f32>, sceneFront: vec4<f32>, sceneShadow: vec4<f32>,
+  sceneTransmission: vec4<f32>, sceneResponse: vec4<f32>,
 };
 @group(1) @binding(8) var<uniform> L: LightInputs;
 

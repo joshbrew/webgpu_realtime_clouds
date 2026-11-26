@@ -575,10 +575,15 @@ fn computeCloudBox(@builtin(global_invocation_id) gid: vec3<u32>) {
   let sun = normalizeOr(L.sunDir, vec3<f32>(0.0, 1.0, 0.0));
   let phase = saturate(dot(rd, sun) * 0.5 + 0.5);
   let scatterPhase=0.10+0.30*pow(phase,4.0);
+  let sceneWeight = L.sceneWeight * sceneTwilightWeight(sun.y);
+  let referenceLight = sceneCloudLighting(sun.y, max(dot(rd, sun), 0.0));
+  let referenceSun = sceneSolarColor(sun.y) * L.sceneSun.rgb;
   let silverPhase=pow(phase,max(6.0,C.silverExponent*8.0));
   let coastalStorm = flatFormType() == 1.4375;
   let localAnvil = localPlanetAnvilForm();
   let horizonFade = smoothstep(-0.10, 0.02, sun.y);
+  let solarVisibility = sceneLocalCloudSun(sun.y);
+  let nightFill = sceneLocalCloudNightWeight(sun.y);
   let twilight = bankTwilight(sun.y, localBank);
   let coastalDusk = select(0.0, horizonFade * (1.0 - smoothstep(0.04, 0.32, sun.y)), coastalStorm);
   let horizonFill = select(0.0, coastalDuskStrength(sun.y), marine);
@@ -590,13 +595,13 @@ fn computeCloudBox(@builtin(global_invocation_id) gid: vec3<u32>) {
   let sunwardHorizon = smoothstep(-0.66, 1.0, dot(sunAzimuth, viewAzimuth) * azimuthWeight);
   let airTint = mix(vec3<f32>(1.0, 0.43, 0.25), vec3<f32>(1.0, 0.60, 0.35), sunwardHorizon);
   let transmittedTint = mix(twilight.tint, vec3<f32>(1.19, 0.82, 0.67), coastalDusk);
-  let sunColor = max(C.frontLightColor, vec3<f32>(0.0)) * transmittedTint * twilight.direct;
+  let sunColor = max(C.frontLightColor, vec3<f32>(0.0)) * transmittedTint * twilight.direct * solarVisibility;
   let skylightTint = mix(vec3<f32>(1.0), vec3<f32>(0.84, 0.92, 1.04), twilight.amount);
   let skyColor = max(C.shadowLightColor,vec3<f32>(0.0)) * skylightTint * twilight.ambient;
   let towardsSun = pow(phase, 4.0);
   let forwardLobe = pow(phase, 14.0);
   let lowSun = 1.0 - smoothstep(0.10, 0.63, max(sun.y, 0.0));
-  let sunTint = max(C.sunColor, vec3<f32>(0.0)) * transmittedTint * twilight.direct;
+  let sunTint = max(C.sunColor, vec3<f32>(0.0)) * transmittedTint * twilight.direct * solarVisibility;
   let forwardTint = mix(sunColor, sunTint, 0.16 + 0.72 * towardsSun);
   let skyLuma = dot(skyColor, vec3<f32>(0.2126, 0.7152, 0.0722));
   let coolSkylight = skyLuma * vec3<f32>(0.91, 1.0, 1.12);
@@ -743,7 +748,8 @@ fn computeCloudBox(@builtin(global_invocation_id) gid: vec3<u32>) {
       }
       if(skipped){continue;}
     }
-    var fieldUV = cloudFieldUV(mix(domainStart, domainEnd, lightWeight));
+    let transportUV = cloudFieldUV(mix(domainStart, domainEnd, lightWeight));
+    var fieldUV = transportUV;
     let detailPosition = select(p, ro + rd * (t + distance * lightWeight), refineSquall);
     let finePosition = select(detailPosition, mix(domainStart, domainEnd, lightWeight),
       CLOUD_FROZEN_PATTERN != 0u && FIELD.patternMotion.w > 0.5);
@@ -784,114 +790,128 @@ fn computeCloudBox(@builtin(global_invocation_id) gid: vec3<u32>) {
       let frontBody = smoothstep(.04, .30, alpha) * smoothstep(.28, .75, transmittance);
       let shadowLod = select(nearLightLod, mix(2.45, 1.65, frontBody), filterShadows);
       let lightingLod = select(lightLod, max(lightLod, shadowLod), localPlanet);
-      let lighting = cachedVisibleSample(cloudLightField, fieldUV, lightingLod);
+      // Integrate broad shadows at the interval's density centroid. The
+      // jittered fine sample still adds silhouette detail and opacity.
+      let lightUV = select(fieldUV, transportUV, filterShadows);
+      let lighting = cachedVisibleSample(cloudLightField, lightUV, lightingLod);
       var diffuse = clamp(lighting.r, 0.0, 1.0);
       let visibility = clamp(lighting.b, 0.0, 1.0);
       if (usePlanetSamples) {
         diffuse = clamp(diffuse + fringe.z * select(.28, .08, filterShadows), 0.0, 1.0);
       }
-      let skyOrLocalSun = clamp(lighting.g, 0.0, 1.0);
-      let rootVisibility = sqrt(visibility);
-      let exposedEdge = 1.0 - smoothstep(0.02, 0.20, density.w);
-      let silver = silverPhase * rootVisibility * pow(1.0 - diffuse, 0.90)
-        * exposedEdge * max(C.silverIntensity, 0.0) * 1.4;
-      var color: vec3<f32>;
-      if (volumeLighting) {
-        let localSun = max(visibility, skyOrLocalSun);
-        let skyAccess = clamp(lighting.a, 0.0, 1.0);
-        let exposed = smoothstep(0.10, 0.66, visibility);
-        let softSky = mix(sqrt(skyAccess), skyAccess, saturate(TUNE.aoStrength) * 0.58);
-        let elevation = smoothstep(0.06, 0.91, fieldUV.y);
-        let thickness = smoothstep(0.07, 0.88, density.a);
-        let underside = 1.0 - exposed;
-        let silhouetteContrast = breaking || rotating || oceanDeck;
-        let ambientFloor = select(0.12, 0.042, silhouetteContrast);
-        let lift = select(0.12, 0.052, silhouetteContrast);
-        let skyTransport = select(1.0, mix(0.70, 1.08, softSky), capturedBillow);
-        let ambientSky = (ambientFloor + 0.50 * softSky * (1.0 - 0.59 * horizonFill) + lift * elevation)
-          * (1.0 - 0.09 * thickness) * skyTransport;
-        let skyReliefStrength = select(0.24, 0.04, filterShadows);
-        let skyRelief = select(0.0, clamp(fringe.y, -0.38, 0.38) * softSky * skyReliefStrength, localAnvil || usePlanetSamples);
-        let squallRelief = select(0.0, clamp(fringe.y, -0.48, 0.48) * (1.0 - thickness) * underside, refineSquall);
-        let shelteredFold = select(0.0, smoothstep(0.065, 0.52, skyAccess), refineSquall) * squallRelief;
-        let shadowFill = select(0.0, horizonFill * (1.0 - smoothstep(0.018, 0.24, visibility)), amberSquall);
-        let baseFillTint = mix(neutralSky, skyColor, 0.18 + 0.49 * softSky);
-        // Skylight keeps the palette's hue while giving sheltered folds a
-        // cooler fill. The direct path still uses the chosen sunlight swatch.
-        let fillTint = select(baseFillTint, baseFillTint * mix(
-          vec3<f32>(0.86, 0.96, 1.18), vec3<f32>(0.98, 1.0, 1.06), exposed), capturedBillow);
-        let through = rootVisibility * mix(0.55, 1.0, localSun);
-        let bounceTint = mix(neutralSky, forwardTint, 0.10 + 0.53 * through);
-        let bounceFloor = select(0.10, 0.056, silhouetteContrast);
-        let localScattering = sqrt(localSun);
-        let bounceTransport = select(1.0, 0.60 + 0.18 * softSky + 0.19 * localScattering, capturedBillow);
-        let bounceLight = (bounceFloor + 0.15 * through) * (0.57 + 0.43 * softSky) * bounceTransport;
-        // The short light path still describes the sheltered faces of folds.
-        // Only the longer path contributes direct sun and the bright rim.
-        let nearLight = localScattering * (0.32 + 0.68 * softSky);
-        let reliefTint = mix(neutralSky * 0.69, forwardTint * 0.68, 0.36 + 0.22 * towardsSun);
-        let reliefAmount = select(select(0.0, 0.26, silhouetteContrast), 0.29, shapedMask);
-        let shoulderBounce = underside * (1.0 - thickness) * nearLight * (0.32 + 0.68 * diffuse) * reliefAmount;
-        // Deeper layers keep some diffuse fill while light through gaps
-        // changes with the angle and the longer path to the sun.
-        let layeredFill = select(0.147, 0.073, silhouetteContrast);
-        let indirectStrength = select(select(0.11, layeredFill, layered || rotating), 0.28 + 0.07 * lowSun, marine);
-        let indirect = underside * (0.18 + 0.82 * softSky * (1.0 - 0.56 * horizonFill)) * indirectStrength;
-        let warmLeak = (0.10 + 0.15 * lowSun) * softSky * (0.36 + 0.64 * towardsSun);
-        let diffuseTint = mix(neutralSky, forwardTint * 0.58, warmLeak);
-        let facet = diffuse * (0.68 + 0.32 * diffuse);
-        let faceTransport = select(1.0, mix(0.88, 1.10, diffuse), capturedBillow);
-        let face = visibility * (0.15 + select(0.73, 0.52, filament) * facet) * faceTransport;
-        let maskScatter = select(0.0, 0.20 * through + 0.10 * softSky * (1.0 - thickness), shapedMask);
-        let fineRelief = exposed * (1.0 - thickness) * clamp(fringe.z, -0.37, 0.37);
-        let forward = visibility * (0.078 + forwardLobe
-          * (0.11 + select(0.29, 0.46, filament) * (1.0 - thickness)));
-        let rim = (1.0 - thickness) * rootVisibility
-          * smoothstep(0.26, 0.88, localSun) * forwardLobe;
-        let twilightRim = select(0.0, rim * twilight.amount * 0.18, localBank);
-        // Some indirect light follows the finer world-space folds. Attenuate
-        // that contribution in the most enclosed pockets of the bank.
-        color = fillTint * ambientSky * (1.0 + skyRelief + 0.95 * squallRelief)
-          + bounceTint * bounceLight * (1.0 + 1.26 * shelteredFold)
-          + diffuseTint * indirect * (1.0 + 0.72 * shelteredFold)
-          + reliefTint * shoulderBounce + sunColor * (face * (1.0 + 0.56 * fineRelief) + maskScatter)
-          + forwardTint * forward + sunTint * (0.43 * silver + rim * (0.15 + 0.07 * lowSun) + twilightRim);
-        if (shadowFill > 0.001) {
-          // Replace part of the even shadow fill with light from the lower
-          // sky. Shoulder highlights stay broad, with a little local relief.
-          let lowerSkyAccess = smoothstep(0.11, 0.85, -lighting.r);
-          let foldLight = lowerSkyAccess * (1.0 + 0.94 * squallRelief) * (1.0 - 0.32 * thickness);
-          let violetSky = mix(neutralSky, coolSkylight * vec3<f32>(0.95, 1.01, 1.19), 0.65);
-          let warmOpening = smoothstep(0.46, 0.91, skyAccess) * sunwardHorizon;
-          color += (violetSky * (foldLight * (0.46 - 0.095 * warmOpening)) - fillTint * ambientSky * 0.16)
-            * shadowFill;
-        }
-        if (horizonFill > 0.001) {
-          // Broad illumination from sunlit air can reach into the shade. Keep
-          // it separate from the direct solar path and from the bright rim.
-          let openAir = smoothstep(0.08, 0.85, skyAccess);
-          let smallFolds = select(clamp(fringe.y, -0.28, 0.28) * 0.58, squallRelief * 1.80, refineSquall);
-          let fold = mix(0.49, 1.0, softSky) + smallFolds * openAir;
-          let warmSky = airTint * (0.035 + 0.66 * pow(sunwardHorizon, 2.6))
-            * select(0.64, 1.0, amberSquall);
-          let warmTransport = openAir * fold * (0.47 + 0.53 * underside) * (1.0 - 0.37 * thickness);
-          let coolTransport = openAir * (1.0 - sunwardHorizon) * (0.18 + 0.24 * softSky);
-          color += (warmSky * warmTransport + coolSkylight * coolTransport) * horizonFill;
-        }
-        if (marine || localBank) {
-          let air = smoothstep(14.0, 91.0, (t + distance * lightWeight) * cloudScale);
-          let hazeTint = mix(neutralSky * 1.28, forwardTint * 0.59, 0.12 + 0.22 * towardsSun);
-          color = mix(color, hazeTint, air * select(0.12, 0.22, marine));
-        }
-      } else {
-        let ao = mix_f(1.0, lighting.a, saturate(TUNE.aoStrength));
-        let asperitasFill = FIELD.morphology.z;
-        let ambient = (0.10 + 0.19 * skyOrLocalSun + asperitasFill * 0.22) * ao;
-        let bounce = (0.035 + asperitasFill * 0.045 + 0.18 * sqrt(rootVisibility))
-          * (0.25 + 0.75 * skyOrLocalSun) * ao;
-        let direct = visibility * (0.20 + 0.80 * diffuse + scatterPhase);
-        color = sunColor * (direct + bounce) + skyColor * ambient + sunTint * silver;
+      var matchedLight = vec3<f32>(0.0);
+      if (sceneWeight > 0.0) {
+        let skyExposure = clamp(lighting.a, 0.0, 1.0);
+        let viewEdge = 1.0 - smoothstep(.10, .72, extinction / 5.05);
+        matchedLight = sceneCloudRadiance(referenceLight, referenceSun, visibility * solarVisibility, skyExposure,
+          viewEdge, true, L.sceneFront.rgb, L.sceneShadow.rgb, L.sceneTransmission.rgb, L.sceneResponse.rgb);
       }
+      var color = matchedLight;
+      if (sceneWeight < 1.0) {
+        let skyOrLocalSun = clamp(lighting.g, 0.0, 1.0);
+        let rootVisibility = sqrt(visibility);
+        let exposedEdge = 1.0 - smoothstep(0.02, 0.20, density.w);
+        let silver = silverPhase * rootVisibility * pow(1.0 - diffuse, 0.90)
+          * exposedEdge * max(C.silverIntensity, 0.0) * 1.4;
+        if (volumeLighting) {
+          let localSun = max(visibility, skyOrLocalSun);
+          let skyAccess = clamp(lighting.a, 0.0, 1.0);
+          let exposed = smoothstep(0.10, 0.66, visibility);
+          let softSky = mix(sqrt(skyAccess), skyAccess, saturate(TUNE.aoStrength) * 0.58);
+          let elevation = smoothstep(0.06, 0.91, fieldUV.y);
+          let thickness = smoothstep(0.07, 0.88, density.a);
+          let underside = 1.0 - exposed;
+          let silhouetteContrast = breaking || rotating || oceanDeck;
+          let ambientFloor = select(0.12, 0.042, silhouetteContrast);
+          let lift = select(0.12, 0.052, silhouetteContrast);
+          let skyTransport = select(1.0, mix(0.70, 1.08, softSky), capturedBillow);
+          let ambientSky = (ambientFloor + 0.50 * softSky * (1.0 - 0.59 * horizonFill) + lift * elevation)
+            * (1.0 - 0.09 * thickness) * skyTransport;
+          let skyReliefStrength = select(0.24, 0.04, filterShadows);
+          let skyRelief = select(0.0, clamp(fringe.y, -0.38, 0.38) * softSky * skyReliefStrength, localAnvil || usePlanetSamples);
+          let squallRelief = select(0.0, clamp(fringe.y, -0.48, 0.48) * (1.0 - thickness) * underside, refineSquall);
+          let shelteredFold = select(0.0, smoothstep(0.065, 0.52, skyAccess), refineSquall) * squallRelief;
+          let shadowFill = select(0.0, horizonFill * (1.0 - smoothstep(0.018, 0.24, visibility)), amberSquall);
+          let baseFillTint = mix(neutralSky, skyColor, 0.18 + 0.49 * softSky);
+          // Skylight keeps the palette's hue while giving sheltered folds a
+          // cooler fill. The direct path still uses the chosen sunlight swatch.
+          let fillTint = select(baseFillTint, baseFillTint * mix(
+            vec3<f32>(0.86, 0.96, 1.18), vec3<f32>(0.98, 1.0, 1.06), exposed), capturedBillow);
+          let through = rootVisibility * mix(0.55, 1.0, localSun);
+          let bounceTint = mix(neutralSky, forwardTint, 0.10 + 0.53 * through);
+          let bounceFloor = select(0.10, 0.056, silhouetteContrast);
+          let localScattering = sqrt(localSun);
+          let bounceTransport = select(1.0, 0.60 + 0.18 * softSky + 0.19 * localScattering, capturedBillow);
+          let bounceLight = (bounceFloor + 0.15 * through) * (0.57 + 0.43 * softSky) * bounceTransport;
+          // The short light path still describes the sheltered faces of folds.
+          // Only the longer path contributes direct sun and the bright rim.
+          let nearLight = localScattering * (0.32 + 0.68 * softSky);
+          let reliefTint = mix(neutralSky * 0.69, forwardTint * 0.68, 0.36 + 0.22 * towardsSun);
+          let reliefAmount = select(select(0.0, 0.26, silhouetteContrast), 0.29, shapedMask);
+          let shoulderBounce = underside * (1.0 - thickness) * nearLight * (0.32 + 0.68 * diffuse) * reliefAmount;
+          // Deeper layers keep some diffuse fill while light through gaps
+          // changes with the angle and the longer path to the sun.
+          let layeredFill = select(0.147, 0.073, silhouetteContrast);
+          let indirectStrength = select(select(0.11, layeredFill, layered || rotating), 0.28 + 0.07 * lowSun, marine);
+          let indirect = underside * (0.18 + 0.82 * softSky * (1.0 - 0.56 * horizonFill)) * indirectStrength;
+          let warmLeak = (0.10 + 0.15 * lowSun) * softSky * (0.36 + 0.64 * towardsSun);
+          let diffuseTint = mix(neutralSky, forwardTint * 0.58, warmLeak);
+          let facet = diffuse * (0.68 + 0.32 * diffuse);
+          let faceTransport = select(1.0, mix(0.88, 1.10, diffuse), capturedBillow);
+          let face = visibility * (0.15 + select(0.73, 0.52, filament) * facet) * faceTransport;
+          let maskScatter = select(0.0, 0.20 * through + 0.10 * softSky * (1.0 - thickness), shapedMask);
+          let fineRelief = exposed * (1.0 - thickness) * clamp(fringe.z, -0.37, 0.37);
+          let forward = visibility * (0.078 + forwardLobe
+            * (0.11 + select(0.29, 0.46, filament) * (1.0 - thickness)));
+          let rim = (1.0 - thickness) * rootVisibility
+            * smoothstep(0.26, 0.88, localSun) * forwardLobe;
+          let twilightRim = select(0.0, rim * twilight.amount * 0.18, localBank);
+          // Some indirect light follows the finer world-space folds. Attenuate
+          // that contribution in the most enclosed pockets of the bank.
+          color = fillTint * ambientSky * (1.0 + skyRelief + 0.95 * squallRelief)
+            + bounceTint * bounceLight * (1.0 + 1.26 * shelteredFold)
+            + diffuseTint * indirect * (1.0 + 0.72 * shelteredFold)
+            + reliefTint * shoulderBounce + sunColor * (face * (1.0 + 0.56 * fineRelief) + maskScatter)
+            + forwardTint * forward + sunTint * (0.43 * silver + rim * (0.15 + 0.07 * lowSun) + twilightRim);
+          if (shadowFill > 0.001) {
+            // Replace part of the even shadow fill with light from the lower
+            // sky. Shoulder highlights stay broad, with a little local relief.
+            let lowerSkyAccess = smoothstep(0.11, 0.85, -lighting.r);
+            let foldLight = lowerSkyAccess * (1.0 + 0.94 * squallRelief) * (1.0 - 0.32 * thickness);
+            let violetSky = mix(neutralSky, coolSkylight * vec3<f32>(0.95, 1.01, 1.19), 0.65);
+            let warmOpening = smoothstep(0.46, 0.91, skyAccess) * sunwardHorizon;
+            color += (violetSky * (foldLight * (0.46 - 0.095 * warmOpening)) - fillTint * ambientSky * 0.16)
+              * shadowFill;
+          }
+          if (horizonFill > 0.001) {
+            // Broad illumination from sunlit air can reach into the shade. Keep
+            // it separate from the direct solar path and from the bright rim.
+            let openAir = smoothstep(0.08, 0.85, skyAccess);
+            let smallFolds = select(clamp(fringe.y, -0.28, 0.28) * 0.58, squallRelief * 1.80, refineSquall);
+            let fold = mix(0.49, 1.0, softSky) + smallFolds * openAir;
+            let warmSky = airTint * (0.035 + 0.66 * pow(sunwardHorizon, 2.6))
+              * select(0.64, 1.0, amberSquall);
+            let warmTransport = openAir * fold * (0.47 + 0.53 * underside) * (1.0 - 0.37 * thickness);
+            let coolTransport = openAir * (1.0 - sunwardHorizon) * (0.18 + 0.24 * softSky);
+            color += (warmSky * warmTransport + coolSkylight * coolTransport) * horizonFill;
+          }
+          if (marine || localBank) {
+            let air = smoothstep(14.0, 91.0, (t + distance * lightWeight) * cloudScale);
+            let hazeTint = mix(neutralSky * 1.28, forwardTint * 0.59, 0.12 + 0.22 * towardsSun);
+            color = mix(color, hazeTint, air * select(0.12, 0.22, marine));
+          }
+        } else {
+          let ao = mix_f(1.0, lighting.a, saturate(TUNE.aoStrength));
+          let asperitasFill = FIELD.morphology.z;
+          let ambient = (0.10 + 0.19 * skyOrLocalSun + asperitasFill * 0.22) * ao;
+          let bounce = (0.035 + asperitasFill * 0.045 + 0.18 * sqrt(rootVisibility))
+            * (0.25 + 0.75 * skyOrLocalSun) * ao;
+          let direct = visibility * (0.20 + 0.80 * diffuse + scatterPhase);
+          color = sunColor * (direct + bounce) + skyColor * ambient + sunTint * silver;
+        }
+        color = mix(color, matchedLight, sceneWeight);
+      }
+      color = mix(color, sceneLocalCloudNightFill(lighting.a), nightFill);
       if (localPlanet && isEmberstorm(planetForm)) {
         let core = smoothstep(.09, .73, density.a);
         let gapLight = (.20 + .80 * sqrt(visibility)) * (1.0 - core);

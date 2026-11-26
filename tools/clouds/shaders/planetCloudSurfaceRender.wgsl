@@ -28,6 +28,13 @@ struct RenderParams {
   sky: vec4<f32>,
   dusk: vec4<f32>,
   grade: PlanetCloudGrade,
+  sceneSun: vec4<f32>,         // tint and atmosphere weight
+  sceneFront: vec4<f32>,       // tint and exposure
+  sceneShadow: vec4<f32>,      // tint and saturation
+  sceneTransmission: vec4<f32>,
+  sceneResponse: vec4<f32>,
+  tone: vec4<f32>,           // contrast, highlight rolloff, haze
+  aerial: vec4<f32>,         // sky tint, atmosphere height
 }
 
 struct VertexOut {
@@ -196,7 +203,35 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
 
   let alpha = clamp(params.opacity * (0.982 + litRim * 0.018), 0.0, 1.0);
   if (sceneLighting && params.grade.response.w > 0.0) {
-    body = planetCloudDisplay(gradePlanetCloud(body, alpha, params.grade), params.grade);
+    body = planetCloudDisplayWithRolloff(gradePlanetCloud(body, alpha, params.grade), params.grade, params.tone.y);
+  } else {
+    body = sceneHighlightRolloff(body * params.grade.display.x, params.tone.y);
   }
-  return vec4<f32>(body * alpha, alpha);
+  let atmosphereWeight = params.sceneSun.w * scenePlanetCloudWeight(radialSun);
+  if (atmosphereWeight > 0.0) {
+    let light = sceneCloudLighting(radialSun, viewSun);
+    let solar = sceneSolarColor(radialSun) * params.sceneSun.rgb;
+    let skyVisibility = clamp(.52 + .48 * dot(shadedNormal, radial), 0.0, 1.0);
+    var radiance = sceneCloudRadiance(light, solar, clamp(diffuse, 0.0, 1.0),
+      skyVisibility, rim, sceneLighting, params.sceneFront.rgb, params.sceneShadow.rgb,
+      params.sceneTransmission.rgb, params.sceneResponse.rgb);
+    // Preserve geometric relief on the extracted surface.
+    radiance *= .92 + fineNoise * .13;
+    if (params.grade.display.w > 0.0) {
+      radiance = gradePlanetCloud(radiance, alpha, params.grade);
+    }
+    let matched = sceneDisplayWithRolloff(radiance, params.sceneFront.w, params.sceneShadow.w, params.tone.y);
+    body = mix(body, matched, atmosphereWeight);
+  }
+  if (sceneLighting) {
+    let fog = planetOverheadFog(params.camPos, -viewDir, length(input.worldPosition - params.camPos),
+      params.planetRadius, params.aerial.w, params.tone.z, params.sky.w);
+    if (fog > .0) {
+      let elevation = dot(normalize(params.camPos), sunDir);
+      let air = planetOverheadRadiance(-viewDir, sunDir, elevation, params.aerial.rgb, params.sceneSun.rgb);
+      let display = sceneDisplayWithRolloff(air, params.sceneFront.w, params.sceneShadow.w, params.tone.y);
+      body = mix(body, display, fog);
+    }
+  }
+  return vec4<f32>(sceneDisplayContrast(body, params.tone.x) * alpha, alpha);
 }

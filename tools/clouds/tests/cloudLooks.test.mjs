@@ -37,8 +37,8 @@ test('selecting Fluid Twilight explicitly restores its authored sun direction',(
     'setFieldValue','syncPreviewLookInputs',`${apply};return applyGradePreset;`)
     (preview,grades,id=>grades[id],id=>grades[id],(id,value)=>fields.set(id,value),()=>{});
   applyLook(FLUID_TWILIGHT_GRADE,true);
-  assert.deepEqual([preview.sun.azDeg,preview.sun.elDeg],[220,9]);
-  assert.deepEqual([fields.get('c-az'),fields.get('c-el')],[220,9]);
+  assert.deepEqual([preview.sun.azDeg,preview.sun.elDeg],[220,-10]);
+  assert.deepEqual([fields.get('c-az'),fields.get('c-el')],[220,-10]);
 });
 
 test('every look overrides both live sky and light without changing weather or puffiness',()=>{

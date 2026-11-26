@@ -1,6 +1,7 @@
 // tools/clouds/cloudTest.worker.js
 // cloudTest.worker.js (seed-aware, generic per-texture noise selectors, 4D-only for 3D volumes)
 // Updated: supports full NoiseTransforms (weather scale/offset + per-axis scale vectors for shape/detail/weather)
+import { resolveScenePalette } from './cloudLookPresets.js';
 import { NoiseComputeBuilder } from "../noise/noiseCompute.js";
 import { CloudComputeBuilder } from "./clouds.js";
 import { CloudRayTargetCache } from "./cloudRayTargets.js";
@@ -9,9 +10,11 @@ import { cloudFieldDeviceDescriptor } from './cloudFieldQuality.js';
 import { normalizeWeatherCycle, sampleWeatherCycle, cyclePreview, cycleCloudParams, WEATHER_MAP_COUNT } from "./weather/cloudWeatherCycle.js";
 import { CloudWeatherGPU } from "./weather/cloudWeatherGPU.js";
 import { PlanetCloudNoise } from "./planetCloudNoise.js";
-import { cameraBasis } from './cloudNavigation.js';
+import { cameraBasis, keepAboveCloudTerrain } from './cloudNavigation.js';
+import { createPlanetNavigationTerrain, planetRegionGroundHeight } from './cloudTerrainMesh.js';
 import { localPlanetCloudForm } from './localPlanetClouds.js';
-import { LOCAL_REGION_UNITS, REGION_WEATHER_SCALE, bakePlanetRegion, planetRegionDirection, planetRegionFrame } from '../planet/planetRegion.js';
+import {createConstellationGaze, flatCelestialDirection} from './nightConstellations.js';
+import { LOCAL_REGION_UNITS, REGION_CONTEXT_SCALE, REGION_WEATHER_SCALE, bakePlanetRegion, planetRegionDirection, planetRegionFrame } from '../planet/planetRegion.js';
 import { atmosphereColors, bakePlanetRegionFromSeed } from '../planet/planet-approach.esm.js';
 import { samplePlanetRegionSurface, warmPlanetRegionSurface } from '../planet/planetRegionMaterial.js';
 import { upgradePlanetRegionContext } from '../planet/planetRegionContext.js';
@@ -20,7 +23,8 @@ import { bakePlanetCloudResources, getSharedPlanetNoiseBuilder, loadJupiterCloud
   resolvePlanetCloudTuning, setPlanetCloudWeatherPhase } from './planetClouds.js';
 import { buildPlanetCloudConfig } from '../noise/planetStudioPanel.js';
 import { planetCloudMotion } from './planetCloudMotion.js';
-import { applyPlanetLightSwatches } from './planetCloudGrade.js';
+import { applyPlanetLightSwatches, resolvePlanetSceneLighting } from './planetCloudGrade.js';
+import { resolvePlanetCloudGradient } from './planetCloudGradients.js';
 
 let device = null,
   queue = null,
@@ -227,12 +231,15 @@ let lastFrameTimingPost = -Infinity;
 let navigationStatsStart = 0, navigationStatsLast = 0, navigationStatsFrames = 0;
 let pausedFrameGpuMs = 0;
 let workerPageVisible = true, wakeWorkerVisibility = null;
+const updateConstellationGaze = createConstellationGaze();
+let nightComposite, nightCompositeTimer, lastComposite;
 
 function setWorkerPageVisibility(visible) {
   workerPageVisible = visible !== false;
   const wake = wakeWorkerVisibility;
   wakeWorkerVisibility = null;
   wake?.();
+  schedulePausedNightComposite();
 }
 
 async function waitForWorkerVisibility() {
@@ -261,6 +268,8 @@ const LOOP_TARGET_MS = 1000 / 60;
 const FRAME_LOG_EVERY = 240;
 const LOOP_MAX_GPU_FRAMES_IN_FLIGHT = 3;
 const CAMERA_RESET_FRAMES = 1;
+const SHADOW_HISTORY_STYLES = new Set(['detailed_cumulus', 'cumulus_banks', 'mixed_weather', 'broken_cumulus', 'cotton_towers']);
+let shadowHistorySignature = '';
 let submittedFrameCount = 0;
 let loopGpuFences = [];
 let lastViewSignature = null;
@@ -528,6 +537,7 @@ function configureMainContext(width = MAIN_W, height = MAIN_H) {
   PRESENT_W = w;
   PRESENT_H = h;
   renderBundleCache.clear();
+  lastComposite = undefined;
   return ctxMain;
 }
 
@@ -1655,13 +1665,22 @@ async function preparePlanetShell(preview) {
   const {east, up, south} = planetRegionFrame(tile.direction);
   const cloudAxis = ([x, y, z], flag = 0) => [-x, y, z, flag];
   const edits = preview.planetColorEdits;
-  const params = {...applyPlanetLightSwatches(options.params, edits)};
-  const composite = edits ? {...options, style: {...options.style, ...edits}, localPalette: true} : options;
+  const explicitGrade = Number.isFinite(edits?.colorPresetId);
+  const grade = explicitGrade ? resolvePlanetCloudGradient({
+    ...options.style, ...edits, colorPresetSource: 'flat-cloud-test-v-grade',
+    cloudMidTint: null, planetGradient: null,
+  }) : {...options.style, ...edits};
+  const params = {...applyPlanetLightSwatches(options.params, edits, options.style)};
+  const composite = edits ? {...options, style: grade} : options;
   if (Number.isFinite(savedVolume?.density)) params.globalDensity = savedVolume.density;
   if (saved && Number.isFinite(tile.weather?.coverage)) params.globalCoverage = tile.weather.coverage;
   return {
-    maps, params, options: composite, tuning: resolvePlanetCloudTuning(options), radius, start, top, lift,
-    atmosphere: atmosphereColors(tile.preset, 'preset'), photo: entry.layer.jupiterMap?.view,
+    maps, params, options: composite, tuning: resolvePlanetCloudTuning({ ...options, tuning: {
+      ...options.tuning, directLightBoost: edits?.directLightBoost ?? options.tuning?.directLightBoost,
+    }}), radius, start, top, lift,
+    atmosphere: atmosphereColors(tile.preset, 'preset', tile.seed), photo: entry.layer.jupiterMap?.view,
+    metersPerUnit: 1 / units,
+    seaLevel: -tile.min * units,
     solidRadius: radius + tile.min * units * cameraScale,
     box: {center: [0, 0, 0], half: [radius + top, half, radius + top], uvScale: 1},
     stepBase: options.stepBase, stepInc: options.stepInc,
@@ -2034,9 +2053,13 @@ function renderUniformSignature(preview, aspect, layerIndex, cloudParams = {}, c
     signatureScalar(cam.fovYDeg || 60),
     signatureScalar(sun.azDeg || 0),
     signatureScalar(sun.elDeg || 0),
+    signatureScalar(preview?.nightSkySun?.azDeg ?? sun.azDeg ?? 0),
+    signatureScalar(preview?.nightSkySun?.elDeg ?? sun.elDeg ?? 0),
     signatureScalar(sun.bloom || 0),
     signatureScalar(aspect),
-    signatureScalar(preview?.exposure || 1.0),
+    signatureScalar(preview?.exposure ?? 1.0),
+    signatureScalar(preview?.displayContrast ?? 1.0),
+    signatureScalar(preview?.directLightBoost ?? .65),
     signatureVec3(preview?.sky, [0.5, 0.6, 0.8]),
     preview?.gradeStyle ?? 1,
     preview?.cloudShading || 'auto',
@@ -2119,7 +2142,7 @@ function getDispatchReprojSettings(r, coarseFactor = 1) {
     out.temporalCellRate = normalizeTemporalCellRate(out.temporalCellRate);
     out.temporalCellPhase = out.temporalCellRate > 1 ? (out.temporalCellPhase >>> 0) % out.temporalCellRate : 0;
     out.compactInterleave = out.temporalCellRate > 1 ? 1 : 0;
-    out.temporalBlend = 0.0;
+    if (!out.shadowHistory) out.temporalBlend = 0.0;
     out.enabled = 0;
   }
   return out;
@@ -2155,6 +2178,83 @@ function getOrCreateRenderBundle(pipe, bgl, samp, format) {
     renderBundleCache.delete(first);
   }
   return { bundle, bg };
+}
+
+// -----------------------------------------------------------------------------
+// Night sky presentation
+// -----------------------------------------------------------------------------
+function writeNightSkyAnimation(direction) {
+  const now = performance.now() / 1000;
+  const [focus, reveal] = updateConstellationGaze(direction, now);
+  cb.setNightSkyAnimation(now, focus, reveal);
+}
+
+function encodeCloudComposite(encoder, bundle, clearValue, view = ctxMain.getCurrentTexture().createView()) {
+  const pass = encoder.beginRenderPass({
+    colorAttachments: [{view, loadOp: "clear", clearValue, storeOp: "store"}],
+  });
+  pass.executeBundles([bundle]);
+  pass.end();
+}
+
+async function captureCloudComposite() {
+  const { bundle, clearValue } = lastComposite;
+  const width = PRESENT_W;
+  const height = PRESENT_H;
+  const bytesPerRow = Math.ceil(width * 4 / 256) * 256;
+  const target = device.createTexture({ label: "Cloud PNG capture", size: [width, height],
+    format: "bgra8unorm", usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
+  const readback = device.createBuffer({ label: "Cloud PNG readback", size: bytesPerRow * height,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  try {
+    const encoder = device.createCommandEncoder();
+    encodeCloudComposite(encoder, bundle, clearValue, target.createView());
+    encoder.copyTextureToBuffer({ texture: target }, { buffer: readback, bytesPerRow }, [width, height]);
+    queue.submit([encoder.finish()]);
+    await readback.mapAsync(GPUMapMode.READ);
+    const bgra = new Uint8Array(readback.getMappedRange());
+    const image = new ImageData(width, height);
+    for (let row = 0; row < height; row++) {
+      const end = row * bytesPerRow + width * 4;
+      let dst = row * width * 4;
+      for (let src = row * bytesPerRow; src < end; src += 4, dst += 4) {
+        image.data[dst] = bgra[src + 2];
+        image.data[dst + 1] = bgra[src + 1];
+        image.data[dst + 2] = bgra[src];
+        image.data[dst + 3] = 255;
+      }
+    }
+    const capture = new OffscreenCanvas(width, height);
+    capture.getContext("2d").putImageData(image, 0, 0);
+    return { blob: await capture.convertToBlob({ type: "image/png" }), width, height };
+  } finally {
+    if (readback.mapState === "mapped") readback.unmap();
+    readback.destroy();
+    target.destroy();
+  }
+}
+
+function schedulePausedNightComposite() {
+  if (nightCompositeTimer || !nightComposite || loopRunning || !workerPageVisible) return;
+  // A paused scene reuses the resolved cloud and terrain buffers. Only the
+  // display pass is needed to keep the stars and gaze timing live.
+  nightCompositeTimer = setTimeout(() => {
+    _serial = _serial.then(async () => {
+      if (!nightComposite || loopRunning || !workerPageVisible) return;
+      const {bundle, clearValue, direction} = nightComposite;
+      writeNightSkyAnimation(direction);
+      const encoder = device.createCommandEncoder();
+      encodeCloudComposite(encoder, bundle, clearValue);
+      queue.submit([encoder.finish()]);
+      await queue.onSubmittedWorkDone();
+    }).catch(error => {
+      nightComposite = null;
+      console.warn("Night sky presentation failed", error);
+    }).finally(() => {
+      nightCompositeTimer = undefined;
+      schedulePausedNightComposite();
+    });
+  }, 48);
 }
 
 // -----------------------------------------------------------------------------
@@ -2365,6 +2465,11 @@ async function runFrame({
     frameReport.mark("region-surroundings-applied");
   }
 
+  if (preview?.cam && preview.terrainEnabled && preview.terrainMode === "planet-region" && cb.planetRegion) {
+    const cam = keepAboveCloudTerrain(preview.cam, (x, z) => planetRegionGroundHeight(cb.planetRegion, x, z));
+    if (cam !== preview.cam) preview = {...preview, cam};
+  }
+
   try {
     const loopSafeReproj =
       reproj && typeof reproj === "object"
@@ -2461,8 +2566,7 @@ async function runFrame({
   }
   frameReport.end(setupStage, { builderMs });
 
-  const renderingFirstFrame = !ctxMain || cb.width !== MAIN_W || cb.height !== MAIN_H || cb.layers !== 1;
-  if (renderingFirstFrame) await progressiveYield(true, "Rendering first frame...");
+  if (submittedFrameCount === 0) await progressiveYield(true, "Rendering first frame...");
 
   const cameraChanged = updateViewInvalidation(preview);
 
@@ -2492,12 +2596,23 @@ async function runFrame({
   syncBaseInputMaps(preview, shell, cloudBox);
   frameReport.end(inputBindingStage);
 
-  // Live Planet equivalents update their density and lighting together.
-  // Sparse history would display several generations of the shadow field at
-  // once, especially in Draft mode. Keep the selected spatial ray resolution.
-  const evolvingLocalCloud = loopRunning && !shell && !preview?.frozenPattern?.enabled
-    && Boolean(localPlanetCloudForm(workerTuning?.formType));
-  const workerTemporalCellRate = evolvingLocalCloud ? 1 : normalizeTemporalCellRate(workerReproj?.temporalCellRate);
+  const localStyle = localPlanetCloudForm(workerTuning?.formType)?.id;
+  const evolvingLocalCloud = loopRunning && !shell && !preview?.frozenPattern?.enabled && !!localStyle;
+  // Refresh every ray in these animated banks. Interleaving the shell keeps
+  // several generations of its lighting on screen at once.
+  const animatedBank = loopRunning && (evolvingLocalCloud || !!shell) &&
+    SHADOW_HISTORY_STYLES.has(shell?.options.cloudStyle ?? localStyle);
+  const shadowHistory = !!(animatedBank && workerReproj && !preview?.flightMoving);
+  const cloudSig = cloudSceneSignature(cloudBox, cloudParams || {});
+  const shadowSignature = shadowHistory ? [
+    shell?.options.cloudStyle ?? localStyle, preview?.cloudVariationSeed, JSON.stringify(preview?.planetColorEdits),
+    cloudSig,
+  ].join('|') : '';
+  if (shadowSignature !== shadowHistorySignature) {
+    invalidateReprojectionHistory();
+    shadowHistorySignature = shadowSignature;
+  }
+  const workerTemporalCellRate = evolvingLocalCloud || animatedBank ? 1 : normalizeTemporalCellRate(workerReproj?.temporalCellRate);
   const requestedDivider = Math.max(1, coarseFactor | 0, previewRenderScaleDivider(preview));
   const cruising = preview?.flightMoving && !bootstrapPreview;
   if (!cruising) {
@@ -2510,19 +2625,22 @@ async function runFrame({
   const effectiveCoarseFactor = cruising ? Math.max(requestedDivider, flightResolution) : requestedDivider;
   const coarseComputeMode = effectiveCoarseFactor > 1;
   const bootstrapPreviewMode = !!bootstrapPreview;
-  const useReproj = !!(!evolvingLocalCloud && !bootstrapPreviewMode && workerReproj && workerReproj.enabled && !coarseComputeMode);
+  const useReproj = !!(!evolvingLocalCloud && !animatedBank && !bootstrapPreviewMode && workerReproj && workerReproj.enabled && !coarseComputeMode);
   const useTemporalCells = !bootstrapPreviewMode && workerTemporalCellRate > 1;
-  const useFullResTemporalBlend = !!(!evolvingLocalCloud && !bootstrapPreviewMode && workerReproj && !coarseComputeMode && workerReproj.temporalBlend > 0.0001);
+  const useFullResTemporalBlend = !!(!evolvingLocalCloud && !animatedBank && !bootstrapPreviewMode && workerReproj && !coarseComputeMode && workerReproj.temporalBlend > 0.0001);
   const useCoarseInterleave = !!(!bootstrapPreviewMode && workerReproj && coarseComputeMode && useTemporalCells);
-  const useTemporalHistory = !!(workerReproj && (useFullResTemporalBlend || useTemporalCells || useCoarseInterleave));
+  const useTemporalHistory = !!(workerReproj && (shadowHistory || useFullResTemporalBlend || useTemporalCells || useCoarseInterleave));
   const historyW = Math.max(1, Math.ceil(MAIN_W / effectiveCoarseFactor));
   const historyH = Math.max(1, Math.ceil(MAIN_H / effectiveCoarseFactor));
   const historyGridChanged = !historyTargets?.matchesActive(historyW, historyH, 1, "rgba16float");
   // Every new ray grid needs one complete frame before it can use sparse history.
   const resetReprojThisFrame = useTemporalHistory && (reprojResetFrames > 0 || historyGridChanged);
-  let effectiveReproj = workerReproj;
+  let effectiveReproj = shadowHistory ? {
+    ...workerReproj, enabled: 0, subsample: 1, sampleOffset: 0, temporalBlend: shell ? .74 : .86,
+    temporalCellRate: 1, temporalCellPhase: 0, shadowHistory: true,
+  } : workerReproj;
   if (resetReprojThisFrame) {
-    effectiveReproj = cloneReprojForReset(workerReproj);
+    effectiveReproj = cloneReprojForReset(effectiveReproj);
     historyPrevView = null;
   }
 
@@ -2543,8 +2661,10 @@ async function runFrame({
         if (workerReproj) {
           workerReproj.frameIndex = effectiveReproj.frameIndex >>> 0;
           workerReproj.sampleOffset = effectiveReproj.sampleOffset >>> 0;
-          workerReproj.temporalCellRate = effectiveReproj.temporalCellRate >>> 0;
-          workerReproj.temporalCellPhase = effectiveReproj.temporalCellPhase >>> 0;
+          if (!shadowHistory) {
+            workerReproj.temporalCellRate = effectiveReproj.temporalCellRate >>> 0;
+            workerReproj.temporalCellPhase = effectiveReproj.temporalCellPhase >>> 0;
+          }
         }
       }
     }
@@ -2652,7 +2772,6 @@ async function runFrame({
     });
   }
 
-  const cloudSig = cloudSceneSignature(cloudBox, cloudParams || {});
   const volumeShape = preview?.volumeShape || "box";
   if (volumeShape !== lastVolumeShape) {
     if (volumeShape === "torus") volumeRotationAngle = 1.05;
@@ -2682,6 +2801,15 @@ async function runFrame({
   const cel = Math.cos(sEl);
   const sunDir = norm([cel * Math.sin(sAz), Math.sin(sEl), cel * Math.cos(sAz)]);
 
+  const shellStyle = shell?.options.style;
+  const nativeLight = shell && resolvePlanetSceneLighting(shell.options, {atmosphere: shell.atmosphere});
+  const scenePalette = shell ? resolveScenePalette(shellStyle?.colorPresetId, {
+    ...shellStyle,
+    sunBloom: shellStyle?.sunBloom ?? shell.params.sunBloom,
+  }) : resolveScenePalette(preview?.gradeStyle, {
+    ...preview,
+    sunBloom: preview?.sun?.bloom,
+  });
   const viewSig = cloudViewSignature(preview, cloudBox, aspect);
   if (viewSig !== lastCloudViewSignature) {
     cb.setViewFromCamera({
@@ -2709,15 +2837,34 @@ async function runFrame({
       cloudScale: Math.max(1,Math.min(32,finiteNumber(preview?.cloudScale,1))),
     });
 
-    cb.setLight({
-      sunDir,
-      camPos: [preview?.cam?.x || 0, preview?.cam?.y || 0, preview?.cam?.z || 0],
-      atmosphere: shell?.atmosphere,
-    });
-
     cb.setOptions({writeRGB: true, outputChannel: 0, sphericalMode: Boolean(shell), planetStyleMode: Boolean(shell?.styled)});
     lastCloudViewSignature = viewSig;
   }
+
+  cb.setLight({
+    sunDir,
+    camPos: [preview?.cam?.x || 0, preview?.cam?.y || 0, preview?.cam?.z || 0],
+    atmosphere: shell?.atmosphere,
+    scenePalette: shell ? nativeLight.palette : scenePalette,
+    terrainDirect: scenePalette.direct / .65,
+    sceneWeight: shell ? nativeLight.weight : 1 - smoothstep01(.5, .92, preview?.nightAmount ?? 0),
+  });
+
+  const shaftEnabled = !!(shell ? shellStyle?.godRaysEnabled : preview?.godRaysEnabled);
+  const shaftStrength = (shell ? shellStyle?.godRayStrength : preview?.godRayStrength) ?? 0;
+  const scale = Math.max(1, Math.min(32, finiteNumber(preview?.cloudScale, 1)));
+  const radial = cloudBox.radialLayer;
+  const lift = finiteNumber(preview?.flatCloudHeightOffset, 0);
+  const flatBase = radial?.bottom ?? (cloudBox.center[1] - cloudBox.half[1]);
+  const shellScale = shell?.transforms.planetFrame[1][3];
+  const shellDatum = shell?.transforms.planetFrame[2][3];
+  const shaftView = {
+    enabled: shaftEnabled && !bootstrapPreviewMode, strength: shaftStrength, sun: sunDir, animated: loopRunning,
+    camera: [preview?.cam?.x || 0, preview?.cam?.y || 0, preview?.cam?.z || 0],
+    base: shell ? (shell.radius + shell.start) / shellScale - shellDatum : flatBase + lift,
+    thickness: shell ? (shell.top - shell.start) / shellScale : (radial?.thickness ?? cloudBox.half[1] * 2) * scale,
+    datum: shell ? shellDatum : radial ? radial.datum * scale + (scale - 1) * flatBase - lift : 0,
+  };
 
   if (!useTemporalHistory) {
     const targetWidth = bootstrapPreviewMode
@@ -2771,6 +2918,7 @@ async function runFrame({
     // its field passes, and the general compositor used for this frame.
     const variantStarted = performance.now();
     await Promise.all([
+      cb.prepareLocalCloudShafts(shaftView).catch(error => cb.disableLocalCloudShafts(error)),
       cb.ensureComputePipelineReadyAsync({ coarseFactor: effectiveCoarseFactor }),
       // Keep the compositor's existing on-demand fallback on warmup failure.
       cb.ensureRenderPipelineReadyAsync("bgra8unorm").catch(() => {}),
@@ -2847,13 +2995,26 @@ async function runFrame({
       tex.createView(),
       { format: "bgra8unorm", clearValue },
     );
+    nightComposite = null;
     if (!encodedBootstrapRender) {
       throw new Error("CloudComputeBuilder.encodeBootstrapRenderPass is required for bootstrap presentation.");
     }
   } else {
     const layerIndex = Math.max(0, Math.min((cb?.layers || 1) - 1, preview?.layer || 0));
+    const region = preview?.terrainEnabled && preview.terrainMode === 'planet-region' ? cb.planetRegion : null;
+    const regionSpan = region?.span ?? 0;
+    const metersPerUnit = shell?.metersPerUnit ?? (regionSpan > 0 ? regionSpan / LOCAL_REGION_UNITS : 0);
+    // Match the center used when projecting the region into the cloud shell.
+    const groundRadius = regionSpan > 0 ? (region.radius + region.min) / metersPerUnit : 0;
+    const terrainExtent = groundRadius > 0 && !preview?.regionOverview
+      ? LOCAL_REGION_UNITS * .5 * (region.context ? REGION_CONTEXT_SCALE : 1)
+      : 0;
+    const fogDensity = shell
+      ? (shellStyle?.fogDensity ?? preview?.fogDensity ?? .34) * shell.atmosphere[2]
+      : preview?.fogDensity ?? .34;
     const renderSig = renderUniformSignature(preview, aspect, layerIndex, cloudParams || {}, cloudBox,
-      MAIN_W, MAIN_H, (cb._currentComputeVariantKey() & 64) !== 0, workerTuning.formType);
+      MAIN_W, MAIN_H, (cb._currentComputeVariantKey() & 64) !== 0, workerTuning.formType) +
+      `|${metersPerUnit}|${groundRadius}|${terrainExtent}|${fogDensity}|${preview?.highlightRolloff ?? 0}` + (shell ? `|${shell.params.sunBloom}|${nativeLight.weight}` : '');
     if (renderSig !== lastRenderUniformSignature) {
       cb._writeRenderUniforms({
         layerIndex,
@@ -2866,9 +3027,18 @@ async function runFrame({
           aspect,
         },
         sunDir,
+        nightSkySun: preview?.nightSkySun ?? preview?.sun,
         box: shell ? previewCloudBox(preview) : cloudBox,
         planetShell: shell?.options,
-        exposure: preview?.exposure || 1.0,
+        terrainMetersPerUnit: metersPerUnit,
+        terrainGroundRadius: groundRadius,
+        terrainExtent,
+        highlightRolloff: preview?.highlightRolloff,
+        displayContrast: preview?.displayContrast,
+        cloudAir: shell ? [shaftView.datum, shaftView.base, shaftView.thickness, 0] : undefined,
+        shellSceneWeight: nativeLight?.weight,
+        scenePalette,
+        exposure: scenePalette.exposure,
         skyColor: preview?.sky || [0.5, 0.6, 0.8],
         skyCycle: !!preview?.skyCycle,
         styleSkyOverride: !!preview?.styleSkyOverride,
@@ -2888,9 +3058,9 @@ async function runFrame({
         edgeTint: preview?.edgeTint || [1.0, 1.0, 1.0],
         styleShadowStrength: preview?.styleShadowStrength ?? 0.88,
         styleShadowEdge: preview?.styleShadowEdge ?? 0.0,
-        styleShadowDarkness: preview?.styleShadowDarkness ?? 0.0,
-        styleColorLift: preview?.styleColorLift ?? 1.08,
-        styleSaturation: preview?.styleSaturation ?? 1.02,
+        styleShadowDarkness: (shell ? shellStyle?.styleShadowDarkness : preview?.styleShadowDarkness) ?? 0.0,
+        styleColorLift: scenePalette.colorLift,
+        styleSaturation: scenePalette.saturation,
         styleRimStrength: preview?.styleRimStrength ?? 0.86,
         styleSunBleed: preview?.styleSunBleed ?? 0.82,
         styleMidLift: preview?.styleMidLift ?? 0.88,
@@ -2898,14 +3068,14 @@ async function runFrame({
         silverExponent: cloudParams?.silverExponent ?? 1.65,
         outputWidth: MAIN_W,
         outputHeight: MAIN_H,
-        godRaysEnabled: !!preview?.godRaysEnabled,
-        godRayStrength: preview?.godRayStrength ?? 0.0,
-        godRayLength: preview?.godRayLength ?? 1.0,
-        godRayFalloff: preview?.godRayFalloff ?? 1.55,
+        godRaysEnabled: shaftEnabled,
+        godRayStrength: shaftStrength,
+        godRayLength: (shell ? shellStyle?.godRayLength : preview?.godRayLength) ?? 1,
+        godRayFalloff: (shell ? shellStyle?.godRayFalloff : preview?.godRayFalloff) ?? 1.55,
         alphaFloor: preview?.alphaFloor ?? 0.0,
-        fogDensity: preview?.fogDensity ?? 0.34,
-        fogHorizon: preview?.fogHorizon ?? 0.30,
-        fogSun: preview?.fogSun ?? 1.50,
+        fogDensity,
+        fogHorizon: shellStyle?.fogHorizon ?? preview?.fogHorizon ?? 0.30,
+        fogSun: shellStyle?.fogSun ?? preview?.fogSun ?? 1.50,
       });
       lastRenderUniformSignature = renderSig;
     }
@@ -2913,18 +3083,20 @@ async function runFrame({
     const { pipe, bgl, samp, format } = cb._ensureRenderPipeline("bgra8unorm");
     renderPipelineMs = performance.now() - pipelineStarted;
     cb.setOceanTime(oceanTime);
-    const { bundle } = getOrCreateRenderBundle(pipe, bgl, samp, format);
-    const tex = ctxMain.getCurrentTexture();
-    const pass = enc.beginRenderPass({
-      colorAttachments: [{
-        view: tex.createView(),
-        loadOp: "clear",
-        clearValue,
-        storeOp: "store",
-      }],
-    });
-    pass.executeBundles([bundle]);
-    pass.end();
+    const {bundle} = getOrCreateRenderBundle(pipe, bgl, samp, format);
+    const nightVisible = !shell && preview?.skyCycle ? preview.nightAmount > .52 : sunDir[1] < -.18;
+    if (nightVisible) {
+      const skySun = preview?.nightSkySun;
+      const direction = flatCelestialDirection(fwd, skySun ? deg2rad(skySun.azDeg) : sAz,
+        skySun ? deg2rad(skySun.elDeg) : sEl);
+      writeNightSkyAnimation(direction);
+      nightComposite = {bundle, clearValue, direction};
+    } else {
+      nightComposite = null;
+      updateConstellationGaze([0, 1, 0], performance.now() / 1000);
+    }
+    encodeCloudComposite(enc, bundle, clearValue);
+    lastComposite = {bundle, clearValue};
   }
 
   const tSubmit0 = performance.now();
@@ -2932,6 +3104,7 @@ async function runFrame({
   const commandBuffer = enc.finish();
   const tFinish1 = performance.now();
   queue.submit([commandBuffer]);
+  schedulePausedNightComposite();
   const tQueueSubmit1 = performance.now();
   if (!deferPresentation) encodedDispatch.restoreAfterSubmit?.();
 
@@ -3318,6 +3491,7 @@ function startLoop() {
       } catch {}
     }
     schedulePlanetSurroundingsFrame();
+    schedulePausedNightComposite();
   })();
 }
 
@@ -3540,6 +3714,7 @@ async function _handleMessage(ev) {
         entryPoints: Array.isArray(nb?.entryPoints) ? nb.entryPoints.slice() : [],
         cloudFieldLimits: {maxTextureDimension3D:device.limits.maxTextureDimension3D, maxBufferSize:device.limits.maxBufferSize},
         defaultPlanetRegion, defaultPlanetError,
+        navigationTerrain: createPlanetNavigationTerrain(cb.planetRegion),
         timingReport: initReport.finish(),
       });
       return;
@@ -3859,11 +4034,8 @@ async function _handleMessage(ev) {
     }
 
     if (type === "captureFrame") {
-      // Studio "Save image": a PNG of the most recent frame at canvas size.
-      if (!canvasMain || !device) throw new Error("The renderer is not ready yet.");
-      if (queue?.onSubmittedWorkDone) await queue.onSubmittedWorkDone();
-      const blob = await canvasMain.convertToBlob({ type: "image/png" });
-      respond(true, { blob, width: canvasMain.width, height: canvasMain.height });
+      if (!lastComposite || !device) throw new Error("Wait for a cloud frame before saving an image.");
+      respond(true, await captureCloudComposite());
       return;
     }
 

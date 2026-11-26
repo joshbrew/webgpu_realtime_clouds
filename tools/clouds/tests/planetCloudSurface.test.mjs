@@ -1,8 +1,9 @@
 import test from 'node:test';
-import { PLANET_CLOUD_GRADE_FLOATS, writePlanetCloudGrade } from '../planetCloudGrade.js';
+import { PLANET_CLOUD_GRADE_FLOATS, resolvePlanetSceneLighting, writePlanetCloudGrade } from '../planetCloudGrade.js';
 import assert from 'node:assert/strict';
+import { MAX_SCENE_HAZE, sceneLightingValues } from '../cloudLookPresets.js';
 import {readFile} from 'node:fs/promises';
-import {planetCloudStyleOptions} from '../planetCloudStyles.js';
+import {planetCloudStyleOptions,planetGasWeatherMode} from '../planetCloudStyles.js';
 import {advancePlanetCloudTime,planetCloudWarp,regeneratePlanetCloudWeather} from '../planetCloudMotion.js';
 
 const source=await readFile(new URL('../planetCloudSurface.js',import.meta.url),'utf8');
@@ -15,12 +16,13 @@ const vectors=source.slice(source.indexOf('function normalizeVectorInput'),sourc
 test('MC33 uniforms preserve thin shells and match radius-relative planet morphology',()=>{
   const code=functionCode('writeComputeParams','writeRenderParams')+functionCode('writeRenderParams','normalizeVectorInput')+vectors;
   const lightingBytes = 192;
-  const renderBytes = lightingBytes + PLANET_CLOUD_GRADE_FLOATS * Float32Array.BYTES_PER_ELEMENT;
+  const sceneOffset = lightingBytes + PLANET_CLOUD_GRADE_FLOATS * Float32Array.BYTES_PER_ELEMENT;
+  const renderBytes = sceneOffset + 112;
   const [compute, render] = new Function(
     'finiteNumber', 'clamp', 'normalize3', 'computeVisibleFaceMask', 'countBits32', 'planetCloudWarp',
-    'RENDER_LIGHTING_BYTES', 'RENDER_PARAMS_BYTES', 'writePlanetCloudGrade',
+    'RENDER_LIGHTING_BYTES', 'RENDER_SCENE_OFFSET', 'RENDER_PARAMS_BYTES', 'writePlanetCloudGrade', 'resolvePlanetSceneLighting', 'sceneLightingValues', 'MAX_SCENE_HAZE',
     code + ';return [writeComputeParams,writeRenderParams];',
-  )(finiteNumber, clamp, normalize3, () => 63, () => 6, planetCloudWarp, lightingBytes, renderBytes, writePlanetCloudGrade);
+  )(finiteNumber, clamp, normalize3, () => 63, () => 6, planetCloudWarp, lightingBytes, sceneOffset, renderBytes, writePlanetCloudGrade, resolvePlanetSceneLighting, sceneLightingValues, MAX_SCENE_HAZE);
   for(const style of ['realistic','diorama','hemisphere','scattered','gas_giant','neptune','hail_mary']){
     const options={...planetCloudStyleOptions(style,50),surfaceTerrainOcclusionRadius:70,warpAmount:.6,warpSpeed:2};
     let params;
@@ -31,8 +33,9 @@ test('MC33 uniforms preserve thin shells and match radius-relative planet morpho
     assert.ok(Math.abs(params.getFloat32(28,true)-options.params.globalCoverage)<1e-7);
     assert.ok(Math.abs(params.getFloat32(256,true)-.6)<1e-7);
     assert.ok(Math.abs(params.getFloat32(260,true)-planetCloudWarp(options,20).warpPhase)<1e-7);
-    render(layer,camera,[1,1,0],20);
+    render(layer,camera,[1,1,0],20,{sceneAir:1});
     assert.equal(params.byteLength, renderBytes);
+    assert.equal(params.getFloat32(sceneOffset + 12, true), Number(!planetGasWeatherMode(style)));
     assert.equal(params.getFloat32(lightingBytes + 15 * 4, true) > 0, options.tuning.formType < 4.5);
     assert.ok(Math.abs(params.getFloat32(148,true)-.6)<1e-7);
     assert.ok(Math.abs(params.getFloat32(152,true)-planetCloudWarp(options,20).warpPhase)<1e-7);

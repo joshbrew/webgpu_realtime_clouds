@@ -82,11 +82,37 @@ export function pickPlanetRegion(camera, ndcX, ndcY, radius, heightAt) {
   return surfaceAtDistance((near + far) / 2).direction;
 }
 
+// Trace the same tangent-plane boundary sampled by the terrain bake.
+export function planetRegionOutline(frame, span, radius, heightAt) {
+  const half = span / 2;
+  const corners = [[-half, -half], [half, -half], [half, half], [-half, half]];
+  const edgeSamples = 8;
+  return corners.flatMap(([x, z], edge) => {
+    const [nextX, nextZ] = corners[(edge + 1) % corners.length];
+    return Array.from({length: edgeSamples}, (_, i) => {
+      const t = i / edgeSamples;
+      const direction = planetRegionDirection(frame, x + (nextX - x) * t, z + (nextZ - z) * t, radius);
+      const surfaceRadius = radius + heightAt(direction);
+      return direction.map(value => value * surfaceRadius);
+    });
+  });
+}
+
+export function projectPlanetRegionSurfacePoint(camera, point, horizonRadius) {
+  const relative = point.map((value, axis) => value - camera.position[axis]);
+  const depth = dot(relative, camera.forward);
+  if (depth < camera.near) return null;
+
+  const closest = -dot(camera.position, relative) / dot(relative, relative);
+  if (closest > 0 && closest < 1) {
+    const onRay = relative.map((value, axis) => camera.position[axis] + value * closest);
+    if (dot(onRay, onRay) < horizonRadius ** 2) return null;
+  }
+  return [dot(relative, camera.right) / (depth * camera.tanX), dot(relative, camera.up) / (depth * camera.tanY)];
+}
+
 export function projectPlanetRegionPoint(camera, direction, surfaceRadius) {
-  const point = direction.map((value, i) => value * surfaceRadius - camera.position[i]);
-  const distance = dot(point, camera.forward);
-  if (distance <= camera.near || dot(camera.position, direction) < surfaceRadius * 0.997) return null;
-  return [dot(point, camera.right) / (distance * camera.tanX), dot(point, camera.up) / (distance * camera.tanY)];
+  return projectPlanetRegionSurfacePoint(camera, direction.map(value => value * surfaceRadius), surfaceRadius);
 }
 
 function sphericalGrain(x, y, z, seed) {

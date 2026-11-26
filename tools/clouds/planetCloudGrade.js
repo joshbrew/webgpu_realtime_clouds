@@ -1,3 +1,4 @@
+import { MAX_SCENE_SHADOW_DARKNESS, resolveScenePalette } from './cloudLookPresets.js';
 import { planetGasWeatherMode } from './planetCloudStyles.js';
 
 export const PLANET_CLOUD_GRADE_FLOATS = 24;
@@ -41,6 +42,24 @@ export function applyPlanetLightSwatches(params, style, reference) {
   return result;
 }
 
+export function resolvePlanetSceneLighting(options, camera) {
+  if (options.auroraMode || planetGasWeatherMode(options.cloudStyle) ||
+      options.cloudStyle === 'emberstorm' || options.cloudStyle === 'glowing_fissures') {
+    return { palette: null, weight: 0 };
+  }
+  const { style } = options;
+  // The planet gradients already apply their pigments at display resolution.
+  const overrides = style?.planetGradient
+    ? { ...style, cloudLitTint: undefined, cloudShadowTint: undefined, edgeTint: undefined }
+    : style;
+  const palette = resolveScenePalette(style?.colorPresetId, overrides);
+  // Camera altitude changes the air along the view ray. The cloud's
+  // illumination and color grade depend on the scene, not the observer.
+  const air = camera.atmosphere?.[2] ?? 1;
+  const t = Math.max(0, Math.min(1, (air - .04) / (.87 - .04)));
+  return { palette, weight: t * t * (3 - 2 * t) };
+}
+
 export function writePlanetCloudGrade(data, offset, options) {
   const style = options.style;
   const form = options.tuning?.formType ?? 0;
@@ -49,7 +68,7 @@ export function writePlanetCloudGrade(data, offset, options) {
   writeColor(data, offset, style?.cloudLitTint, neutral);
   data[offset + 3] = bounded(style?.styleColorLift, 1, .2, 2.5);
   writeColor(data, offset + 4, style?.cloudShadowTint, daylightShadow);
-  data[offset + 7] = bounded(style?.styleShadowDarkness, 0, 0, 1.5);
+  data[offset + 7] = bounded(style?.styleShadowDarkness, 0, 0, MAX_SCENE_SHADOW_DARKNESS);
   writeColor(data, offset + 8, style?.edgeTint, neutral);
   data[offset + 11] = bounded(style?.styleRimStrength, .1, 0, 2);
   data[offset + 12] = bounded(style?.styleShadowStrength, 1, 0, 4);
@@ -57,7 +76,7 @@ export function writePlanetCloudGrade(data, offset, options) {
   data[offset + 14] = bounded(style?.styleMidLift, 1, .2, 2.5);
   data[offset + 15] = options.localPalette ? .69 :
     weather ? (style?.planetGradient ? .82 : style?.colorPresetSource ? .64 : .38) : 0;
-  data[offset + 16] = bounded(style?.exposure, 1.18, .1, 3) / 1.18;
+  data[offset + 16] = bounded(style?.exposure, 1.18, 0, 3) / 1.18;
   const saturation = bounded(style?.styleSaturation, 1, 0, 2.2);
   data[offset + 17] = weather ? saturation : Math.min(2.2, saturation * 1.16);
   data[offset + 18] = bounded(style?.styleSunBleed, .1, 0, 1);

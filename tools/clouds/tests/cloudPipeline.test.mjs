@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { CloudRayTargetCache } from '../cloudRayTargets.js';
 import { LOCAL_PLANET_CLOUDS } from '../localPlanetClouds.js';
+import { resolvePlanetShafts } from '../planetShafts.js';
 
 // Exercise the real builder methods without requiring a GPU or WGSL bundler.
 const source = (await readFile(new URL('../clouds.js', import.meta.url), 'utf8'))
@@ -19,8 +20,9 @@ const source = (await readFile(new URL('../clouds.js', import.meta.url), 'utf8')
   .replace("'./cloudFrozenPattern.js'",JSON.stringify(new URL('../cloudFrozenPattern.js',import.meta.url).href))
   .replace("'./cloudLookPresets.js'",JSON.stringify(new URL('../cloudLookPresets.js',import.meta.url).href))
   .replace("'./cloudRayTargets.js'",JSON.stringify(new URL('../cloudRayTargets.js',import.meta.url).href))
-  .replace("'./localPlanetClouds.js'",JSON.stringify(new URL('../localPlanetClouds.js',import.meta.url).href));
-const { CloudComputeBuilder } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+  .replace("'./localPlanetClouds.js'",JSON.stringify(new URL('../localPlanetClouds.js',import.meta.url).href))
+  .replace("'./nightConstellations.js'",JSON.stringify(new URL('../nightConstellations.js',import.meta.url).href));
+const { CloudComputeBuilder, CLOUD_PREVIEW_RENDER_BYTES } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 function fixture(device = {}) {
   const builder = Object.create(CloudComputeBuilder.prototype);
@@ -414,6 +416,141 @@ test('field cache reuses camera/AO changes, relights the sun, and rebakes change
   }
 });
 
+test('planet shaft controls retain their authored strength across normal atmospheres', () => {
+  const settings = {
+    godRaysEnabled: true,
+    godRayStrength: 12,
+    fogDensity: .44,
+    styleShadowDarkness: 18,
+    exposure: 1,
+  };
+  const sun = [0, .2, Math.sqrt(.96)];
+  const light = (density, altitude = .2, style = settings, direction = sun) =>
+    resolvePlanetShafts(style, 50, 14, [0, 50 + altitude, 0], direction,
+      [[0, 0, 0], [0, 0, 0], density], .7, 2.2);
+
+  const thin = light(.18);
+  const standard = light(1);
+  assert.equal(standard.strength, 12);
+  assert.equal(standard.haze, 2);
+  assert.equal(standard.darkness, 18);
+  assert.equal(light(.36).visibility, standard.visibility);
+  assert.ok(thin.visibility > 0 && thin.visibility < standard.visibility);
+  assert.equal(light(.015), null);
+  assert.equal(light(1, 3).visibility, standard.visibility);
+  assert.ok(light(1, 12).visibility < standard.visibility);
+  assert.equal(light(1, 24), null);
+  assert.equal(light(1, .2, settings, [0, -1, 0]), null);
+  assert.equal(light(1, .2, { ...settings, godRayStrength: 0 }), null);
+});
+
+test('world cloud shadows reuse short camera moves and rebake changed shell geometry', async t => {
+  let now = 1000;
+  t.mock.method(performance, 'now', () => now);
+  const builder = fixture();
+  const pipeline = {};
+  const projectionWrites = [];
+  const weights = [];
+  const blendBuffer = {};
+  Object.assign(builder, {
+    queue: { writeBuffer: (buffer, offset, values) => {
+      if (buffer === blendBuffer) weights.push(values[0]);
+      else projectionWrites.push(values.slice());
+    } },
+    _currentComputeVariantKey: () => 128,
+    _shaftFrameBuffer: {}, _shaftMaskView: {},
+    _shaftPipelines: { get: () => pipeline }, _shaftMipGroups: [],
+    _shaftFilterGroups: [{}, {}], _shaftBlendGroups: [{}, {}], _shaftBlendBuffer: blendBuffer,
+    _abBox: new ArrayBuffer(64),
+    _abParams: new ArrayBuffer(112),
+    _abNTransform: new ArrayBuffer(176),
+    _u32Views: new WeakMap(),
+    _getResId: () => 0,
+  });
+  builder.setTuning({ formType: 6, definition: .4 });
+  const pass = { setPipeline() {}, setBindGroup() {}, dispatchWorkgroups() {} };
+  const encode = () => {
+    const timings = [];
+    builder._encodeCloudShaftMask(pass, null, timings);
+    return timings[0]?.baked ?? null;
+  };
+  const view = { enabled: true, strength: 1, sun: [0, 1, 0], camera: [0, 4, 0],
+    base: 16, thickness: 12, datum: 10000, animated: true };
+  await builder.prepareLocalCloudShafts(view);
+  assert.ok(encode());
+  assert.equal(projectionWrites.length, 1);
+  assert.equal(weights.at(-1), 1);
+
+  await builder.prepareLocalCloudShafts({ ...view, camera: [6, 4, 0] });
+  assert.equal(projectionWrites.length, 1);
+  assert.equal(encode(), null);
+
+  await builder.prepareLocalCloudShafts({ ...view, camera: [20, 4, 7] });
+  assert.equal(projectionWrites.length, 2);
+  assert.ok(encode());
+  assert.equal(weights.at(-1), 1);
+  const [x, , z, halfWidth] = projectionWrites.at(-1);
+  const coarsestTexel = (2 * halfWidth / 320) * 8;
+  for (const coordinate of [x, z]) {
+    const grid = coordinate / coarsestTexel;
+    assert.notEqual(Math.round(grid), 0);
+    assert.ok(Math.abs(grid - Math.round(grid)) < 1e-5);
+  }
+
+  builder.setTuning({ definition: .9 });
+  assert.ok(encode());
+  builder._dvView.setFloat32(144, 2, true);
+  assert.ok(encode());
+  new DataView(builder._abNTransform).setFloat32(32, 1.25, true);
+  assert.ok(encode());
+
+  const motion = new DataView(builder._abNTransform);
+  motion.setFloat32(0, .25, true);
+  now += 16;
+  assert.equal(encode(), null);
+
+  now += 18;
+  assert.equal(encode(), true);
+  assert.equal(weights.at(-1), 0);
+  motion.setFloat32(0, .3, true);
+  now += 16;
+  assert.equal(encode(), false);
+  assert.ok(Math.abs(weights.at(-1) - .48) < 1e-6);
+  now += 18;
+  assert.equal(encode(), true);
+  assert.equal(weights.at(-1), 0);
+  now += 34;
+  assert.equal(encode(), false);
+  assert.equal(weights.at(-1), 1);
+  assert.equal(encode(), null);
+
+  motion.setFloat32(0, .4, true);
+  assert.equal(encode(), true);
+  assert.equal(weights.at(-1), 0);
+  await builder.prepareLocalCloudShafts({ ...view, camera: [20, 4, 7], animated: false });
+  assert.equal(encode(), false);
+  assert.equal(weights.at(-1), 1);
+  assert.equal(encode(), null);
+
+  await builder.prepareLocalCloudShafts({ ...view, enabled: false });
+  assert.equal(encode(), null);
+  assert.ok(projectionWrites.at(-1).every(value => value === 0));
+  await builder.prepareLocalCloudShafts(view);
+  assert.equal(encode(), true);
+  assert.equal(weights.at(-1), 1);
+
+  // Planet-centered views use the same baker in either hemisphere.
+  const nativeView = { ...view, camera: [0, -50.12, 0], sun: [0, -1, 0],
+    base: .7, thickness: 1.5, datum: -50, reach: 10 };
+  await builder.prepareLocalCloudShafts(nativeView);
+  assert.ok(encode());
+  assert.equal(projectionWrites.at(-1)[11], -50);
+  const writeCount = projectionWrites.length;
+  await builder.prepareLocalCloudShafts({ ...nativeView, sun: [.0005, -Math.sqrt(1 - .0005**2), 0] });
+  assert.equal(projectionWrites.length, writeCount);
+  assert.equal(encode(), null);
+});
+
 test('rounded clouds advect their scaffold and grow billows without rescaling tower height', async () => {
   const shader = await readFile(new URL('../shaders/cloudFields.wgsl', import.meta.url), 'utf8');
   assert.match(shader, /floor\(\(p\.xz \+ windOffset\) \/ cellSize\)/);
@@ -491,7 +628,7 @@ test('cached lighting filters scalar responses instead of compressed-normal seam
 
 test('automatic finishing follows the form while either shading style packs independently', async () => {
   const builder = fixture();
-  builder._abRender = new ArrayBuffer(432);
+  builder._abRender = new ArrayBuffer(CLOUD_PREVIEW_RENDER_BYTES);
   builder._dvRender = new DataView(builder._abRender);
   for (const formType of [0,1,2,3]) for (const spherical of [false,true]) {
     builder.setTuning({formType});
@@ -515,7 +652,7 @@ test('automatic finishing follows the form while either shading style packs inde
 });
 
 test('preview fog bounds follow the march scale and its lower support in world space',()=>{
- const b=fixture();b._abRender=new ArrayBuffer(432);b._dvRender=new DataView(b._abRender);
+ const b=fixture();b._abRender=new ArrayBuffer(CLOUD_PREVIEW_RENDER_BYTES);b._dvRender=new DataView(b._abRender);
  for(const formType of [0,1])for(const scale of [1,3,8]){
   b.setTuning({formType,baseJitterFrac:.02});b._dvOptions.setFloat32(16,0,true);
   b._writeRenderUniforms({box:{center:[2,6.45,-3],half:[90,.75,90]},cloudScale:scale});
@@ -530,6 +667,11 @@ test('preview fog bounds follow the march scale and its lower support in world s
  b._writeRenderUniforms({box:{center:[2,6.45,-3],half:[90,.75,90]},cloudScale:8,cloudHeightOffset:12});
  assert.ok(Math.abs(b._dvRender.getFloat32(276,true)-6.45)<1e-5);
  assert.equal(b._dvRender.getFloat32(288,true),90);assert.equal(b._dvRender.getFloat32(292,true),.75);
+ b._writeRenderUniforms({cloudAir:[10000, 25, 8, 0],exposure:0,styleShadowDarkness:48,godRayStrength:48});
+ assert.deepEqual(Array.from(new Float32Array(b._abRender, CLOUD_PREVIEW_RENDER_BYTES - 16)), [10000, 25, 8, 0]);
+ assert.equal(b._dvRender.getFloat32(88,true),0);
+ assert.equal(b._dvRender.getFloat32(8,true),48);
+ assert.equal(b._dvRender.getFloat32(228,true),48);
 });
 
 test('aircraft state uses view padding without changing the cloud field or view-extra layout',()=>{

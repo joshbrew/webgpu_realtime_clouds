@@ -1,4 +1,4 @@
-import { atmosphereColors, mountPlanetApproach, sunDirection } from '../planet/planet-approach.esm.js';
+import { atmosphereColors, mountPlanetApproach, planetNightRotation, sunDirection } from '../planet/planet-approach.esm.js';
 import { isSatelliteWeatherStyle, PLANET_CLOUD_STYLES } from './planetCloudStyles.js';
 import { populateCloudDemoNavigation, pushCloudDemoRoute } from './cloudDemoNavigation.js';
 import { installCloudLabTheme } from './cloudLabUi.js';
@@ -19,8 +19,12 @@ import terrainDepthShader from './shaders/planetTerrainDepth.wgsl';
 import oceanWaves from './shaders/oceanWaves.wgsl';
 import planetOceanWaves from './shaders/planetOceanWaves.wgsl';
 import sceneSkyLighting from './shaders/sceneSkyLighting.wgsl';
+import sceneNightSky from './shaders/sceneNightSky.wgsl';
+import sceneConstellation from './shaders/sceneConstellation.wgsl';
+import {createConstellationGaze, nightConstellationsWGSL} from './nightConstellations.js';
+import planetAerialPerspective from './shaders/planetAerialPerspective.wgsl';
 import planetSkyLighting from './shaders/planetSkyLighting.wgsl';
-import { FLUID_TWILIGHT_GRADE, GRADE_PRESETS } from './cloudLookPresets.js';
+import { FLUID_TWILIGHT_GRADE, GRADE_PRESETS, resolveScenePalette, sceneLightingValues, MAX_SCENE_HAZE } from './cloudLookPresets.js';
 import cloudOverlayOpacityShader from './shaders/cloudOverlayOpacity.wgsl';
 import cloudOverlayReconstructionShader from './shaders/cloudOverlayReconstruction.wgsl';
 
@@ -263,7 +267,7 @@ function cloudCamera() {
     aspect: camera.aspect,
     animation,
     terrainCloudShadows: cloudShadowControl?.checked,
-    atmosphere: atmosphereColors(planet.preset, atmosphereControl.value),
+    atmosphere: atmosphereColors(planet.preset, atmosphereControl.value, planet.studioSeed),
   };
 }
 
@@ -331,7 +335,7 @@ function cloudRenderOptions(config) {
     preloadAlternateCloudRendererOnIdle: false,
     retainCloudOpacity: true,
     reconstructAtPresentation: true,
-    godRayAirHeight: 32000 * cloudRadius / planet.radius,
+    godRayAirHeight: 75000 * cloudRadius / planet.radius,
     satelliteOrbitRefinement: true,
     gasOrbitRefinement: true,
     surfaceFieldUpdateHz: cloudOptions.surfaceFieldUpdateHz ?? 12,
@@ -601,6 +605,9 @@ function setup(doc) {
   studio.setCloudLiveApply(({ cloudConfig, path }) => {
     const auroraOnly = path.startsWith('aurora.');
     if (!auroraOnly) weatherToggle.checked = false;
+    if (path === 'style.colorPresetId' && Number(cloudConfig.style?.colorPresetId) === FLUID_TWILIGHT_GRADE) {
+      setPlanetSunElevation?.(GRADE_PRESETS[FLUID_TWILIGHT_GRADE].sunElevation);
+    }
     return queueSettings(cloudConfig, { auroraOnly });
   });
   rendererButton = doc.createElement('button');
@@ -719,7 +726,7 @@ function disposeCloudStudio(error) {
 }
 
 const previousHead = new Set(document.head.children);
-let disposeOrbit;
+let disposeOrbit, setPlanetSunElevation;
 async function openFluidRegion(url, region) {
   if (!disposeOrbit || !planet?.device) {
     location.assign(url);
@@ -743,17 +750,39 @@ async function openFluidRegion(url, region) {
   }
 }
 
-const neutralSkyLook = [1, 1, 1];
-function planetSkyLook() {
-  const id = Number(cloudConfig?.style?.colorPresetId);
-  const preset = GRADE_PRESETS[id];
-  const fluid = id === FLUID_TWILIGHT_GRADE;
-  const bloom = Number(cloudConfig?.params?.sunBloom ?? preset?.sunBloom ?? .18);
+const updateConstellationGaze = createConstellationGaze();
+
+function planetSkyLook(view, phase) {
+  const time = performance.now() / 1000;
+  const [x, y, z, w] = planetNightRotation(phase);
+  const [a, b, c] = view.forward;
+  const tx = 2 * (y * c - z * b);
+  const ty = 2 * (z * a - x * c);
+  const tz = 2 * (x * b - y * a);
+  const gaze = updateConstellationGaze([
+    a + w * tx + y * tz - z * ty,
+    b + w * ty + z * tx - x * tz,
+    c + w * tz + x * ty - y * tx,
+  ], time);
+  const style = cloudConfig?.style;
+  const palette = resolveScenePalette(style?.colorPresetId, {
+    ...style,
+    sunBloom: cloudConfig?.params?.sunBloom,
+  });
   return {
-    sky: fluid ? cloudConfig?.style?.sky ?? preset.sky : neutralSkyLook,
-    sun: cloudConfig?.style?.sunTint ?? preset?.sunTint ?? neutralSkyLook,
-    strength: fluid ? 1 : .24,
-    bloom: Number.isFinite(bloom) ? bloom * (fluid ? 1 : .52) : .18,
+    sky: palette.sky,
+    sun: palette.sun,
+    exposure: palette.exposure * palette.colorLift,
+    saturation: palette.saturation,
+    contrast: style?.displayContrast ?? 1,
+    highlightRolloff: style?.highlightRolloff ?? 0,
+    shadowDarkness: style?.styleShadowDarkness ?? 0,
+    strength: 1,
+    bloom: palette.bloom,
+    haze: Math.max(0, Math.min(MAX_SCENE_HAZE, sceneLightingValues(style).haze)),
+    direct: palette.direct / .65,
+    nightTime: time,
+    gaze,
   };
 }
 
@@ -761,7 +790,7 @@ await mountPlanetApproach({
   setup,
   initialTerrain,
   oceanWaves: oceanWaves + planetOceanWaves,
-  skyLighting: sceneSkyLighting + planetSkyLighting,
+  skyLighting: [sceneSkyLighting, sceneNightSky, nightConstellationsWGSL, sceneConstellation, planetAerialPerspective, planetSkyLighting].join('\n'),
   getSkyLook: planetSkyLook,
   onDeviceReady(world) {
     planet = world;
@@ -775,8 +804,9 @@ await mountPlanetApproach({
   onTerrainReady(editor) {
     terrainEditor = editor;
   },
-  onNavigationReady({ orbit, dispose }) {
+  onNavigationReady({ orbit, dispose, setSunElevation }) {
     orbitPlanet = orbit;
+    setPlanetSunElevation = setSunElevation;
     disposeOrbit = dispose;
     if (!returnRegion) return;
     if (restoredCloudState?.paused) document.getElementById('sceneAnimation')?.click();

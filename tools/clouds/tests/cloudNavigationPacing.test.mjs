@@ -108,7 +108,7 @@ test('the paused UI notification follows GPU completion too',async()=>{
 test('hidden worker animation waits, resumes on visibility, and can be stopped while hidden',async()=>{
  const gate=worker.slice(worker.indexOf('let workerPageVisible ='),worker.indexOf('function emitTimingProgress('));
  const stop=worker.slice(worker.indexOf('function stopLoop()'),worker.indexOf('function waitForLoopStopped()'));
- const control=new Function(`${gate};let loopEnabled=true;const loopGpuFences=[];${stop};return {set:setWorkerPageVisibility,wait:waitForWorkerVisibility,stop:stopLoop,enabled:()=>loopEnabled};`)();
+ const control=new Function('createConstellationGaze','schedulePausedNightComposite',`${gate};let loopEnabled=true;const loopGpuFences=[];${stop};return {set:setWorkerPageVisibility,wait:waitForWorkerVisibility,stop:stopLoop,enabled:()=>loopEnabled};`)(()=>()=>{},()=>{});
  control.set(false);let resumed=false;const waiting=control.wait().then(()=>resumed=true);
  await Promise.resolve();assert.equal(resumed,false);
  control.set(false);await Promise.resolve();await Promise.resolve();assert.equal(resumed,false);
@@ -148,6 +148,21 @@ test('slow paused frames finish compute before acquiring the next canvas image',
   assert.equal(await pending,enabled?next:original);
   assert.deepEqual(order,enabled?['finish-compute','compute','restore','new-render-encoder','acquire-canvas']:['acquire-canvas']);
  }
+});
+
+test('coarse dispatch retains shadow-only history with interleave disabled', () => {
+ const start = worker.indexOf('function getDispatchReprojSettings(');
+ const end = worker.indexOf('// render bundle cache', start);
+ const dispatch = new Function('normalizeTemporalCellRate', worker.slice(start, end) +
+   '\nreturn getDispatchReprojSettings;')(value => value);
+ const config = {enabled:1, subsample:1, temporalCellRate:1, temporalBlend:.74};
+ const ordinary = dispatch(config,4);
+ const shadow = dispatch({...config,shadowHistory:true},4);
+ assert.equal(ordinary.temporalBlend,0);
+ assert.equal(shadow.temporalBlend,.74);
+ assert.equal(shadow.enabled,0);
+ assert.equal(shadow.compactInterleave,0);
+ assert.equal(config.enabled,1);
 });
 
 test('frozen playback scrolls the held pattern while weather and independent noise clocks stay fixed',()=>{

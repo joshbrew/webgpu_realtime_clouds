@@ -1,4 +1,4 @@
-import{planetRegionMaterialSource}from"./chunk-F3Z5RQMW.js";import{planetRegionTerrainNoise_default}from"./chunk-KZZDKEXZ.js";var regionGridShader=`
+import{planetRegionMaterialSource}from"./chunk-AGOQFEXH.js";import{planetRegionTerrainNoise_default}from"./chunk-KZZDKEXZ.js";var regionGridShader=`
 struct RegionGrid {
   normal: vec3<f32>,
   halfAngle: f32,

@@ -242,9 +242,9 @@ export const REFERENCE_LOOK_PRESETS = Object.freeze({
   [FLUID_TWILIGHT_GRADE]: look('Fluid Twilight', [
     [.24,.23,.35],[1.55,.85,.48],[1.21,1.03,.87],[.202,.233,.278],
     [1.11,1.03,.94],[.49,.55,.66],[1.36,1.02,.72],
-  ], {exposure:1.16,sunBloom:.35,sunAzimuth:220,sunElevation:9,transmissiveLightTint:[1.53,.92,.57],
-    styleShadowStrength:1.38,styleShadowDarkness:.09,styleRimStrength:.23,styleSunBleed:.91,
-    fogDensity:.22,fogHorizon:.54,fogSun:.52,godRayStrength:.35}),
+  ], {exposure:1.16,sunBloom:.18,sunAzimuth:220,sunElevation:-10,transmissiveLightTint:[1.53,.92,.57],
+    styleColorLift:1,styleShadowStrength:1.5,styleShadowDarkness:.09,styleRimStrength:.10,styleSunBleed:.91,
+    fogDensity:.22,fogHorizon:.30,fogSun:.12,godRayStrength:.12}),
 });
 
 export const INK_LOOK_IDS = Object.freeze([36,37,38,39,40,42,43,44]);
@@ -641,3 +641,67 @@ export const GRADE_PRESETS = Object.freeze({
     godRayFalloff: 1.42,
   },
 });
+
+const SCENE_NEUTRAL = [1, 1, 1];
+const SCENE_REFERENCE_SKY = [.50, .59, .74];
+
+function relativeSwatch(color, reference) {
+  return color ? color.map((value, i) => value / reference[i]) : SCENE_NEUTRAL;
+}
+
+function multiplySwatches(a, b) {
+  return (a ?? SCENE_NEUTRAL).map((value, i) => value * (b?.[i] ?? 1));
+}
+
+export const SCENE_HAZE_DENSITY = .22;
+export const MAX_SCENE_HAZE = 12;
+export const MAX_SCENE_SHAFT_STRENGTH = 48;
+export const MAX_SCENE_SHADOW_DARKNESS = 48;
+
+export function sceneLightingValues(look = {}) {
+  return {
+    exposure: look.exposure ?? 1.16,
+    displayContrast: look.displayContrast ?? 1,
+    highlightRolloff: look.highlightRolloff ?? 0,
+    directLightBoost: look.directLightBoost ?? .65,
+    godRayStrength: look.godRaysEnabled ? look.godRayStrength ?? 0 : 0,
+    haze: (look.fogDensity ?? SCENE_HAZE_DENSITY) / SCENE_HAZE_DENSITY,
+    styleShadowDarkness: look.styleShadowDarkness ?? 0,
+  };
+}
+
+// The palettes tint the same sky, solar radiance and cloud scattering in all
+// three demos. Fluid Twilight already represents the untinted reference.
+export function resolveScenePalette(grade, overrides = {}) {
+  const authored = GRADE_PRESETS[grade];
+  const reference = Number(grade) === FLUID_TWILIGHT_GRADE;
+  const preset = reference ? undefined : authored;
+  const swatch = key => reference
+    ? relativeSwatch(overrides[key], authored[key])
+    : overrides[key] ?? preset?.[key];
+  const sky = reference ? swatch('sky') : relativeSwatch(swatch('sky'), SCENE_REFERENCE_SKY);
+  const front = swatch('frontLightTint');
+  const shade = swatch('volumeShadowTint');
+  const transmission = swatch('transmissiveLightTint');
+  const value = (key, fallback) => overrides[key] ?? preset?.[key] ?? fallback;
+
+  const direct = value('directLightBoost', .65);
+  const directBlend = value('directLightBlend', .85);
+  const shadowStrength = value('styleShadowStrength', 1.5);
+  const rim = value('styleRimStrength', .1);
+  return {
+    sky,
+    sun: swatch('sunTint') ?? SCENE_NEUTRAL,
+    front: multiplySwatches(front, swatch('cloudLitTint')),
+    shadow: multiplySwatches(shade, swatch('cloudShadowTint')),
+    transmission: multiplySwatches(transmission, swatch('edgeTint')),
+    direct, directBlend, shadowStrength, rim,
+    response: [(direct / .65) * (directBlend / .85), 1 / Math.max(.75, shadowStrength / 1.5), .9 + rim],
+    exposure: value('exposure', 1.16),
+    colorLift: value('styleColorLift', 1),
+    saturation: value('styleSaturation', 1),
+    bloom: value('sunBloom', .18),
+    fogHorizon: value('fogHorizon', .30),
+    fogSun: value('fogSun', .12),
+  };
+}

@@ -139,6 +139,72 @@ function refineContextGrid(context, span) {
   return {resolution, elevations, water, waterDepth, materials};
 }
 
+function regionContextHeight(x, z, elevation, radius, half, seamWidth) {
+  const extent = Math.max(Math.abs(x), Math.abs(z));
+  if (extent <= half) return 0;
+  const radial = Math.hypot(x, z) / radius;
+  const edgeRadial = radial * half / extent;
+  const drop = (radius + elevation) * (1 - 1 / Math.sqrt(1 + radial * radial));
+  const edgeDrop = (radius + elevation) * (1 - 1 / Math.sqrt(1 + edgeRadial * edgeRadial));
+  const beyond = extent - half;
+  const transition = Math.max(half * .72, edgeDrop * 3, seamWidth);
+  return (drop - edgeDrop) * smooth(0, transition * .35, beyond) + edgeDrop * smooth(0, transition, beyond);
+}
+
+function regionGridElevation(grid, width, x, z) {
+  const {resolution, elevations} = grid;
+  const last = resolution - 1;
+  const gx = Math.max(0, Math.min(last, (x / width + .5) * last));
+  const gz = Math.max(0, Math.min(last, (z / width + .5) * last));
+  const col = Math.min(last - 1, Math.floor(gx)), row = Math.min(last - 1, Math.floor(gz));
+  const u = gx - col, v = gz - row;
+  const at = row * resolution + col;
+  const east = elevations[at + 1], south = elevations[at + resolution];
+  return u + v <= 1
+    ? elevations[at] * (1 - u - v) + east * u + south * v
+    : elevations[at + resolution + 1] * (u + v - 1) + east * (1 - v) + south * (1 - u);
+}
+
+export function planetRegionGroundHeight(region, x, z) {
+  const {min, radius, span, context} = region;
+  const scale = LOCAL_REGION_UNITS / span;
+  const half = LOCAL_REGION_UNITS * .5;
+  const extent = Math.max(Math.abs(x), Math.abs(z));
+  if (extent <= half) return (regionGridElevation(region, LOCAL_REGION_UNITS, x, z) - min) * scale;
+
+  const width = LOCAL_REGION_UNITS * REGION_CONTEXT_SCALE;
+  if (context && extent <= width * .5) {
+    const subdivision = context.resolution === REGION_CONTEXT_SCALE * 32 + 1 ? 3 : 2;
+    const seamWidth = width * 4 / ((context.resolution - 1) * subdivision);
+    const worldRadius = radius * scale;
+    const elevation = regionGridElevation(context, width, x, z) * scale;
+    const projection = regionContextScale(x, z, elevation, worldRadius, half, seamWidth);
+    const gx = x / projection, gz = z / projection;
+    const h = regionGridElevation(context, width, gx, gz) * scale;
+    return h - min * scale - regionContextHeight(gx, gz, h, worldRadius, half, seamWidth);
+  }
+
+  const datum = (radius + min) * scale;
+  const r2 = x * x + z * z;
+  return -r2 / Math.max(datum + Math.sqrt(Math.max(0, datum * datum - r2)), 1);
+}
+
+export function createPlanetNavigationTerrain(region) {
+  if (!region) return undefined;
+  const reduce = ({resolution, elevations}) => {
+    if (resolution <= 257) return {resolution, elevations};
+    const step = (resolution - 1) / 256;
+    const samples = new Float32Array(257 * 257);
+    for (let z = 0; z < 257; z++) {
+      const row = Math.round(z * step) * resolution;
+      for (let x = 0; x < 257; x++) samples[z * 257 + x] = elevations[row + Math.round(x * step)];
+    }
+    return {resolution:257, elevations:samples};
+  };
+  const {radius, span, min, context} = region;
+  return {radius, span, min, ...reduce(region), context: context && reduce(context)};
+}
+
 function writeRegionGrid(vertices, firstVertex, {resolution, elevations, water, waterDepth}, width, datum, scale, planetRadius = 0) {
   const step = width / (resolution - 1);
   const half = width / 2;
@@ -149,21 +215,9 @@ function writeRegionGrid(vertices, firstVertex, {resolution, elevations, water, 
     const x = (i % resolution) * step - half;
     const z = Math.floor(i / resolution) * step - half;
     const coreHalf = LOCAL_REGION_UNITS / 2;
-    const extent = Math.max(Math.abs(x), Math.abs(z));
     projection[i] = regionContextScale(x, z, elevation * scale, planetRadius, coreHalf, step * 4);
-    if (extent <= coreHalf) return localHeight;
-    const radial = Math.hypot(x, z) / planetRadius;
-    const sphereRadius = planetRadius + elevation * scale;
-    const edgeRadial = radial * coreHalf / extent;
-    const drop = sphereRadius * (1 - 1 / Math.sqrt(1 + radial * radial));
-    const edgeDrop = sphereRadius * (1 - 1 / Math.sqrt(1 + edgeRadial * edgeRadial));
-    // Join the flat tile with a level tangent. Remove the height offset
-    // gradually so the distant vertices return to their true sphere.
-    const beyond = extent - coreHalf;
-    const transition = Math.max(coreHalf * .72, edgeDrop * 3, step * 4);
-    const roll = smooth(0, transition * .35, beyond);
-    const blend = smooth(0, transition, beyond);
-    return localHeight - (drop - edgeDrop) * roll - edgeDrop * blend;
+    // Join the flat tile with a level tangent, then return to the sphere.
+    return localHeight - regionContextHeight(x, z, elevation * scale, planetRadius, coreHalf, step * 4);
   });
   let low = Infinity, high = -Infinity;
   for (let z = 0; z < resolution; z++) {
@@ -283,24 +337,13 @@ export function createRegionDetailIndices(near = false) {
 }
 
 export function selectRegionDetail(region, position, forward, altitudeRange = 1) {
-  const {resolution, elevations, min, span} = region;
+  const {resolution, min, span} = region;
   const cells = resolution - 1;
   const step = LOCAL_REGION_UNITS / cells;
   const windowCells = cells >= 256 ? REGION_DETAIL_CELLS * 2 : REGION_DETAIL_CELLS;
   const width = windowCells * step;
   const half = LOCAL_REGION_UNITS * .5;
-  const sample = (x, z) => {
-    const gx = Math.max(0, Math.min(cells, (x + half) / step));
-    const gz = Math.max(0, Math.min(cells, (z + half) / step));
-    const column = Math.min(cells - 1, Math.floor(gx)), row = Math.min(cells - 1, Math.floor(gz));
-    const u = gx - column, v = gz - row;
-    const at = row * resolution + column;
-    const east = elevations[at + 1], south = elevations[at + resolution];
-    const height = u + v <= 1
-      ? elevations[at] * (1 - u - v) + east * u + south * v
-      : elevations[at + resolution + 1] * (u + v - 1) + east * (1 - v) + south * (1 - u);
-    return (height - min) * LOCAL_REGION_UNITS / span;
-  };
+  const sample = (x, z) => (regionGridElevation(region, LOCAL_REGION_UNITS, x, z) - min) * LOCAL_REGION_UNITS / span;
   const [x, y, z] = position;
   if (Math.max(Math.abs(x), Math.abs(z)) > half + width * .3) return null;
   const clearance = Math.abs(y - sample(x, z));
@@ -515,7 +558,7 @@ export function createPlanetRegionMesh(region) {
   return {vertices, indices, coreIndexCount, materials, canRefine, context, shadowBounds: {coreHeights, surroundingsHeights}};
 }
 
-export function regionShadowProjection({coreHeights, surroundingsHeights}, sun, size) {
+export function regionShadowProjection({coreHeights, surroundingsHeights}, sun, size, receiverScale = 1) {
   const [x, y, z] = sun;
   // Wait until the sun clears the horizon before allocating direct light.
   if (y <= .015) return null;
@@ -528,10 +571,11 @@ export function regionShadowProjection({coreHeights, surroundingsHeights}, sun, 
     Math.abs(axis[1]) * (heights[1] - heights[0]) * .5;
   const fitCenter = (axis, heights) => axis[1] * (heights[0] + heights[1]) * .5;
   const pad = half * .18;
-  // Fit the receiver footprint tightly. The full surroundings still contribute
-  // to depth where they project in front of the selected square.
-  const extentX = fitRadius(right, half, coreHeights) + pad;
-  const extentY = fitRadius(up, half, coreHeights) + pad;
+  // Include neighboring shaft receivers when the air is sampling this map.
+  // The full surroundings contribute depth where they project into its footprint.
+  const receiverHalf = half * receiverScale;
+  const extentX = fitRadius(right, receiverHalf, coreHeights) + pad;
+  const extentY = fitRadius(up, receiverHalf, coreHeights) + pad;
   const casters = surroundingsHeights
     ? [Math.min(coreHeights[0], surroundingsHeights[0]), Math.max(coreHeights[1], surroundingsHeights[1])]
     : coreHeights;

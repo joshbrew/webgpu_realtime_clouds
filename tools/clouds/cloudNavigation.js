@@ -60,8 +60,14 @@ export function chaseFlight(cam, ship, elapsed) {
   return next;
 }
 
+export function keepAboveCloudTerrain(pose, heightAt, clearance = .8) {
+  const height = heightAt?.(pose.x, pose.z);
+  if (!Number.isFinite(height) || pose.y >= height + clearance) return pose;
+  return {...pose, y: height + clearance};
+}
+
 // Native pointer controls on the display canvas; cloud rendering stays in its worker.
-export function installCloudNavigation({canvas, getCamera, getBox, setCamera, setAircraft, setFlightMotion, regionView, setRegionOverview}) {
+export function installCloudNavigation({canvas, getCamera, getBox, setCamera, setAircraft, setFlightMotion, regionView, setRegionOverview, groundHeight}) {
   const style = document.createElement('style');
   style.textContent = `
     #cloud-navigation {position:fixed;z-index:15;pointer-events:none;overflow:hidden;color:#e8f0ff;font:12px system-ui}
@@ -110,7 +116,12 @@ export function installCloudNavigation({canvas, getCamera, getBox, setCamera, se
     signature=cameraSignature(cam);
     return cam;
   };
-  const commit = cam => {signature=cameraSignature(cam);setCamera(cam);};
+  const commit = cam => {
+    const clear = keepAboveCloudTerrain(cam, groundHeight);
+    if (anchor && clear !== cam) anchor.target[1] += clear.y - cam.y;
+    signature=cameraSignature(clear);
+    setCamera(clear);
+  };
   const positionOverlay = () => {
     const r=canvas.getBoundingClientRect();
     Object.assign(overlay.style,{left:r.left+'px',top:r.top+'px',width:r.width+'px',height:r.height+'px'});
@@ -141,7 +152,10 @@ export function installCloudNavigation({canvas, getCamera, getBox, setCamera, se
       const cam=getCamera();
       if(!ship||signature!==cameraSignature(cam))ship=flightAircraft(cam);
       ship=advanceFlight(ship,flight,axes,cruise?Number(el('nav-speed').value)*(keys.has('ShiftLeft')||keys.has('ShiftRight')?3:1):0,dt);
-      const next=chaseFlight(cam,ship,dt);
+      const clearShip = keepAboveCloudTerrain(ship, groundHeight);
+      if (clearShip !== ship && flight.velocity[1] < 0) flight.velocity[1] = 0;
+      ship = clearShip;
+      const next=keepAboveCloudTerrain(chaseFlight(cam,ship,dt), groundHeight);
       setAircraft(aircraftPose(next));
       commit(next);
     }
@@ -153,8 +167,9 @@ export function installCloudNavigation({canvas, getCamera, getBox, setCamera, se
   const wake = () => {if(!raf) raf=requestAnimationFrame(animate);};
   const switchMode = next => {
     resetMotion();mode=next;cruise=mode==='flight';anchor=null;syncAnchor();
-    ship=flightAircraft(getCamera());
-    setAircraft(mode==='flight'?aircraftPose(getCamera()):{enabled:false});commit(getCamera());
+    const camera = keepAboveCloudTerrain(getCamera(), groundHeight);
+    ship=keepAboveCloudTerrain(flightAircraft(camera), groundHeight);
+    setAircraft(mode==='flight'?aircraftPose(camera):{enabled:false});commit(camera);
     refresh();if(mode==='flight')canvas.focus({preventScroll:true});wake();
   };
   const regionButton = el('nav-region');

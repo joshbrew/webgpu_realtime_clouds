@@ -13,7 +13,8 @@ fn planetGradeLuma(color: vec3<f32>) -> f32 {
 
 fn gradePlanetCloud(radiance: vec3<f32>, opacity: f32, grade: PlanetCloudGrade) -> vec3<f32> {
   let light = max(radiance, vec3<f32>(0.0));
-  if (grade.response.w <= 0.0 || opacity <= .001) { return light; }
+  let deepShadow = mix(1.0, sceneDeepShadowGain(light, grade.shadows.w), smoothstep(.04, .28, opacity));
+  if (grade.response.w <= 0.0 || opacity <= .001) { return light * deepShadow; }
 
   // Use the resolved lighting, with alpha only as confidence near the
   // silhouette. The same curves follow the clouds from flight to orbit.
@@ -49,7 +50,7 @@ fn gradePlanetCloud(radiance: vec3<f32>, opacity: f32, grade: PlanetCloudGrade) 
 
   let lift = mix(1.0, grade.highlights.w, .34 + .50 * highlight);
   let midLift = mix(1.0, grade.response.z, .70 * midtone);
-  let shadowGain = 1.0 / (1.0 + shadow * shadow * (.25 + .85 * grade.shadows.w));
+  let shadowGain = 1.0 / (1.0 + shadow * shadow * (.25 + .85 * min(grade.shadows.w, 6.0)));
   color *= mix(1.0, lift * midLift * shadowGain, coverage);
 
   // Rim color comes from existing light energy and fades out with opacity.
@@ -58,18 +59,36 @@ fn gradePlanetCloud(radiance: vec3<f32>, opacity: f32, grade: PlanetCloudGrade) 
     smoothstep(.12,.52,luminance) * (1.0 - .65 * shadow);
   let rimPigment = grade.rim.rgb / max(.24, planetGradeLuma(grade.rim.rgb));
   let rimColor = mix(rimPigment * luminance, light, grade.display.z);
-  return mix(color, rimColor, rim * clamp(grade.rim.w * .27, 0.0, .45));
+  return mix(color, rimColor, rim * clamp(grade.rim.w * .27, 0.0, .45)) * deepShadow;
+}
+
+// Match the Planet overlay in both views. Blend the finished cloud over the
+// finished sky so a bright background can't tone-map away thin cloud detail.
+fn planetCloudResolvedDisplay(cloudSample: vec4<f32>, grade: PlanetCloudGrade, exposure: f32,
+    saturation: f32, atmosphere: f32, elevation: f32, rolloff: f32) -> vec3<f32> {
+  let straight = cloudSample.rgb / max(cloudSample.a, .001);
+  let graded = gradePlanetCloud(straight, cloudSample.a, grade);
+  let nativeDisplay = planetCloudDisplayWithRolloff(graded, grade, rolloff);
+  let weight = atmosphere * scenePlanetCloudWeight(elevation);
+  if (weight <= 0.0) { return nativeDisplay; }
+  let shaded = straight * sceneCloudShadowGain(straight, grade.shadows.w);
+  let sceneRadiance = select(shaded, graded, grade.display.w > 0.0);
+  return mix(nativeDisplay, sceneDisplayWithRolloff(sceneRadiance, exposure, saturation, rolloff), weight);
 }
 
 fn planetCloudDisplay(linear: vec3<f32>, grade: PlanetCloudGrade) -> vec3<f32> {
+  return planetCloudDisplayWithRolloff(linear, grade, 0.0);
+}
+
+fn planetCloudDisplayWithRolloff(linear: vec3<f32>, grade: PlanetCloudGrade, rolloff: f32) -> vec3<f32> {
   let exposed = max(linear * grade.display.x, vec3<f32>(0.0));
   let luminance = planetGradeLuma(exposed);
   let chroma = (exposed - vec3<f32>(luminance)) * grade.display.y;
   // If saturation crosses the RGB gamut, reduce chroma together and keep
   // hue and luminance. Then compress bright channels by a common factor.
   let gamut = min(1.0, luminance / max(luminance, -min(chroma.r, min(chroma.g, chroma.b)) + .00001));
-  let graded = select(max(vec3<f32>(luminance) + chroma, vec3<f32>(0.0)),
-    max(vec3<f32>(luminance) + chroma * gamut, vec3<f32>(0.0)), grade.response.w > 0.0);
+  let graded = sceneHighlightRolloff(select(max(vec3<f32>(luminance) + chroma, vec3<f32>(0.0)),
+    max(vec3<f32>(luminance) + chroma * gamut, vec3<f32>(0.0)), grade.response.w > 0.0), rolloff);
   let peak = max(graded.r, max(graded.g, graded.b));
   let shoulder = .82 + .18 * (1.0 - exp(-max(0.0, peak - .82) / .18));
   let display = graded * min(1.0, shoulder / max(peak, .001));

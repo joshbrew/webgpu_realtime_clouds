@@ -1,9 +1,15 @@
+import sceneSkyLightingWGSL from './shaders/sceneSkyLighting.wgsl';
+import planetAerialPerspectiveWGSL from './shaders/planetAerialPerspective.wgsl';
+import { MAX_SCENE_HAZE, sceneLightingValues } from './cloudLookPresets.js';
 import cloudOverlayOpacityShader from './shaders/cloudOverlayOpacity.wgsl';
 import cloudOverlayReconstructionShader from './shaders/cloudOverlayReconstruction.wgsl';
 import planetSunlightWGSL from './shaders/planetCloudSunlight.wgsl';
 import planetCloudGradeWGSL from './shaders/planetCloudGrade.wgsl';
-import { PLANET_CLOUD_GRADE_FLOATS, writePlanetCloudGrade } from './planetCloudGrade.js';
+import { PLANET_CLOUD_GRADE_FLOATS, resolvePlanetSceneLighting, writePlanetCloudGrade } from './planetCloudGrade.js';
 import planetSunShaftsWGSL from './shaders/planetSunShafts.wgsl';
+import cloudShaftFrameWGSL from './shaders/cloudShaftFrame.wgsl';
+import cloudShaftScatterWGSL from './shaders/cloudShaftScatter.wgsl';
+import { resolvePlanetShafts } from './planetShafts.js';
 import planetTerrainShadowWGSL from './shaders/planetTerrainShadow.wgsl';
 import planetCloudBaseFormWGSL from './shaders/planetCloudBaseForm.wgsl';
 import gasFlowWGSL from './shaders/planetGasFlow.wgsl';
@@ -39,7 +45,8 @@ const OVERLAY_SHADOW_FLOATS = 44;
 const OVERLAY_GAS_TINT_OFFSET = OVERLAY_BASE_FLOATS + OVERLAY_SHADOW_FLOATS;
 const OVERLAY_GAS_TINT_FLOATS = 24;
 const OVERLAY_GRADE_OFFSET = OVERLAY_GAS_TINT_OFFSET + OVERLAY_GAS_TINT_FLOATS;
-const OVERLAY_FLOATS = OVERLAY_GRADE_OFFSET + PLANET_CLOUD_GRADE_FLOATS;
+const OVERLAY_TONE_OFFSET = OVERLAY_GRADE_OFFSET + PLANET_CLOUD_GRADE_FLOATS;
+const OVERLAY_FLOATS = OVERLAY_TONE_OFFSET + 8;
 const PLANET_NOISE_BUILDER_CACHE = new WeakMap();
 const PLANET_VOLUME_MIPS = new WeakMap();
 const PLANET_STYLE_NOISE = new WeakMap();
@@ -1120,6 +1127,8 @@ function ensureOverlayRenderer(layer) {
 ${cloudOverlayOpacityShader}
 ${cloudOverlayReconstructionShader}
 ${planetCloudGradeWGSL}
+${sceneSkyLightingWGSL}
+${planetAerialPerspectiveWGSL}
 
 struct OverlayParams {
   opacity: f32,
@@ -1128,6 +1137,8 @@ struct OverlayParams {
   terrainComposite: f32,
   reconstruct: f32,
   shadingBlur: f32,
+  fluidExposure: f32,
+  fluidSaturation: f32,
   sun: vec4<f32>,
   shafts: vec4<f32>,
   shaftColor: vec3<f32>,
@@ -1150,8 +1161,11 @@ struct OverlayParams {
   gasTintUp: vec4<f32>,      // camera up scaled by FOV
   gasTintForward: vec4<f32>, // camera forward, blend strength
   gasTintWeather: vec4<f32>, // spin, form, warp amount and phase
-  gasTintMap: vec4<f32>,     // latitude scale, photographic source flag
+  gasTintMap: vec3<f32>,     // latitude scale, photographic source flag, scene lighting weight
+  shaftVisibility: f32,
   grade: PlanetCloudGrade,
+  tone: vec4<f32>,          // contrast, highlight rolloff, atmosphere height, haze
+  aerial: vec4<f32>,        // sky tint, cloud top altitude
 };
 @group(0) @binding(0) var samp: sampler;
 @group(0) @binding(1) var tex: texture_2d_array<f32>;
@@ -1161,6 +1175,8 @@ struct OverlayParams {
 @group(0) @binding(5) var shadowWeatherSampler: sampler;
 @group(0) @binding(6) var shadowShapeMap: texture_3d<f32>;
 @group(0) @binding(7) var shadowShapeSampler: sampler;
+@group(0) @binding(8) var cloudShaftMask: texture_2d<f32>;
+@group(0) @binding(9) var<uniform> shaftFrame: CloudShaftFrame;
 
 struct VSOut {
   @builtin(position) pos: vec4<f32>,
@@ -1201,6 +1217,8 @@ fn sampleCloudOverlay(uv: vec2<f32>) -> vec4<f32> {
 }
 
 ${planetSunlightWGSL}
+${cloudShaftFrameWGSL}
+${cloudShaftScatterWGSL}
 ${planetSunShaftsWGSL}
 ${planetCloudBaseFormWGSL}
 ${gasFlowWGSL}
@@ -1292,24 +1310,40 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let a = cloudOverlayOpacity(rawA, params.alphaCutoff, params.alphaPower, params.opacity);
   if (params.terrainComposite > 0.5) {
     let coverage = clamp(a, 0.0, 1.0);
+    let eye = params.shadowEye.xyz;
+    let ray = normalize(in.shadowRay);
+    let depth = planetShaftDepth(terrain, in.uv);
     var rgb = vec3<f32>(0.0);
     if (coverage > 0.0) {
-      // Encode straight cloud radiance for the display-encoded scene before
-      // premultiplying. Fully clear pixels only need terrain shadows and shafts.
-      let linear = gradePlanetCloud(c.rgb / max(rawA, .001), rawA, params.grade);
-      rgb = planetCloudDisplay(linear, params.grade) * coverage;
+      rgb = planetCloudResolvedDisplay(vec4<f32>(c.rgb, rawA), params.grade, params.fluidExposure,
+        params.fluidSaturation, params.gasTintMap.z, params.sun.w, params.tone.y);
+      if (params.tone.z > 0.0 && params.tone.w > .001 && dot(eye, ray) < 0.0) {
+        let shell = cloudShaftSphere(eye, ray, -params.shadowEye.w, params.aerial.w);
+        let entry = max(0.0, shell.x);
+        if (shell.y > entry) {
+          let cloudDistance = entry + min(params.shadowForm.w * .65, (shell.y - entry) * .20) * mix(.95, .25, coverage);
+          let foreground = min(cloudDistance, planetShaftReceiver(depth));
+          let fog = planetOverheadFog(eye, ray, foreground, params.shadowEye.w, params.tone.z, params.tone.w, params.sky.w);
+          let air = planetOverheadRadiance(ray, params.sun.xyz, params.sun.w, params.aerial.rgb, params.shaftColor.rgb);
+          let sky = sceneDisplayWithRolloff(air, params.fluidExposure, params.fluidSaturation, params.tone.y);
+          rgb = mix(rgb, sky, fog);
+        }
+      }
+      rgb = sceneDisplayContrast(rgb, params.tone.x) * coverage;
     }
-    let shaft = planetSunShafts(in.uv, coverage);
-    if (shaft > 0.0) {
+    var shaft = vec4<f32>(0.0);
+    if (params.shafts.x > .001 && cloudShaftsAvailable()) {
+      let controls = vec4<f32>(1.0, params.shafts.xyz);
+      let scatter = planetWorldShafts(depth, eye, ray,
+        params.sun.xyz, controls, params.tone.w, coverage, params.tone.z);
+      let response = cloudShaftResponse(scatter, coverage, params.shafts.x, params.grade.shadows.w)
+        * params.shaftVisibility * planetShaftOverheadWeight(eye, ray);
       let linearTint = planetSunTint(params.sun.w, params.shafts.w, params.sky, params.dusk) * params.shaftColor.rgb;
-      let shaftTint = sqrt(max(linearTint, vec3<f32>(0.0)));
-      let peak = max(1.0, max(shaftTint.r, max(shaftTint.g, shaftTint.b)));
-      rgb += shaftTint * (shaft / peak);
+      shaft = planetShaftOverlay(response, planetShaftTint(linearTint, params.tone.x, params.tone.y));
     }
-    let visible = coverage + shaft;
-    let shadow = planetTerrainShadow(in.uv, in.shadowRay, visible);
-    // The premultiplied cloud color stays lit. Only the visible scene behind it is darkened.
-    return vec4<f32>(rgb, visible + (1.0 - visible) * shadow);
+    let shadow = planetTerrainShadow(in.uv, in.shadowRay, coverage);
+    let clouds = vec4<f32>(rgb, coverage + (1.0 - coverage) * shadow);
+    return shaft + clouds * (1.0 - shaft.a);
   }
   let liftGate = smoothstep(0.025, 0.24, rawA);
   let premulLift = select(0.0, clamp(a / max(rawA, 0.001), 0.0, 1.55), rawA > 0.00001);
@@ -1321,6 +1355,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   layer.overlaySampler = device.createSampler({
     magFilter: 'linear',
     minFilter: 'linear',
+    mipmapFilter: 'linear',
     addressModeU: 'clamp-to-edge',
     addressModeV: 'clamp-to-edge',
   });
@@ -1379,6 +1414,7 @@ function renderOverlay(layer) {
   const terrain = layer.overlayTerrainView || layer.cloudBuilder._dummy2DDepthView;
   const weather = layer.jupiterMap?.view || layer.cloudBuilder.weatherView || sourceView;
   const shape = layer.textures.shape3DView;
+  const shaftResources = layer.cloudBuilder.cloudShaftResources();
   const data = layer.overlayData ??= new Float32Array(OVERLAY_FLOATS);
   data.set([
     opacity, alphaPower, alphaCutoff,
@@ -1386,6 +1422,10 @@ function renderOverlay(layer) {
     Number(!!layer.options.reconstructAtPresentation),
     Math.max(0, Math.min(2, finiteNumber(layer.options.shadingBlur, 1))),
   ]);
+  const palette = layer.scenePalette;
+  data[6] = palette ? palette.exposure * palette.colorLift : 0;
+  data[7] = palette?.saturation ?? 1;
+  data[11] = layer.overlaySunElevation ?? 0;
   data[12] = sunlight?.strength ?? 0;
   const cloudStyle = layer.options.cloudStyle;
   const cameraPosition = layer.lastCameraHistoryState?.camPos;
@@ -1403,27 +1443,38 @@ function renderOverlay(layer) {
     const bankDenoise = roundedBank ? smoothstepLocal(0.18, 0.72, layer.nearSurfaceFactor ?? 0) : 0;
     data[19] = Math.max(weatherDenoise, bankDenoise);
   }
-  if (sunlight?.strength > 0) {
-    data.set([sunlight.x, sunlight.y, sunlight.aspect, sunlight.elevation], 8);
-    data[13] = Math.max(0.12, Math.min(1.6, finiteNumber(style?.godRayLength, 1) * 0.76));
-    data[14] = Math.max(0.3, Math.min(4, finiteNumber(style?.godRayFalloff, 1.3)));
-    data[15] = sunlight.clearance;
+  const aerial = layer.overlayAerial;
+  if (aerial) {
+    data.set(layer.lastSunDir, 8);
     const tint = layer.options.params?.sunColor ?? [1, 1, 1];
     data.set(tint.map(channel => Math.max(0, Math.min(1.4, channel))), 16);
-    const [sky, dusk, density] = sunlight.atmosphere ?? [[0, 0, 0], [0, 0, 0], 0];
+    const [sky, dusk, density] = aerial.atmosphere ?? [[0, 0, 0], [0, 0, 0], 0];
     data.set(sky, 20);
     data[23] = density;
     data.set(dusk, 24);
-    data[27] = Number(Boolean(sunlight.atmosphere));
+    data[27] = Number(Boolean(aerial.atmosphere));
+  }
+  if (sunlight?.strength > 0) {
+    data[13] = sunlight.length;
+    data[14] = sunlight.decay;
+    data[15] = sunlight.clearance;
   }
   if (layer.overlayShadow) data.set(layer.overlayShadow, OVERLAY_BASE_FLOATS);
   if (layer.overlayGasTint) data.set(layer.overlayGasTint, OVERLAY_GAS_TINT_OFFSET);
+  data[OVERLAY_GRADE_OFFSET - 2] = layer.sceneWeight ?? 0;
+  data[OVERLAY_GRADE_OFFSET - 1] = sunlight?.visibility ?? 0;
   writePlanetCloudGrade(data, OVERLAY_GRADE_OFFSET, layer.options);
+  data[OVERLAY_TONE_OFFSET] = style?.displayContrast ?? 1;
+  data[OVERLAY_TONE_OFFSET + 1] = style?.highlightRolloff ?? 0;
+  data[OVERLAY_TONE_OFFSET + 2] = aerial?.height ?? 0;
+  data[OVERLAY_TONE_OFFSET + 3] = aerial ? Math.max(0, Math.min(MAX_SCENE_HAZE, sceneLightingValues(style).haze)) : 0;
+  data.set(palette?.sky ?? [1, 1, 1], OVERLAY_TONE_OFFSET + 4);
+  data[OVERLAY_TONE_OFFSET + 7] = aerial?.cloudTop ?? 0;
   layer.device.queue.writeBuffer(layer.overlayParams, 0, data.buffer, data.byteOffset, data.byteLength);
 
   if (!layer.overlayBindGroup || layer.overlayBindGroupView !== sourceView ||
       layer.overlayBindGroupTerrain !== terrain || layer.overlayBindGroupWeather !== weather ||
-      layer.overlayBindGroupShape !== shape) {
+      layer.overlayBindGroupShape !== shape || layer.overlayBindGroupShaft !== shaftResources.view) {
     layer.overlayBindGroup = layer.device.createBindGroup({
       layout: layer.overlayPipeline.getBindGroupLayout(0),
       entries: [
@@ -1435,12 +1486,15 @@ function renderOverlay(layer) {
         { binding: 5, resource: layer.cloudBuilder._samp2D || layer.overlaySampler },
         { binding: 6, resource: shape },
         { binding: 7, resource: layer.cloudBuilder._sampShape },
+        { binding: 8, resource: shaftResources.view },
+        { binding: 9, resource: { buffer: shaftResources.buffer } },
       ],
     });
     layer.overlayBindGroupView = sourceView;
     layer.overlayBindGroupTerrain = terrain;
     layer.overlayBindGroupWeather = weather;
     layer.overlayBindGroupShape = shape;
+    layer.overlayBindGroupShaft = shaftResources.view;
   }
 
   const enc = layer.device.createCommandEncoder({ label: 'Planet cloud composite' });
@@ -3084,14 +3138,29 @@ export async function updatePlanetCloudLayer(layer) {
   const rayHeight = Math.max(1, Math.ceil(outH / coarseFactor));
   const depthWidth = layer.useBootstrapPreview ? outW : rayWidth;
   const depthHeight = layer.useBootstrapPreview ? outH : rayHeight;
+  const atmosphericClouds = layer.getTerrainDepth && !auroraEnabled && !layer.useBootstrapPreview &&
+    opt.cloudStyle && opt.cloudStyle !== 'legacy' && runtimeTuning.formType > 0.5 && runtimeTuning.formType < 4.5;
+  const airHeight = finiteNumber(opt.godRayAirHeight, layer.radius * .08);
+  layer.overlayAerial = atmosphericClouds ? { height: airHeight, cloudTop, atmosphere: camera.atmosphere } : null;
+  layer.overlaySunElevation = dotArray3(sunDir, camPos) / cameraRadius;
+  layer.overlaySun = atmosphericClouds ? resolvePlanetShafts(opt.style, layer.radius,
+    airHeight, camPos, sunDir, camera.atmosphere, cloudBottom, cloudTop) : null;
+  const shaft = layer.overlaySun;
+  if (shaft) {
+    await layer.cloudBuilder.prepareLocalCloudShafts({ ...shaft, animated: animationRunning })
+      .catch(error => layer.cloudBuilder.disableLocalCloudShafts(error));
+    if (layer.disposed || layer.styleChanging) return;
+  } else if (layer.cloudBuilder._shaftDispatch) {
+    layer.cloudBuilder._clearLocalCloudShafts();
+  }
+  // The depth texture belongs to the current view. Acquire it after any
+  // awaited shader compilation so a resize cannot retire our captured view.
   const terrainDepthView = layer.getTerrainDepth?.(depthWidth, depthHeight);
   layer.overlayTerrainView = terrainDepthView;
-  const shadowsEnabled = camera.terrainCloudShadows && terrainDepthView && !auroraEnabled &&
-    !layer.useBootstrapPreview && opt.cloudStyle && opt.cloudStyle !== 'legacy' &&
-    runtimeTuning.formType >= 0.5 && runtimeTuning.formType < 4.5;
+  const shadowsEnabled = camera.terrainCloudShadows && atmosphericClouds && terrainDepthView;
   const shadow = layer.overlayShadow ??= new Float32Array(OVERLAY_SHADOW_FLOATS);
   shadow[15] = 0;
-  if (shadowsEnabled) {
+  if (atmosphericClouds) {
     const tanY = Math.tan(fovYDeg * Math.PI / 360);
     const weatherScale = Math.max(0.0001, finiteNumber(transforms.weatherScale, 1));
     shadow.set(camPos, 0);
@@ -3111,7 +3180,7 @@ export async function updatePlanetCloudLayer(layer) {
     shadow[11] = Math.cos(weatherTilt);
     shadow.set(fwd, 12);
     const shadowStrength = diorama ? 0.61 : storybook ? 0.57 : 0.28;
-    shadow[15] = shadowStrength * Math.min(1, Math.max(0, finiteNumber(opt.opacity, 1))) *
+    shadow[15] = Number(!!shadowsEnabled) * shadowStrength * Math.min(1, Math.max(0, finiteNumber(opt.opacity, 1))) *
       Math.min(1, Math.max(0, finiteNumber(opt.params?.globalDensity, 24) / 24));
     shadow.set(sunDir, 16);
     shadow[19] = finiteNumber(opt.params?.globalCoverage, 1);
@@ -3136,31 +3205,6 @@ export async function updatePlanetCloudLayer(layer) {
     shadow.set((transforms.shapeAxisScale || [1, 1, 1]).map(axis => axis || 1), 36);
     shadow[40] = Math.sin(shapeWind[2] * 2 * Math.PI);
     shadow[41] = Math.cos(shapeWind[2] * 2 * Math.PI);
-  }
-  layer.overlaySun = null;
-  const rayStrength = opt.style?.godRaysEnabled ? Math.max(0, Math.min(3, finiteNumber(opt.style.godRayStrength, 0))) : 0;
-  if (terrainDepthView && !auroraEnabled && rayStrength > 0) {
-    const fwdDot = dotArray3(sunDir, fwd);
-    const elevation = dotArray3(sunDir, camPos) / cameraRadius;
-    const altitude = cameraRadius - layer.radius;
-    const airHeight = finiteNumber(opt.godRayAirHeight, layer.radius * 0.08);
-    const air = (1 - smoothstepLocal(airHeight * 0.20, airHeight, altitude)) *
-      Math.min(1.2, camera.atmosphere?.[2] ?? 1);
-    const lowSun = 1 - smoothstepLocal(0.10, 0.70, elevation);
-    const groundToCamera = layer.radius / cameraRadius;
-    const clearance = elevation + Math.sqrt(Math.max(0, 1 - groundToCamera * groundToCamera));
-    const skyLight = smoothstepLocal(-0.012, 0.09, clearance) * air * (0.20 + 0.80 * lowSun);
-    if (fwdDot > 0.15 && skyLight > 0.001) {
-      const projection = fwdDot * Math.tan(fovYDeg * Math.PI / 360);
-      const x = 0.5 + dotArray3(sunDir, right) / (2 * aspect * projection);
-      const y = 0.5 - dotArray3(sunDir, up) / (2 * projection);
-      const offscreen = Math.max(0, -x, x - 1, -y, y - 1);
-      const window = (1 - smoothstepLocal(0, 0.35, offscreen)) * smoothstepLocal(0.15, 0.42, fwdDot);
-      layer.overlaySun = {
-        x, y, aspect, elevation, clearance, strength: 0.48 * rayStrength * skyLight * window,
-        atmosphere: camera.atmosphere,
-      };
-    }
   }
   // Deep orbital space outside the cloud/terrain shell needs only the clear
   // from the render pass. Shafts, aurora and anvil extensions can reach beyond it.
@@ -3243,7 +3287,11 @@ export async function updatePlanetCloudLayer(layer) {
     auroraCurtainPattern: curtainPattern,
     terrainDepthView,
   });
-  layer.cloudBuilder.setLight({ sunDir, camPos, atmosphere: camera.atmosphere });
+  const { palette, weight } = resolvePlanetSceneLighting(opt, camera);
+  layer.scenePalette = palette;
+  layer.sceneWeight = weight;
+  layer.cloudBuilder.setLight({ sunDir, camPos, atmosphere: camera.atmosphere,
+    scenePalette: palette, sceneWeight: weight });
 
   ensureCloudHistory(layer, outW, outH, coarseFactor);
 
@@ -3407,6 +3455,7 @@ export function disposePlanetCloudLayer(layer) {
   layer.jupiterMap?.texture.destroy();
   destroyCloudHistory(layer);
   try { layer.cloudBuilder?.outTexture?.destroy?.(); } catch {}
+  layer.cloudBuilder?.disposeCloudShafts();
   if (layer.sharedNoiseBuilder && layer.resourceKeys) {
     try { layer.noiseBuilder?.destroyTexturePair?.(layer.resourceKeys.weather); } catch {}
     try { layer.noiseBuilder?.destroyTexturePair?.(layer.resourceKeys.blue); } catch {}
